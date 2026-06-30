@@ -32,7 +32,7 @@ struct HowItWorksStep: View {
 
     var body: some View {
         WizardPanel(
-            header: WizardHeader(style: .core(current: 3), onClose: onClose, onBack: onBack)
+            header: WizardHeader(style: .core(current: 4), onClose: onClose, onBack: onBack)
         ) {
             VStack(spacing: 18) {
                 Spacer(minLength: 8)

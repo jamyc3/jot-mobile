@@ -136,6 +136,11 @@ final class WatchConnectivityClient: NSObject, WCSessionDelegate, @unchecked Sen
                 "uuid": file.uuid,
                 "capturedAt": Self.iso8601Formatter.string(from: file.capturedAt),
                 "durationSeconds": file.durationSeconds,
+                // Dictation-language code (`WatchLanguage.code` == the phone's
+                // `LanguageChoice.rawValue`). The phone maps it back via
+                // `LanguageChoice.fromStored` and sets
+                // `AppGroup.transcriptionLanguage` before transcribing this take.
+                "language": file.language.code,
                 "schemaVersion": 1
             ]
             session.transferFile(url, metadata: metadata)
@@ -202,6 +207,31 @@ final class WatchConnectivityClient: NSObject, WCSessionDelegate, @unchecked Sen
             "schemaVersion": 1
         ]
         session.transferUserInfo(payload)
+    }
+
+    /// Broadcast the user's chosen dictation language to the phone. Sent the
+    /// moment the user confirms a language in the Crown picker — ahead of (and
+    /// independent of) any audio file — so the phone can set
+    /// `AppGroup.transcriptionLanguage` proactively. Each audio file ALSO carries
+    /// its own `language` metadata (see `transferQueuedFiles`), which is the
+    /// authoritative per-recording tag; this message just keeps the phone's
+    /// preference current between recordings.
+    ///
+    /// Uses `transferUserInfo` (FIFO + guaranteed delivery, queues while the
+    /// phone is unreachable) rather than `sendMessage` (which needs an active
+    /// reachable session) — matching the rest of this client's plumbing.
+    func sendLanguageSelection(_ language: WatchLanguage) {
+        guard let session else {
+            wcLog.error("sendLanguageSelection() — no session (activate not called)")
+            return
+        }
+        let payload: [String: Any] = [
+            "type": "languageSelection",
+            "language": language.code,
+            "schemaVersion": 1
+        ]
+        session.transferUserInfo(payload)
+        wcLog.info("sendLanguageSelection() — language=\(language.code, privacy: .public)")
     }
 
     // MARK: - WCSessionDelegate

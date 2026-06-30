@@ -76,7 +76,7 @@ struct DonationsView: View {
     }
 
     private var heroTitle: some View {
-        Text("Donations.")
+        Text("Donations")
             .font(JotType.displaySerif(44))
             .tracking(-1.6)
             .foregroundStyle(Color.jotPageInk)

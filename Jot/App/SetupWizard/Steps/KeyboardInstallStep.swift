@@ -29,7 +29,7 @@ struct KeyboardInstallStep: View {
 
     var body: some View {
         WizardPanel(
-            header: WizardHeader(style: .core(current: 2), onClose: onClose, onBack: onBack)
+            header: WizardHeader(style: .core(current: 3), onClose: onClose, onBack: onBack)
         ) {
             VStack(spacing: 22) {
                 Spacer(minLength: 40)

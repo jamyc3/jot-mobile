@@ -82,6 +82,13 @@ struct SetupWizardView: View {
                 // chevron + edge-swipe don't render here.
                 WelcomeStep(
                     onClose: closeAndComplete,
+                    onAdvance: { advance(to: .language) }
+                )
+
+            case .language:
+                LanguageStep(
+                    onClose: closeAndComplete,
+                    onBack: goBack,
                     onAdvance: { advance(to: .microphone) }
                 )
 
@@ -290,12 +297,13 @@ struct SetupWizardView: View {
 /// from Settings, not onboarding — so W7 is terminal.
 private enum SetupStep: Hashable {
     case welcome           // W1
-    case microphone        // W2
-    case keyboardInstall   // W3
-    case howItWorks        // W4
-    case tryKeyboard       // W5
-    case warmHold          // W6
-    case youreReady        // W7
+    case language          // W2 — pick the dictation language (English bundled / European v3 download)
+    case microphone        // W3
+    case keyboardInstall   // W4
+    case howItWorks        // W5
+    case tryKeyboard       // W6
+    case warmHold          // W7
+    case youreReady        // W8
 }
 
 #Preview {

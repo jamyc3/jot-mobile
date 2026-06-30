@@ -307,3 +307,54 @@ status row was also generalized into a reusable container (`StreamingStrip.statu
 in the same session — future "Won't be saved" (edit / feedback) statuses plug into it.
 
 ---
+
+## 8. Rip the dead `tdtCtc110m` dictation-model path (should never have shipped)
+
+**Why it matters.** The codebase references a Parakeet **TDT-CTC 110M *dictation*** model
+(`AsrModelVersion.tdtCtc110m` / `Repo.parakeetTdtCtc110m` / `parakeet-tdt-ctc-110m`) as the
+sub-6GB (4GB-RAM, `!DeviceCapability.is600MCapable`) English fallback. **That model is not
+bundled and is not actually shipped/used** — official support is iPhone 14 Pro+ (all ≥6GB →
+all 600M-capable), so the branch is effectively dead. The only 110M weights truly on device
+are the **CTC *scorer*** (`parakeet-ctc-110m-coreml`, vocabulary rescorer) — a *different*
+model. The two are one token apart (`parakeet-ctc-110m` vs `parakeet-tdt-ctc-110m`), and the
+in-code comments actively assert the dead dictation 110M is real, "bundled," and the "default"
+— and **contradict each other** (`TranscriptionService` says "NOT bundled," `JotApp` says
+"ships bundled"). This stale, confident, self-contradicting documentation already misled a
+code change into trying to "warm" a nonexistent dictation model (multilingual BG warm-up,
+builds 217/218 — caught + fixed, but only after it shipped). It is a landmine for the next
+engineer (or agent): the model-selection function literally returns a model that isn't there.
+
+**What we'd build.** Remove the dead path and the misleading docs (~22 app-code references):
+- `TranscriptionService.selectedVersion` / `selectedRepo`: drop the `.tdtCtc110m` /
+  `.parakeetTdtCtc110m` branches; decide explicit 4GB-device behavior (almost certainly:
+  English is always bundled 600M v2, OR gate sub-6GB out as unsupported with a clear message —
+  the band is already "unsupported best-effort").
+- Purge the directory/path/`SpeechModelVariant`/`AppGroup` legacy-value handling that exists
+  solely for the dead variant, and fix the comments in `TranscriptionService` (the "dictation
+  110M, separate from the vocab CTC" NOTE), `JotApp` (`:332`, `:632` "ships bundled"), and
+  `AppGroup` (`:408`, `:417` "bundled default") so nothing claims a 110M *dictation* model.
+- **KEEP** `sweepLegacyAppSupportWeights` (it reclaims disk from genuine pre-bundle 0.9.0/0.9.1
+  installs that DID cache 110M weights) — that's a real one-shot migration, not dead code; just
+  reword its comments to not imply the model is current. **KEEP** the CTC scorer entirely.
+- **Docs too:** the same dead-110M-dictation / sub-6GB narrative lives in `ARCHITECTURE.md`
+  (the Transcription Role note ~line 89 + the capability-gate bullets ~95–100, ~257) and the
+  stale `int4` low-RAM sketch in `docs/multilingual-dictation/design.md` (§3.1/§4 code block +
+  bullet 5 — int4 was dropped, ships int8 everywhere). Fix these in the SAME pass as the code so
+  doc and code stay in lockstep.
+- **4GB/sub-6GB is now formally UNSUPPORTED** (owner, 2026-06-29 — "no fallback for 4GB, we're
+  not supporting it"). Official support = iPhone 14 Pro+ (all ≥6GB → all 600M-capable). So the
+  removal isn't just cleanup — the product decision is made; English is always bundled 600M v2.
+- Reference: [[reference_on_device_model_inventory]] in agent memory has the exact inventory.
+
+**Trigger to pull this forward.** Any of: another change is misled by the phantom 110M model;
+the 4GB best-effort band is formally dropped; or a model-selection refactor touches
+`selectedVersion` anyway (do it in the same pass).
+
+**Estimated size.** ~half a day. Mostly mechanical deletion + a small 4GB-behavior decision +
+comment cleanup. Verify the remaining English path still resolves to bundled v2 on all
+supported devices and the legacy App-Support sweep is untouched.
+
+**Status.** Captured 2026-06-29 at owner's request ("that code should have been removed long
+ago; it's why you added the wrong model"). Not started.
+
+---

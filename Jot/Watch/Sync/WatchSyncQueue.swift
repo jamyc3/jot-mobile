@@ -43,11 +43,17 @@ final class WatchSyncQueue {
     /// Add a freshly-stopped recording to the queue. Caller (RecordingView)
     /// must ensure `isFull == false` before calling — the queue accepts
     /// regardless to avoid losing already-captured audio mid-cap-race.
-    func enqueue(_ file: RecordedFile) {
+    ///
+    /// `language` is the dictation-language code (`WatchLanguage.code`) the user
+    /// had selected when this take was recorded. It rides the file's WCSession
+    /// metadata so the phone transcribes in that language; defaults to the
+    /// current watch choice when the caller doesn't pass one.
+    func enqueue(_ file: RecordedFile, language: String = WatchLanguageStore.current.code) {
         let pending = PendingFile(
             uuid: file.uuid,
             capturedAt: file.capturedAt,
-            durationSeconds: file.durationSeconds
+            durationSeconds: file.durationSeconds,
+            languageCode: language
         )
         pendingFiles.append(pending)
         pendingCount = pendingFiles.count
@@ -129,4 +135,11 @@ struct PendingFile: Codable, Hashable {
     let uuid: String
     let capturedAt: Date
     let durationSeconds: TimeInterval
+    /// Dictation-language code (`WatchLanguage.code`) chosen when this take was
+    /// recorded. Optional in the decoder so queue entries persisted by older
+    /// builds (no language field) decode cleanly and fall back to English.
+    var languageCode: String?
+
+    /// Resolved language (English when absent / unknown).
+    var language: WatchLanguage { WatchLanguage.fromStored(languageCode) }
 }

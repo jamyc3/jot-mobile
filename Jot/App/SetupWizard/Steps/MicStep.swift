@@ -31,7 +31,7 @@ struct MicStep: View {
 
     var body: some View {
         WizardPanel(
-            header: WizardHeader(style: .core(current: 1), onClose: onClose, onBack: onBack)
+            header: WizardHeader(style: .core(current: 2), onClose: onClose, onBack: onBack)
         ) {
             VStack(spacing: 28) {
                 Spacer(minLength: 60)

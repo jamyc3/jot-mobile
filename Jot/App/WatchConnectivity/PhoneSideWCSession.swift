@@ -239,6 +239,10 @@ final class PhoneSideWCSession: NSObject, WCSessionDelegate {
         let uuid = raw["uuid"] as? String
         let capturedAtString = raw["capturedAt"] as? String
         let durationSeconds = raw["durationSeconds"] as? Double
+        // Dictation-language code the watch tagged this take with (see
+        // WatchConnectivityClient.transferQueuedFiles). nil for files from
+        // pre-language watch builds → treated as English downstream.
+        let languageCode = raw["language"] as? String
 
         var stagedURL: URL?
         var stageError: String?
@@ -261,7 +265,8 @@ final class PhoneSideWCSession: NSObject, WCSessionDelegate {
                 stageError: finalStageError,
                 uuid: uuid,
                 capturedAtString: capturedAtString,
-                durationSeconds: durationSeconds
+                durationSeconds: durationSeconds,
+                languageCode: languageCode
             )
         }
     }
@@ -285,16 +290,58 @@ final class PhoneSideWCSession: NSObject, WCSessionDelegate {
         // Same Sendable concern as didReceive(file:) — extract typed
         // values before crossing the actor boundary.
         let type = userInfo["type"] as? String
+        let language = userInfo["language"] as? String
         Task { @MainActor in
             guard let type else { return }
             switch type {
             case "helloFresh":
                 self.log.info("Watch reported fresh install; pushing top-10")
                 self.pushTopTranscripts()
+            case "languageSelection":
+                self.applyWatchLanguage(language)
             default:
                 self.log.debug("Received unknown userInfo type=\(type, privacy: .public)")
             }
         }
+    }
+
+    // MARK: - Watch language
+
+    /// Map a watch-supplied language code → `LanguageChoice` and adopt it as the
+    /// phone's dictation language, mirroring the Settings picker flow
+    /// (`SettingsView.languageBinding`): set `AppGroup.transcriptionLanguage`
+    /// then `TranscriptionService.shared.handleLanguageChange()` so the next
+    /// transcription resolves the right model + script hint.
+    ///
+    /// **Change-gated.** `handleLanguageChange()` is heavyweight — it tears down
+    /// the (possibly ANE-resident) model. So we only act when the incoming code
+    /// actually differs from the persisted value. A `nil` code (older watch
+    /// build, or a non-language message) is ignored entirely — never resets the
+    /// user's phone-side choice. `LanguageChoice.fromStored` collapses unknown
+    /// codes to English, so a stale/garbage code can't brick dictation; we
+    /// re-encode the resolved `rawValue` so the stored value is always canonical.
+    ///
+    /// **No silent download from an unattended message.** This runs off a
+    /// WCSession callback, not a consented tap. So we pass `eagerWarm:` only
+    /// when the new language's model is already on disk — adopting a not-yet-
+    /// downloaded European language sets the preference and evicts the stale
+    /// model but does NOT kick a ~461 MB background fetch; that model downloads
+    /// later via the consented phone-side Settings path (or fails fast on the
+    /// next transcribe asking for it). On disk → reload is local + instant.
+    func applyWatchLanguage(_ code: String?) {
+        guard let code, !code.isEmpty else { return }
+        let resolved = LanguageChoice.fromStored(code)
+        guard resolved.rawValue != AppGroup.transcriptionLanguage else {
+            log.debug("applyWatchLanguage — already \(resolved.rawValue, privacy: .public); no-op")
+            return
+        }
+        log.info("applyWatchLanguage — \(AppGroup.transcriptionLanguage, privacy: .public) → \(resolved.rawValue, privacy: .public)")
+        AppGroup.transcriptionLanguage = resolved.rawValue
+        // Gate the eager (download-capable) warm on the model already being on
+        // disk — `modelsExistOnDiskForSelectedVariant()` reads the language we
+        // just persisted. Off disk → evict only, no unattended network fetch.
+        let onDisk = TranscriptionService.modelsExistOnDiskForSelectedVariant()
+        TranscriptionService.shared.handleLanguageChange(eagerWarm: onDisk)
     }
 
     // MARK: - Audio handling
@@ -304,9 +351,14 @@ final class PhoneSideWCSession: NSObject, WCSessionDelegate {
         stageError: String?,
         uuid: String?,
         capturedAtString: String?,
-        durationSeconds: Double?
+        durationSeconds: Double?,
+        languageCode: String?
     ) async {
         setStage("handleIncomingAudio entry")
+        // Apply the take's dictation language BEFORE transcribing so Parakeet
+        // resolves the right model + script hint for this watch recording.
+        // (Idempotent + cheap when unchanged — see applyWatchLanguage.)
+        applyWatchLanguage(languageCode)
         guard let uuid else {
             setStage("aborted: no uuid in metadata")
             lastTranscriptionError = "missing uuid metadata"

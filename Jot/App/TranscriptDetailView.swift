@@ -10,8 +10,7 @@ private let detailLog = Logger(subsystem: "com.vineetu.jot.mobile.Jot", category
 ///
 /// ## What's shown
 ///
-/// - **Top toolbar**: glass back chevron (left); optional TTS read-aloud
-///   controls (right) when the TTS Lab is on. No native nav-bar chrome — the
+/// - **Top toolbar**: glass back chevron (left). No native nav-bar chrome — the
 ///   surface looks like the mockup, not like a stock `NavigationStack` detail.
 ///   (Rewrite lives on the bottom ActionBar, not up here.)
 /// - **Subline**: "11 hours ago · 52 words · 0:21" derived from `Transcript`
@@ -233,16 +232,6 @@ struct TranscriptDetailView: View {
     /// `transcript.createdAt` would lie. We drop the timestamp instead.
     @State private var lastRewriteAt: Date?
 
-    // MARK: - TTS Lab (hidden read-aloud)
-
-    /// Hidden, opt-in transcript read-aloud (see `docs/tts-lab/design.md`).
-    /// The control only appears when the Lab toggle is on AND the Supertonic
-    /// model is downloaded. Non-English voices translate first via `TranslationGateway`.
-    @State private var ttsService = TTSService.shared
-    @State private var ttsLabEnabled: Bool = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled)
-    @State private var selectedVoice: TTSVoice = TTSService.defaultVoice
-    @State private var ttsReadTask: Task<Void, Never>?
-
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -306,13 +295,12 @@ struct TranscriptDetailView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .overlay { correctionBubbleOverlay }
-        // Invisible host for Apple Translation's SwiftUI-bound session. Only
-        // needed when the Lab is on; mounting it always is harmless (it does
-        // nothing until TranslationGateway sets a configuration).
+        // Invisible host for Apple Translation's SwiftUI-bound session.
+        // Mounting it always is harmless — it does nothing until
+        // TranslationGateway sets a configuration.
         .background {
-            // Mounted unconditionally: it serves BOTH the TTS Lab read-aloud
-            // translation and the Translate sheet (features.md §3.9). Harmless
-            // when idle — does nothing until TranslationGateway sets a config.
+            // Serves the Translate sheet (features.md §3.9). Harmless when idle
+            // — does nothing until TranslationGateway sets a config.
             TranslationTaskHost()
         }
         .onChange(of: transcript.text) {
@@ -439,7 +427,7 @@ struct TranscriptDetailView: View {
             // lives on this view (mounted unconditionally) and stays alive while
             // this sheet is up.
             TranslateSheet(
-                text: readAloudText,
+                text: activeTabText,
                 // Exclude the transcript's own language from the targets and
                 // pass it as the source hint. nil / unknown → English.
                 sourceCode: LanguageChoice.fromStored(transcript.language).isoCode
@@ -479,7 +467,6 @@ struct TranscriptDetailView: View {
         .onAppear {
             copyHaptic.prepare()
             refreshRewriteAvailability()
-            ttsLabEnabled = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled)
             // Default to Rewrite tab when a rewrite already exists — the
             // user almost always cares about their latest pass once they've
             // run one. Falls back to Original when no rewrite is saved.
@@ -496,11 +483,6 @@ struct TranscriptDetailView: View {
             copyResetTask?.cancel()
             activeRewriteTask?.cancel()
             activeRewriteTask = nil
-            // Stop any read-aloud so playback doesn't outlive the view and
-            // hold the audio session against a later recording.
-            ttsReadTask?.cancel()
-            ttsReadTask = nil
-            ttsService.stop()
             // Stop the adapter's polling task so we don't keep reading
             // `client.status` while the detail surface is off-window.
             // Re-installed by the next `.onAppear` → `refreshRewriteAvailability`.
@@ -531,96 +513,16 @@ struct TranscriptDetailView: View {
             }
 
             Spacer(minLength: 8)
-
-            if ttsLabEnabled && ttsService.isReady && !isEditing {
-                readAloudControls
-            }
         }
         .frame(minHeight: 44)
     }
 
-    // MARK: - TTS Lab read-aloud controls
-
-    /// Voice picker (menu) + a play/stop glass button. Only mounted when the
-    /// Lab is on and the model is ready. The text read is whichever tab is
-    /// active (Original or the displayed Rewrite).
-    @ViewBuilder
-    private var readAloudControls: some View {
-        Menu {
-            // The 10 built-in voices plus any voices the user has cloned (TTS
-            // Lab → "Clone my voice"). Cloned voices synthesize through
-            // PocketTTS; built-in ones through Supertonic. Same playback path.
-            ForEach(ttsService.allVoices) { voice in
-                Button {
-                    selectedVoice = voice
-                } label: {
-                    if voice.id == selectedVoice.id {
-                        Label(voice.label, systemImage: "checkmark")
-                    } else {
-                        Text(voice.label)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: selectedVoice.isCloned ? "person.wave.2" : "globe")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(selectedVoice.label)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(Color.jotInk)
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .modifier(JotDesign.Surface.key.modifier(cornerRadius: 22))
-        }
-        .accessibilityLabel("Read-aloud voice: \(selectedVoice.label)")
-
-        glassCircleButton(
-            systemImage: ttsService.isSpeaking ? "stop.fill" : "play.fill",
-            accessibilityLabel: ttsService.isSpeaking ? "Stop reading" : "Read aloud"
-        ) {
-            if ttsService.isSpeaking {
-                stopReadAloud()
-            } else {
-                startReadAloud()
-            }
-        }
-    }
-
-    /// The text the active tab is showing — what Read-aloud speaks.
-    private var readAloudText: String {
+    /// The text the active tab is showing — what Translate reads.
+    private var activeTabText: String {
         if selectedTab == .rewrite, let displayed = displayedRewriteText, !displayed.isEmpty {
             return displayed
         }
         return transcript.text
-    }
-
-    private func startReadAloud() {
-        let voice = selectedVoice
-        let english = readAloudText
-        ttsReadTask?.cancel()
-        ttsReadTask = Task {
-            // Non-English voices read a translated transcript (translation is
-            // a no-op for English targets). Always falls back to *some* text,
-            // so speak() always has input.
-            let spoken = await TranslationGateway.shared.translate(english, to: voice.language)
-            if Task.isCancelled { return }
-            do {
-                try await ttsService.speak(text: spoken, voice: voice)
-            } catch {
-                DiagnosticsLog.record(
-                    source: "tts", category: .tts, message: "speak threw",
-                    metadata: ["error": error.localizedDescription]
-                )
-            }
-        }
-    }
-
-    private func stopReadAloud() {
-        ttsReadTask?.cancel()
-        ttsReadTask = nil
-        ttsService.stop()
     }
 
     @ViewBuilder

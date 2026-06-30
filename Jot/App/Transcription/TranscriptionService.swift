@@ -317,7 +317,19 @@ final class TranscriptionService {
     /// is allowed to trigger a network fetch (unlike the launch-time
     /// `warmIfNeeded()` gate, which never downloads silently). Download progress
     /// and readiness surface through `modelState`, which Settings observes.
-    func handleLanguageChange() {
+    ///
+    /// `eagerWarm` (default `true`) controls only the final `warmUp()`. The
+    /// eviction always happens — leaving a stale manager loaded would make the
+    /// next `transcribe` reuse the OLD language's model (`loadOrFail` early-
+    /// returns on a non-nil manager). Pass `eagerWarm: false` for an UNATTENDED
+    /// trigger (e.g. a language arriving from the watch over WCSession) where an
+    /// un-downloaded European model must NOT silently start a ~461 MB network
+    /// fetch with no consent: the preference is adopted and the stale model
+    /// evicted, but the new model loads lazily on the next ACTUAL transcribe
+    /// (the file path fails fast asking for a download; the in-app record path
+    /// is user-initiated). The Settings/wizard pickers keep the default `true`
+    /// — there the pick itself is the consent.
+    func handleLanguageChange(eagerWarm: Bool = true) {
         prepareTask?.cancel()
         prepareTask = nil
         prepareGeneration += 1
@@ -336,9 +348,9 @@ final class TranscriptionService {
         }
         modelState = .notLoaded
         log.info(
-            "Dictation language changed — language=\(AppGroup.transcriptionLanguage, privacy: .public)"
+            "Dictation language changed — language=\(AppGroup.transcriptionLanguage, privacy: .public) eagerWarm=\(eagerWarm, privacy: .public)"
         )
-        warmUp()
+        if eagerWarm { warmUp() }
     }
 
     func purgeAndReload() async {
@@ -1069,11 +1081,13 @@ final class TranscriptionService {
             DiagnosticsLog.record(
                 source: "main-app",
                 category: .modelLoad,
-                message: "model loaded",
+                message: "loaded \(Self.modelLabel(version))",
                 metadata: [
+                    "model": Self.modelLabel(version),
                     "from": loadSourceLabel,
                     "loadMS": "\(loadElapsedMS)",
                     "downloadedThisCall": "\(downloadedThisCall)",
+                    "kind": "selected",
                 ]
             )
             let prepareEndedAt = Date()
@@ -1216,6 +1230,120 @@ final class TranscriptionService {
     ///   dictation tap instead, where `.downloading` progress is surfaced.
     static func modelsExistOnDiskForSelectedVariant() -> Bool {
         AsrModels.modelsExist(at: modelDirectory(), version: selectedVersion)
+    }
+
+    // MARK: - Secondary dictation-model warm (on launch, after the selected one)
+
+    /// The `(version, directory)` of the on-device DICTATION models worth
+    /// warming, independent of the current language: the bundled English
+    /// Parakeet 0.6B **v2** and the European Parakeet **v3** (downloaded on first
+    /// European pick). There is NO 110M *dictation* model on device — the only
+    /// 110M weights are the CTC *scorer* (vocabulary rescorer), warmed separately
+    /// via the vocab rescorer, not here. The unsupported sub-6GB (4GB) band has
+    /// no bundled dictation model, so nothing is added for it. Pure path
+    /// computation → `nonisolated`.
+    nonisolated static func allDeviceModelTargets() -> [(version: AsrModelVersion, directory: URL)] {
+        var targets: [(version: AsrModelVersion, directory: URL)] = []
+        // English dictation = bundled Parakeet 0.6B v2 (only 600M-capable
+        // devices run it; sub-6GB devices have no bundled dictation model to
+        // warm).
+        if DeviceCapability.is600MCapable {
+            let v2Directory = bundled600mDirectory()
+                ?? MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetV2)
+            targets.append((.v2, v2Directory))
+        }
+        // European dictation = Parakeet v3 (warmed only if already downloaded).
+        targets.append((.v3, MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetV3)))
+        return targets
+    }
+
+    /// Force-load the model at `directory`/`version` SOLELY to write its on-disk
+    /// ANE specialization cache, then discard it (we don't keep a second model
+    /// resident). Mirrors `loadOrFail`'s load (`AsrModels.load` → `AsrManager`).
+    /// No-op + `false` on the simulator or when the weights aren't on disk —
+    /// NEVER downloads. Best-effort; never throws. The temporary `AsrManager`
+    /// (and its ANE-resident model) releases at scope exit; only the disk cache
+    /// persists, which is the whole point.
+    nonisolated static func warmDictationModelCache(
+        version: AsrModelVersion,
+        directory: URL
+    ) async -> Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        guard AsrModels.modelsExist(at: directory, version: version) else { return false }
+        do {
+            let models = try await AsrModels.load(from: directory, version: version)
+            let manager = AsrManager()
+            try await manager.loadModels(models)
+            return true
+        } catch {
+            return false
+        }
+        #endif
+    }
+
+    /// Warm the NON-selected on-disk dictation model(s) — e.g. European v3 while
+    /// English is active (or v2 while a European language is active) — so a later
+    /// language switch is instant instead of a cold load. Called LAST in the
+    /// launch warm chain, AFTER the selected model + vocab + embeddings, so the
+    /// model the user's next dictation needs is always warmed first and is never
+    /// delayed by this.
+    ///
+    /// **Never hampers dictation.** Loading a second ASR model contends with the
+    /// live model on the shared ANE compiler, so before EACH model we bail the
+    /// moment a recording or transcription is in flight. (A CoreML load already
+    /// underway can't be cancelled, so a dictation started during the few seconds
+    /// a model is mid-load may see a brief slowdown — never a wrong transcript or
+    /// crash; the capture-first path still produces the correct result.) Each
+    /// model loads then releases, so we never hold two resident at once. Never
+    /// downloads.
+    func warmNonSelectedDictationModelsWhenIdle() async {
+        let current = Self.selectedVersion
+        for target in Self.allDeviceModelTargets() where target.version != current {
+            let label = Self.modelLabel(target.version)
+            guard !isTranscribing,
+                  !RecordingService.shared.isRecording,
+                  !RecordingService.shared.isPipelineInFlight else {
+                DiagnosticsLog.record(
+                    source: "main-app",
+                    category: .modelLoad,
+                    message: "secondary warm deferred — dictation active",
+                    metadata: ["model": label, "kind": "secondary"]
+                )
+                return
+            }
+            guard AsrModels.modelsExist(at: target.directory, version: target.version) else {
+                DiagnosticsLog.record(
+                    source: "main-app",
+                    category: .modelLoad,
+                    message: "\(label) — not downloaded, skipped",
+                    metadata: ["model": label, "kind": "secondary"]
+                )
+                continue
+            }
+            let startedAt = Date()
+            let ok = await Self.warmDictationModelCache(
+                version: target.version,
+                directory: target.directory
+            )
+            let elapsedMS = Self.elapsedMilliseconds(from: startedAt, to: Date())
+            DiagnosticsLog.record(
+                source: "main-app",
+                category: .modelLoad,
+                message: ok ? "warmed \(label)" : "\(label) warm failed",
+                metadata: ["model": label, "loadMS": "\(elapsedMS)", "kind": "secondary"]
+            )
+        }
+    }
+
+    /// Friendly model name for the in-app Diagnostics view.
+    private static func modelLabel(_ version: AsrModelVersion) -> String {
+        switch version {
+        case .v2: return "Parakeet v2 (English)"
+        case .v3: return "Parakeet v3 (European)"
+        default: return String(describing: version)
+        }
     }
 
     /// The App-Support directory of the currently-ACTIVE downloaded dictation

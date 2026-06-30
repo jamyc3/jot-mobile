@@ -61,6 +61,34 @@ enum BackupExclusion {
         log.info("Set isExcludedFromBackup on \(count, privacy: .public) item(s) under \(fluidAudioDir.path, privacy: .public)")
     }
 
+    /// Sets `isExcludedFromBackup = true` on the App Group's
+    /// `RetainedAudio/` directory AND every file inside it.
+    ///
+    /// **Why this exists (parallels `excludeFluidAudioModels`).**
+    /// `RetainedAudioStore` already sets the flag at *write* time (on the
+    /// directory and on each `<id>.wav`/`<id>.<ext>` as it's created). But
+    /// write-time-only exclusion is exactly what bit us with the FluidAudio
+    /// weights in 1.0.2 — files that existed *before* the flag landed on the
+    /// parent could still end up in iOS Device Backup. Retained source audio
+    /// is ~1.9 MB/min and accumulates for 3 days, so the same recursive
+    /// per-launch re-assert is the safety net that guarantees a clean backup.
+    ///
+    /// No-op when the App Group container or the `RetainedAudio/` directory
+    /// doesn't exist yet (user hasn't recorded anything retainable). Called
+    /// per-launch from `JotApp.init`, right after `excludeFluidAudioModels()`.
+    static func excludeRetainedAudio() {
+        guard let base = AppGroup.containerURL else {
+            log.error("Couldn't resolve App Group container for RetainedAudio exclusion")
+            return
+        }
+        let dir = base.appendingPathComponent("RetainedAudio", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: dir.path) else {
+            return
+        }
+        let count = setExcludedFromBackupRecursively(at: dir)
+        log.info("Set isExcludedFromBackup on \(count, privacy: .public) retained-audio item(s) under \(dir.path, privacy: .public)")
+    }
+
     /// Walk the tree rooted at `url`, set `isExcludedFromBackup = true`
     /// on the root + every descendant file/dir. Returns the number of
     /// items successfully flagged. Errors on individual items are logged

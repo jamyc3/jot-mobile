@@ -96,7 +96,7 @@ struct TryKeyboardStep: View {
 
     var body: some View {
         WizardPanel(
-            header: WizardHeader(style: .core(current: 4), onClose: onClose, onBack: onBack)
+            header: WizardHeader(style: .core(current: 5), onClose: onClose, onBack: onBack)
         ) {
             VStack(spacing: 0) {
                 Spacer(minLength: 24)

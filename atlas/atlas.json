@@ -476,6 +476,27 @@
           "captured": true
         },
         {
+          "id": "tts-playground",
+          "title": "Text-to-Speech Playground",
+          "sections": [],
+          "image": "screens/ios/tts-playground.png",
+          "captured": false
+        },
+        {
+          "id": "tts-voice-picker",
+          "title": "Voice Picker",
+          "sections": [],
+          "image": "screens/ios/tts-voice-picker.png",
+          "captured": false
+        },
+        {
+          "id": "tts-clone",
+          "title": "Clone Your Voice",
+          "sections": [],
+          "image": "screens/ios/tts-clone.png",
+          "captured": false
+        },
+        {
           "id": "settings-acknowledgements",
           "title": "Acknowledgements",
           "sections": [

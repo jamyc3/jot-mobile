@@ -19,7 +19,7 @@ struct WarmHoldStep: View {
 
     var body: some View {
         WizardPanel(
-            header: WizardHeader(style: .core(current: 5), onClose: onClose, onBack: onBack)
+            header: WizardHeader(style: .core(current: 6), onClose: onClose, onBack: onBack)
         ) {
             VStack(spacing: 18) {
                 Spacer(minLength: 44)

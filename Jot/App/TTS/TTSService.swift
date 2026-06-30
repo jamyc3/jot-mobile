@@ -17,14 +17,23 @@ struct TTSVoice: Identifiable, Hashable, Sendable {
     /// transcript verbatim; any other code triggers a translate-then-speak loop.
     let language: String
 
-    /// `nil` ⇒ this is a bundled Supertonic preset (`id` is the preset / bundle
+    /// `nil` ⇒ a bundled Supertonic English preset (`id` is the preset / bundle
     /// file stem), synthesized through `Supertonic3Manager`. Non-`nil` ⇒ a
     /// user-cloned PocketTTS voice; the value is the on-disk `.bin` file name
     /// under `ApplicationSupport/TTSVoices/`, loaded via `PocketTtsManager`.
+    /// Cloning is **English-only** — cross-lingual cloning doesn't preserve
+    /// identity at this model size, so clones are offered for English synthesis.
     var clonedFileName: String? = nil
+
+    /// Non-`nil` ⇒ a PocketTTS pack **built-in** voice for a non-English language
+    /// (the value is the pack voice id, e.g. `"estelle"`). Synthesized through
+    /// that language's `PocketTtsManager` with `synthesize(text:, voice: id)` —
+    /// no cloning. These are how Jot does non-English TTS (download per language).
+    var pocketVoiceId: String? = nil
 
     var isEnglish: Bool { language == "en" }
     var isCloned: Bool { clonedFileName != nil }
+    var isPocketPreset: Bool { pocketVoiceId != nil }
 }
 
 /// Thin `@MainActor` facade over FluidAudio's `Supertonic3Manager` for the
@@ -98,6 +107,41 @@ final class TTSService {
     /// Convenience accessor for the first bundled voice (Female 1).
     static var defaultVoice: TTSVoice { voices[0] }
 
+    /// Built-in PocketTTS voices for a NON-English language pack — the voice
+    /// recorded natively in that language (most idiomatic prosody) FIRST, then a
+    /// few cross-language "literary" voices that ride the pack's per-language
+    /// acoustics. Synthesized via the pack's built-in voice id (no cloning).
+    /// Empty for English (which uses the bundled Supertonic presets above).
+    static func pocketPresetVoices(for language: PocketTtsLanguage) -> [TTSVoice] {
+        let code: String
+        let native: (id: String, label: String)?
+        switch language {
+        case .english:
+            return []
+        case .french24L:
+            code = "fr"; native = ("estelle", "Estelle · native French")
+        case .german, .german24L:
+            code = "de"; native = ("juergen", "Jürgen · native German")
+        case .italian, .italian24L:
+            code = "it"; native = ("giovanni", "Giovanni · native Italian")
+        case .portuguese, .portuguese24L:
+            code = "pt"; native = ("rafael", "Rafael · native Portuguese")
+        case .spanish, .spanish24L:
+            code = "es"; native = ("lola", "Lola · native Spanish")
+        }
+        // A small, balanced set of the 21 cross-language "literary" voices.
+        let literary: [(id: String, label: String)] = [
+            ("alba", "Alba"), ("jane", "Jane"), ("mary", "Mary"),
+            ("charles", "Charles"), ("michael", "Michael"), ("george", "George"),
+        ]
+        var out: [TTSVoice] = []
+        if let native {
+            out.append(TTSVoice(id: native.id, label: native.label, language: code, pocketVoiceId: native.id))
+        }
+        out += literary.map { TTSVoice(id: $0.id, label: $0.label, language: code, pocketVoiceId: $0.id) }
+        return out
+    }
+
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.vineetu.jot.mobile.Jot",
         category: "tts-lab"
@@ -112,11 +156,15 @@ final class TTSService {
     /// parse each ~290 KB preset JSON from the bundle at most once per process.
     private var voiceStyleCache: [String: Supertonic3VoiceStyle] = [:]
 
-    /// FluidAudio's PocketTTS facade — the engine behind voice cloning AND the
-    /// synthesizer for cloned voices. Built lazily on the first clone / first
-    /// cloned-voice playback; `initialize()` downloads its model once. We keep
-    /// it separate from `manager` so the Supertonic path is untouched.
-    private var pocket: PocketTtsManager?
+    /// FluidAudio's PocketTTS facades — the engine behind voice cloning AND the
+    /// synthesizer for cloned voices. ONE manager PER LANGUAGE: a `PocketTtsManager`
+    /// is bound to a single immutable language pack, so we lazily build + cache one
+    /// per language; each `initialize()` downloads that pack once. Kept separate
+    /// from `manager` so the Supertonic (English-preset) path is untouched. A
+    /// cloned voice's conditioning (`.bin`) is language-AGNOSTIC, so the SAME clone
+    /// synthesizes in any of the 6 languages by routing through that language's
+    /// manager — the language is a synthesis-time choice, not a property of the clone.
+    private var pocketByLanguage: [PocketTtsLanguage: PocketTtsManager] = [:]
 
     /// Persisted name ⇄ file mapping for cloned voices (App Group JSON). The
     /// in-memory `clonedVoices` is derived from this; `.bin` payloads live on
@@ -187,14 +235,17 @@ final class TTSService {
         }
     }
 
-    /// Lazily build + initialize the PocketTTS manager (downloads its model the
-    /// first time). Returns the ready manager. `@MainActor`-safe: the manager is
-    /// an `actor`, so all calls hop off the main actor automatically.
-    private func ensurePocket() async throws -> PocketTtsManager {
-        if let pocket { return pocket }
-        let mgr = PocketTtsManager()
+    /// Lazily build + initialize the PocketTTS manager for `language` (downloads
+    /// that language pack the first time), caching one per language. Cloning is
+    /// language-agnostic (the Mimi encoder produces speaker conditioning, not
+    /// language), so the clone path can use the default English pack; synthesis
+    /// passes the user-selected language. `@MainActor`-safe: `PocketTtsManager`
+    /// is an `actor`, so calls hop off the main actor automatically.
+    private func ensurePocket(_ language: PocketTtsLanguage = .english) async throws -> PocketTtsManager {
+        if let cached = pocketByLanguage[language] { return cached }
+        let mgr = PocketTtsManager(language: language)
         try await mgr.initialize()
-        pocket = mgr
+        pocketByLanguage[language] = mgr
         return mgr
     }
 
@@ -280,7 +331,7 @@ final class TTSService {
     func deleteDownloadedModels() -> Int64 {
         stop()
         manager = nil
-        pocket = nil
+        pocketByLanguage.removeAll()
         let freed = Self.downloadedModelsByteSize()
         if let cache = Self.ttsModelCacheURL() {
             try? FileManager.default.removeItem(at: cache)
@@ -343,7 +394,14 @@ final class TTSService {
     /// Synthesize `text` with `voice` and play it. Chunks by sentence, playing
     /// chunks back-to-back. No-ops (and logs) if the mic is live — TTS always
     /// yields to recording. Throws on synthesis failure.
-    func speak(text: String, voice: TTSVoice) async throws {
+    ///
+    /// `language` is the SYNTHESIS language for the **cloned-voice** path (PocketTTS
+    /// multilingual: EN/FR/DE/IT/PT/ES). The same clone speaks any of them — its
+    /// conditioning is language-agnostic. Built-in **Supertonic** presets are
+    /// English-only and ignore `language` (the Playground pairs non-English
+    /// languages with cloned or PocketTTS-pack voices). Defaults `.english` so
+    /// existing callers are unchanged.
+    func speak(text: String, voice: TTSVoice, language: PocketTtsLanguage = .english) async throws {
         // Hard yield to recording / warm-hold. We never open a playback session
         // while the mic is active — that would fight the record session iOS
         // pins process-wide (see RecordingService's singleton rationale).
@@ -355,7 +413,9 @@ final class TTSService {
         // Cloned voices run on PocketTTS, which has its own model + lifecycle —
         // they don't require the Supertonic `download()` / `isReady` gate. Only
         // the built-in voices need the Supertonic manager ready.
-        if !voice.isCloned {
+        // Only Supertonic English presets need the Supertonic manager ready;
+        // cloned + PocketTTS pack-preset voices run on their own PocketTTS path.
+        if !voice.isCloned && !voice.isPocketPreset {
             guard manager != nil, isReady else {
                 DiagnosticsLog.record(source: "tts", category: .tts, message: "not ready", metadata: ["manager": "\(manager != nil)", "ready": "\(isReady)"])
                 throw TTSError.notReady
@@ -387,13 +447,21 @@ final class TTSService {
         let supertonicSampleRate = Double(Supertonic3Constants.sampleRate)
         var pocketMgr: PocketTtsManager?
         var pocketVoiceData: PocketTtsVoiceData?
+        let pocketPresetVoiceId = voice.pocketVoiceId
         let pocketSampleRate = Double(PocketTtsConstants.audioSampleRate)
         if let fileName = voice.clonedFileName {
-            let mgr = try await ensurePocket()
+            // Cloned voice → PocketTTS. Cloning is English-only (cross-lingual
+            // cloning doesn't preserve identity), so this normally runs English.
+            let mgr = try await ensurePocket(language)
             let binURL = try Self.voiceFileURL(fileName)
             pocketVoiceData = try mgr.loadClonedVoice(from: binURL)
             pocketMgr = mgr
+        } else if pocketPresetVoiceId != nil {
+            // Non-English built-in PocketTTS voice → that language's pack (the
+            // pack voice id is passed in the loop). Downloads the pack on first use.
+            pocketMgr = try await ensurePocket(language)
         } else {
+            // Bundled Supertonic English preset.
             supertonicStyle = try loadVoiceStyle(for: voice.id)
         }
 
@@ -423,6 +491,11 @@ final class TTSService {
                 // returns a 24 kHz WAV `Data`; decode it to fp32 samples and
                 // feed the SAME playback plumbing as the built-in path.
                 let wav = try await pocketMgr.synthesize(text: chunk, voiceData: pocketVoiceData)
+                samples = Self.samplesFromWAV(wav)
+                sampleRate = pocketSampleRate
+            } else if let pocketMgr, let pocketPresetVoiceId {
+                // Non-English built-in PocketTTS voice → the pack's voice id.
+                let wav = try await pocketMgr.synthesize(text: chunk, voice: pocketPresetVoiceId)
                 samples = Self.samplesFromWAV(wav)
                 sampleRate = pocketSampleRate
             } else if let supertonic, let supertonicStyle {
@@ -459,6 +532,159 @@ final class TTSService {
             DiagnosticsLog.record(source: "tts", category: .tts, message: "speak done")
             teardownEngine()
             deactivatePlaybackSession()
+        }
+    }
+
+    // MARK: - Export (synthesize to a shareable audio file)
+
+    /// Synthesize `text` with `voice` in `language` and write a shareable audio
+    /// file to `tmp/`, WITHOUT playing anything. Runs the SAME per-chunk synthesis
+    /// as `speak()` but ACCUMULATES the samples, writes a 24 kHz (PocketTTS) /
+    /// 44.1 kHz (Supertonic) mono WAV, then transcodes it to an AAC `.m4a` via
+    /// `AVAssetExportSession`. Returns the `.m4a` URL on success; if the transcode
+    /// fails (or yields nothing) it falls back to returning the WAV URL — both are
+    /// shareable. The caller drives `UIActivityViewController`.
+    ///
+    /// Like `speak()`, this refuses to run while the mic is live (TTS yields to
+    /// recording) — but it never opens a playback session, so it doesn't fight the
+    /// audio graph. Throws on synthesis failure.
+    func synthesizeToFile(
+        text: String,
+        voice: TTSVoice,
+        language: PocketTtsLanguage = .english
+    ) async throws -> URL {
+        guard !RecordingService.shared.isRecording else {
+            throw TTSError.notReady
+        }
+        // Only Supertonic English presets need the Supertonic manager ready;
+        // cloned + PocketTTS pack-preset voices run on their own PocketTTS path.
+        if !voice.isCloned && !voice.isPocketPreset {
+            guard manager != nil, isReady else { throw TTSError.notReady }
+        }
+
+        let chunks = Self.sentenceChunks(text)
+        guard !chunks.isEmpty else { throw TTSError.notReady }
+
+        // Resolve the synthesis backend once (mirrors `speak()`), then accumulate
+        // every chunk's samples instead of scheduling them on the player.
+        let supertonic = manager
+        var supertonicStyle: Supertonic3VoiceStyle?
+        let supertonicSampleRate = Double(Supertonic3Constants.sampleRate)
+        var pocketMgr: PocketTtsManager?
+        var pocketVoiceData: PocketTtsVoiceData?
+        let pocketPresetVoiceId = voice.pocketVoiceId
+        let pocketSampleRate = Double(PocketTtsConstants.audioSampleRate)
+        if let fileName = voice.clonedFileName {
+            let mgr = try await ensurePocket(language)
+            let binURL = try Self.voiceFileURL(fileName)
+            pocketVoiceData = try mgr.loadClonedVoice(from: binURL)
+            pocketMgr = mgr
+        } else if pocketPresetVoiceId != nil {
+            pocketMgr = try await ensurePocket(language)
+        } else {
+            supertonicStyle = try loadVoiceStyle(for: voice.id)
+        }
+
+        var accumulated: [Float] = []
+        var sampleRate = pocketSampleRate
+        for chunk in chunks {
+            let samples: [Float]
+            if let pocketMgr, let pocketVoiceData {
+                let wav = try await pocketMgr.synthesize(text: chunk, voiceData: pocketVoiceData)
+                samples = Self.samplesFromWAV(wav)
+                sampleRate = pocketSampleRate
+            } else if let pocketMgr, let pocketPresetVoiceId {
+                let wav = try await pocketMgr.synthesize(text: chunk, voice: pocketPresetVoiceId)
+                samples = Self.samplesFromWAV(wav)
+                sampleRate = pocketSampleRate
+            } else if let supertonic, let supertonicStyle {
+                samples = try await supertonic.synthesize(
+                    text: chunk, language: voice.language, style: supertonicStyle
+                ).samples
+                sampleRate = supertonicSampleRate
+            } else {
+                throw TTSError.notReady
+            }
+            accumulated.append(contentsOf: samples)
+        }
+
+        guard !accumulated.isEmpty else { throw TTSError.audioFormat }
+
+        // Write a self-contained mono WAV, then transcode to AAC `.m4a`.
+        let stem = "jot-tts-\(UUID().uuidString)"
+        let wavURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(stem).wav")
+        try Self.writeWAV(samples: accumulated, sampleRate: sampleRate, to: wavURL)
+
+        let m4aURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(stem).m4a")
+        if (try? await Self.transcodeToM4A(wav: wavURL, to: m4aURL)) != nil,
+           FileManager.default.fileExists(atPath: m4aURL.path) {
+            try? FileManager.default.removeItem(at: wavURL)
+            return m4aURL
+        }
+        // Transcode failed — the WAV is still a valid shareable artifact.
+        return wavURL
+    }
+
+    /// Write fp32 mono `samples` at `sampleRate` to a 16-bit PCM WAV at `url`,
+    /// via `AVAudioFile` (handles the RIFF header for us). Overwrites any prior
+    /// file at that path.
+    private static func writeWAV(samples: [Float], sampleRate: Double, to url: URL) throws {
+        try? FileManager.default.removeItem(at: url)
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sampleRate,
+                channels: 1,
+                interleaved: false
+            )
+        else { throw TTSError.audioFormat }
+
+        // 16-bit signed integer on disk (compact, universally playable).
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+
+        // Write in bounded blocks so a long synthesis doesn't build one giant buffer.
+        let blockFrames = 16_384
+        var offset = 0
+        while offset < samples.count {
+            let count = min(blockFrames, samples.count - offset)
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: format, frameCapacity: AVAudioFrameCount(count)
+            ) else { throw TTSError.audioFormat }
+            buffer.frameLength = AVAudioFrameCount(count)
+            if let channel = buffer.floatChannelData?[0] {
+                samples.withUnsafeBufferPointer { src in
+                    channel.update(from: src.baseAddress!.advanced(by: offset), count: count)
+                }
+            }
+            try file.write(from: buffer)
+            offset += count
+        }
+    }
+
+    /// Transcode a WAV at `wav` to an AAC `.m4a` at `out` using
+    /// `AVAssetExportSession` (preset `AppleM4A`). Throws on a failed/cancelled
+    /// export so the caller can fall back to the WAV.
+    private static func transcodeToM4A(wav: URL, to out: URL) async throws {
+        try? FileManager.default.removeItem(at: out)
+        let asset = AVURLAsset(url: wav)
+        guard let export = AVAssetExportSession(
+            asset: asset, presetName: AVAssetExportPresetAppleM4A
+        ) else { throw TTSError.audioFormat }
+        export.outputURL = out
+        export.outputFileType = .m4a
+        await export.export()
+        if export.status != .completed {
+            throw export.error ?? TTSError.audioFormat
         }
     }
 

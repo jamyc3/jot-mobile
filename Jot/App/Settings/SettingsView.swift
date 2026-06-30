@@ -31,6 +31,11 @@ struct SettingsView: View {
     /// re-prepares the transcription model (downloading if needed).
     @State private var dictationLanguage: String = AppGroup.transcriptionLanguage
 
+    // Feature flag — HIDDEN for release (owner 2026-06-29). Flip to `true`
+    // to re-expose; all underlying code is intact. (The TTS Playground is
+    // instead revealed by tapping the Version row 5× — see `ttsLabRevealed`.)
+    private let showDataImportExport = false     // Settings → "Your Data" export/import
+
     /// Transcript import/export (independent on-device backup, not iCloud).
     @State private var showTranscriptExporter = false
     @State private var transcriptExportDoc: TranscriptBackupDocument?
@@ -133,7 +138,7 @@ struct SettingsView: View {
             vocabularySection
             aiSection
             privacySection
-            dataSection
+            if showDataImportExport { dataSection }
             aboutSection
             settingsFooter
         }
@@ -821,12 +826,31 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
 
+                    // "Text to Speech" — the on-device TTS Playground. Hidden by
+                    // default; REVEALED by tapping the Version row 5× (the reveal
+                    // persists via `ttsLabEnabled`). See `handleVersionTap`.
+                    if ttsLabRevealed {
+                        cardDivider
+
+                        NavigationLink {
+                            TTSPlaygroundView()
+                        } label: {
+                            settingsIconRow(
+                                systemImage: "speaker.wave.2",
+                                tint: JotDesign.JotSemanticIcon.version,
+                                shaded: JotDesign.JotSemanticIcon.versionShaded,
+                                title: "Text to Speech",
+                                subline: "Type, pick a voice, and generate speech on-device",
+                                trailing: { RowChevron() }
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Text to Speech")
+                        .accessibilityHint("Generate and export speech on this iPhone.")
+                    }
+
                     cardDivider
 
-                    // Tapping the Version row 5 times reveals the hidden
-                    // "Text-to-Speech (Lab)" section (see ttsLabSection). A
-                    // plain Button keeps the row's appearance identical to the
-                    // static version row it replaces.
                     Button {
                         handleVersionTap()
                     } label: {
@@ -844,11 +868,6 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Version \(versionString)")
-
-                    if ttsLabRevealed {
-                        cardDivider
-                        ttsLabSection
-                    }
 
                     cardDivider
 
@@ -1003,6 +1022,9 @@ struct SettingsView: View {
         ttsLabVersionTapCount += 1
         if ttsLabVersionTapCount >= 5 {
             withAnimation { ttsLabRevealed = true }
+            // Persist the reveal so the Text-to-Speech row stays visible across
+            // launches (read back on appear).
+            AppGroup.defaults.set(true, forKey: AppGroup.Keys.ttsLabEnabled)
         }
     }
 

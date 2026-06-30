@@ -163,7 +163,7 @@ struct AIRewriteSettingsView: View {
     private var heroBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("AI.")
+                Text("AI")
                     .font(JotType.displaySerif(44))
                     .tracking(-1.6)
                     .foregroundStyle(Color.jotPageInk)

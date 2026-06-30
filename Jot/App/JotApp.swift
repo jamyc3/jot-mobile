@@ -215,6 +215,13 @@ struct JotApp: App {
             // so a dictation that races this shares the same in-flight load.
             Task(priority: .utility) {
                 try? await EmbeddingGemmaService.shared.prewarm()
+                // LAST in the chain: warm the NON-selected dictation model(s)
+                // (e.g. European v3 while English is active) so a later language
+                // switch is instant. Runs after the selected model + vocab +
+                // embeddings, lowest priority, and bails if a recording/
+                // transcription is in flight — so it never delays or contends
+                // with the model the user's next dictation actually needs.
+                await TranscriptionService.shared.warmNonSelectedDictationModelsWhenIdle()
             }
         }
 
@@ -228,6 +235,15 @@ struct JotApp: App {
         // already-set flag is a no-op; the call is also a no-op when the
         // directory doesn't exist (user hasn't downloaded any variant yet).
         BackupExclusion.excludeFluidAudioModels()
+
+        // Per-launch defensive: same recursive backup-exclusion sweep for the
+        // 3-day retained source audio (`RetainedAudio/` in the App Group
+        // container). `RetainedAudioStore` excludes each file at write time,
+        // but write-time-only exclusion is what let the FluidAudio weights leak
+        // into iCloud Device Backup in 1.0.2 — so retained audio (which
+        // accumulates ~1.9 MB/min for 3 days) gets the identical per-launch
+        // re-assert. No-op when nothing has been retained yet. Idempotent.
+        BackupExclusion.excludeRetainedAudio()
 
         // One-shot cleanup: drop any stale `classify-transcripts`
         // `BGProcessingTaskRequest` iOS may still hold from a pre-build-47

@@ -111,8 +111,39 @@
 </style>
 </head>
 <body>
+  <!-- ============================================================
+       IMPLEMENTATION NOTES (added 2026-06-29, post-ship audit)
+       ============================================================
+       This mockup was written before the feature shipped. Factual copy/state
+       discrepancies have been corrected below (marked ✓ fixed). Two design-intent
+       differences from the shipped SwiftUI implementation are noted here so the
+       owner can decide whether to revisit them:
+
+       [DESIGN-INTENT A — Picker interaction] The mockup renders the language list
+       as an in-frame floating overlay (`.sheet` div). The shipped implementation
+       opens a full-system `.sheet(isPresented:)` with a NavigationStack and the
+       `.searchable` modifier — a native iOS sheet that slides up over the wizard.
+       This is idiomatic for iOS but differs from the bespoke in-frame dropdown
+       shown here. Owner decision: accept native sheet (as shipped) or revisit.
+
+       [DESIGN-INTENT B — Skip button] The shipped footer has BOTH a "Continue"
+       primary button AND a "Skip" secondary text button below it (allows the user
+       to defer model download and come back in Settings). This mockup shows only
+       "Continue". A secondary "Skip" affordance is present in all shipped states
+       (including State 1 / English, where it's redundant but consistent). Owner
+       decision: update visual design to include Skip row, or leave mockup as-is
+       since the interaction is correctly described in design.md §5.2.
+
+       [MISSING STATES — Download failed + Model loading] Two additional transient
+       states exist in the shipped code but have no mockup panel:
+       - .failed(message): shows "Download failed: <message>" in red, Continue
+         disabled, Download button reappears as retry.
+       - .loading: shows "Preparing the French model…" in secondary ink, Continue
+         disabled, no Download button. This is the post-download model-warm phase.
+       Both are transient; adding States 6/7 is optional.
+       ============================================================ -->
   <h1 class="page">Jot — onboarding W2 · "What language will you speak?"</h1>
-  <p class="page">Design reference for the new Language step (inserted after Welcome). English is built in (bundled v2 — no download); any European language downloads Parakeet v3 once. Recreate natively in SwiftUI with real Jot tokens — this is a look/behavior reference, not code to copy. Light + dark shown. Tokens mirror <code>docs/wizard-w5-tryit</code>.</p>
+  <p class="page">Design reference for the new Language step (inserted after Welcome). English is built in (bundled v2 — no download); any European language downloads Parakeet v3 once. Recreate natively in SwiftUI with real Jot tokens — this is a look/behavior reference, not code to copy. Light + dark shown. Tokens mirror <code>docs/wizard-w5-tryit</code>. <strong>See implementation notes in the HTML comments above.</strong></p>
   <div class="gallery" id="g"></div>
 
 <script>
@@ -147,9 +178,12 @@ function s1(theme){ // English selected — bundled, ready
   return shell(theme, inner, cta(true));
 }
 function s2(theme){ // list open
+  // English is pinned first (shipped: "English first by relevance — bundled, instant path"),
+  // then all other languages alphabetically by English name.
   const rows = [
+    ['English','English',1,'Built in'],
     ['Czech','Čeština',0,0],['Danish','Dansk',0,0],['Dutch','Nederlands',0,0],
-    ['English','English',1,'Built in'],['Finnish','Suomi',0,0],['French','Français',0,0],
+    ['Finnish','Suomi',0,0],['French','Français',0,0],
     ['German','Deutsch',0,0],['Greek','Ελληνικά',0,0],['Italian','Italiano',0,0],
     ['Polish','Polski',0,0],['Portuguese','Português',0,0],['Russian','Русский',0,0]
   ].map(([n,nv,sel,bd])=>`<div class="lrow ${sel?'sel':''}"><div class="nm">${n}<small>${nv}</small></div>${sel?`<div class="ck">${checkmk}</div>`:(bd?`<div class="badge">${bd}</div>`:'')}</div>`).join('');
@@ -158,14 +192,22 @@ function s2(theme){ // list open
   return shell(theme, inner, cta(true));
 }
 function s3(theme){ // French selected, not downloaded
+  // NOTE (2026-06-29): In the shipped implementation, picking a European language
+  // AUTO-STARTS the v3 download immediately (via select() → handleLanguageChange()).
+  // The Download button is only a retry/fallback shown when auto-download hasn't
+  // started or failed back to notLoaded. This state is therefore very transient in
+  // practice; users will typically jump straight from picking French to State 4.
   const inner = TITLE + picker('French','Français') +
     `<div class="hint"><span class="ic">${box}</span>Downloads a ~461 MB model that runs entirely on this iPhone.</div>` +
     `<div class="dlbtn">${dl} Download</div>` + FOOT;
   return shell(theme, inner, cta(false));
 }
 function s4(theme){ // downloading
+  // Shipped status line text includes the percentage inline:
+  // "Downloading — keep Jot open. 47%" — then the separate progress bar + "47%"
+  // label appear below it as a distinct visual row.
   const inner = TITLE + picker('French','Français') +
-    `<div class="hint"><span class="ic">${box}</span>Downloading — keep Jot open.</div>` +
+    `<div class="hint"><span class="ic">${box}</span>Downloading — keep Jot open. 47%</div>` +
     `<div class="progress"><div class="bar"><i style="width:47%"></i></div><div class="pct">47%</div></div>` + FOOT;
   return shell(theme, inner, cta(false));
 }

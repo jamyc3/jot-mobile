@@ -40,7 +40,7 @@ struct SeeForYourselfPage: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("See for yourself.")
+            Text("See for yourself")
                 .font(.custom(JotType.frauncesSemiBold, size: 32))
                 .foregroundStyle(Color.jotInk)
                 .accessibilityAddTraits(.isHeader)

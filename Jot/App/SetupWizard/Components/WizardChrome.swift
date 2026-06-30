@@ -58,12 +58,13 @@ struct WizardBrandMark: View {
 
 // MARK: - Progress dots
 
-private let wizardCoreStepCount = 7
+private let wizardCoreStepCount = 8
 
-/// 7-dot row representing the core Part A wizard progress (W1–W7).
+/// 8-dot row representing the core Part A wizard progress (W1–W8).
 /// The W3 "Download speech model" panel was removed when the default
 /// Parakeet bundle moved into the IPA, and the W5 in-app try-it step
-/// was later dropped — total core count is 7.
+/// was later dropped; the new "Language" step (W2, after Welcome) was
+/// then added back — total core count is 8.
 /// Active dot is `jotAccent` 7pt; inactive dots use `jotPageInk.opacity(0.22)`.
 struct WizardProgressDots: View {
     let current: Int

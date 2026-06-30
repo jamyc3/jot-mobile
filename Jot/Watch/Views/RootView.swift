@@ -30,6 +30,10 @@ struct RootView: View {
 
     @State private var showingRecording: Bool = false
     @State private var showingFullAlert: Bool = false
+    /// Mirrors `WatchLanguageStore.current` so the language row re-renders after
+    /// the Crown picker commits a new choice (the store is plain UserDefaults,
+    /// not Observable). Refreshed on appear + when the picker dismisses.
+    @State private var dictationLanguage: WatchLanguage = WatchLanguageStore.current
 
     /// Playback of non-synced recordings (tap a pending row to hear it).
     private let player = WatchPendingAudioPlayer.shared
@@ -48,6 +52,10 @@ struct RootView: View {
                 dictateHero
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 10, trailing: 0))
+
+                languageRow
+                    .listRowBackground(WatchListCard())
+                    .listRowInsets(cardInsets)
 
                 recentRows
 
@@ -117,6 +125,42 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 6)
+    }
+
+    // MARK: - Language
+
+    /// Quiet row under the hero showing the current dictation language and
+    /// opening the Crown picker. Tapping pushes `WatchLanguagePickerView`; on
+    /// return we refresh `dictationLanguage` from the store so the row reflects
+    /// any new choice.
+    private var languageRow: some View {
+        NavigationLink {
+            WatchLanguagePickerView()
+                .onDisappear { dictationLanguage = WatchLanguageStore.current }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "globe")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(JotDesignWatchSafe.jotBlueTop)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Language")
+                        .font(.system(size: 13))
+                        .foregroundStyle(JotDesignWatchSafe.jotPageInkSecondary)
+                    Text(dictationLanguage.nativeName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .tracking(-0.2)
+                        .foregroundStyle(JotDesignWatchSafe.jotPageInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Dictation language, \(dictationLanguage.displayName)")
+        .accessibilityHint("Opens the Digital Crown language picker.")
     }
 
     // MARK: - Recent rows
