@@ -7,8 +7,13 @@ struct DonationsView: View {
     @Environment(\.openURL) private var openURL
 
     @AppStorage("jot.donations.lastSummary") private var cachedSummaryData: Data = Data()
+    @AppStorage("jot.donations.lastCharities") private var cachedCharitiesData: Data = Data()
 
     @State private var summary: DonationsSummary?
+    /// Static per-charity metadata (description / logo / fundraiser URL) from
+    /// `charities.json`, keyed by slug. Merged into the live `/summary` feed
+    /// (which carries only counts) so rows show real copy + logos.
+    @State private var metadataBySlug: [String: CharityMetadata] = [:]
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var shuffledOrder: [String] = []
@@ -376,6 +381,10 @@ struct DonationsView: View {
         isLoading = true
         defer { isLoading = false }
 
+        // Static metadata (description / logo) first — best-effort, so a
+        // metadata hiccup never blocks the live totals.
+        await loadCharityMetadata()
+
         do {
             let fetchedSummary = try await DonationsService.fetchSummary()
             applySummary(fetchedSummary)
@@ -391,7 +400,24 @@ struct DonationsView: View {
         }
     }
 
+    /// Load charity metadata (description / logo / fundraiser) from
+    /// `charities.json`, caching the raw bytes for offline. Falls back to the
+    /// cache on a network failure. Re-enriches an already-shown summary so a
+    /// late metadata load fills in descriptions/logos without a reload.
+    private func loadCharityMetadata() async {
+        if let data = try? await DonationsService.fetchCharitiesData() {
+            cachedCharitiesData = data
+            metadataBySlug = DonationsService.decodeCharities(from: data)
+        } else if metadataBySlug.isEmpty {
+            metadataBySlug = DonationsService.decodeCharities(from: cachedCharitiesData)
+        }
+        if let summary { applySummary(summary) }
+    }
+
     private func loadCachedSummary() {
+        if metadataBySlug.isEmpty {
+            metadataBySlug = DonationsService.decodeCharities(from: cachedCharitiesData)
+        }
         guard summary == nil,
               let cachedSummary = DonationsService.decodeCachedSummary(from: cachedSummaryData) else {
             return
@@ -404,9 +430,21 @@ struct DonationsView: View {
         cachedSummaryData = data
     }
 
+    /// Merge the live summary with charity metadata (by slug) before display —
+    /// the live feed carries only counts, so description/logo/fundraiser come
+    /// from `charities.json`. Idempotent (safe to re-apply when metadata
+    /// arrives). The cached summary stays the raw, un-enriched feed.
     private func applySummary(_ nextSummary: DonationsSummary) {
-        summary = nextSummary
-        updateShuffledOrder(for: nextSummary.perCharity)
+        let enrichedCharities = nextSummary.perCharity.map {
+            $0.enriched(with: metadataBySlug[$0.slug])
+        }
+        summary = DonationsSummary(
+            totalDonations: nextSummary.totalDonations,
+            totalRaisedUSD: nextSummary.totalRaisedUSD,
+            perCharity: enrichedCharities,
+            lastUpdated: nextSummary.lastUpdated
+        )
+        updateShuffledOrder(for: enrichedCharities)
     }
 
     private func updateShuffledOrder(for charities: [DonationCharity]) {

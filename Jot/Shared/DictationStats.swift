@@ -26,6 +26,8 @@ enum DictationStats {
     private static let secondsKey = "jot.stats.dictationSeconds"
     private static let firstStatDateKey = "jot.stats.firstStatDate"
     private static let donationStateKey = "jot.stats.donationCardState"
+    private static let lastShownMilestoneKey = "jot.stats.donationLastShownMilestone"
+    private static let didMigrateMilestoneKey = "jot.stats.didMigrateDonationMilestone"
     private static let perDaySecondsKey = "jot.stats.perDaySeconds"
     private static let perDayCountKey = "jot.stats.perDayCount"
 
@@ -33,14 +35,22 @@ enum DictationStats {
 
     private static let sparklineWindowDays: Int = 14
 
-    /// Cumulative dictation duration required before the home donation card
-    /// is allowed to render. Set at 2 hours — high enough that someone
-    /// reaching it has clearly made Jot a habit (a moderate user takes
-    /// ~2 weeks, a casual user ~1 month), low enough that the bulk of
-    /// real users actually see the card instead of it being aspirational.
-    /// The earlier 10-hour figure was tuned for power users only and
-    /// would have hidden the card from the casual majority.
-    static let donationThresholdSeconds: TimeInterval = 2 * 60 * 60
+    /// Cumulative RECORDED dictation time (seconds) at which the donation
+    /// prompt fires — and KEEPS firing, incrementally. The prompt re-appears
+    /// each time the user crosses the next milestone (2h, then 5h, 10h, 20h,
+    /// 40h), so a single "Maybe later" no longer silences it forever; it just
+    /// waits for the next threshold. These are recorded speaking time, NOT the
+    /// 2.5× "time saved" figure (which the pitch copy can still show).
+    static let donationMilestonesSeconds: [TimeInterval] = [
+        2 * 60 * 60,
+        5 * 60 * 60,
+        10 * 60 * 60,
+        20 * 60 * 60,
+        40 * 60 * 60,
+    ]
+
+    /// First milestone (kept for any external reference / Settings copy).
+    static var donationThresholdSeconds: TimeInterval { donationMilestonesSeconds[0] }
 
     /// "Time saved over typing" multiplier applied to recorded duration for
     /// the Settings stats row. Speaking is ~150 WPM and unassisted typing
@@ -178,17 +188,37 @@ enum DictationStats {
         defaults.set(countsByDay, forKey: perDayCountKey)
     }
 
-    // MARK: - Donation card gating
+    // MARK: - Donation prompt gating (incremental milestones)
 
-    /// True when the home donation card should render. Three gates:
-    /// 1. Card hasn't already been dismissed or marked as donated.
-    /// 2. Cumulative dictation duration ≥ `donationThresholdSeconds`.
-    /// 3. ≥ `donationCardMinDaysSinceFirstStat` days since the first
-    ///    recorded dictation (so a heavy-bursting first-day user doesn't
-    ///    get asked on day one).
+    /// Index of the highest milestone `totalSeconds` has reached, or `-1` if
+    /// the user hasn't crossed the first one yet.
+    static var reachedMilestoneIndex: Int {
+        let seconds = totalSeconds
+        var index = -1
+        for (i, threshold) in donationMilestonesSeconds.enumerated() where seconds >= threshold {
+            index = i
+        }
+        return index
+    }
+
+    /// Index of the highest milestone for which the prompt has already been
+    /// shown + acted on. The prompt re-fires only when `reachedMilestoneIndex`
+    /// climbs past this. Persisted in the App Group (survives app updates;
+    /// only a delete-reinstall clears it). `-1` = never shown.
+    static var lastShownMilestoneIndex: Int {
+        get {
+            migrateLegacyDonationStateIfNeeded()
+            return AppGroup.defaults.object(forKey: lastShownMilestoneKey) as? Int ?? -1
+        }
+        set { AppGroup.defaults.set(newValue, forKey: lastShownMilestoneKey) }
+    }
+
+    /// True when the home donation prompt should appear. Gates:
+    /// 1. ≥ `donationCardMinDaysSinceFirstStat` days since the first dictation
+    ///    (no day-one nag).
+    /// 2. The user has crossed a NEW milestone since the last time the prompt
+    ///    was shown (so it re-fires at 2h, 5h, 10h, …).
     static var shouldShowDonationCard: Bool {
-        guard donationCardState == .unseen else { return false }
-        guard totalSeconds >= donationThresholdSeconds else { return false }
         guard let firstStat = firstStatDate else { return false }
         let calendar = Calendar.current
         let daysSinceFirstStat = calendar.dateComponents(
@@ -196,7 +226,30 @@ enum DictationStats {
             from: calendar.startOfDay(for: firstStat),
             to: calendar.startOfDay(for: Date())
         ).day ?? 0
-        return daysSinceFirstStat >= donationCardMinDaysSinceFirstStat
+        guard daysSinceFirstStat >= donationCardMinDaysSinceFirstStat else { return false }
+        return reachedMilestoneIndex > lastShownMilestoneIndex
+    }
+
+    /// Record that the user saw + acted on the prompt at the current milestone,
+    /// so it won't re-show until they cross the NEXT one. `donated == true`
+    /// also stamps the (analytics-only) donated flag.
+    static func acknowledgeDonationPrompt(donated: Bool) {
+        lastShownMilestoneIndex = reachedMilestoneIndex
+        if donated { donationCardState = .donated }
+    }
+
+    /// One-time migration from the old one-shot card model. If the user already
+    /// dismissed or donated under the old `DonationCardState`, treat the current
+    /// milestone as already shown so they aren't immediately re-prompted; they
+    /// pick up again at the next milestone.
+    private static func migrateLegacyDonationStateIfNeeded() {
+        guard !AppGroup.defaults.bool(forKey: didMigrateMilestoneKey) else { return }
+        AppGroup.defaults.set(true, forKey: didMigrateMilestoneKey)
+        if let raw = AppGroup.defaults.string(forKey: donationStateKey),
+           let legacy = DonationCardState(rawValue: raw),
+           legacy == .dismissed || legacy == .donated {
+            AppGroup.defaults.set(reachedMilestoneIndex, forKey: lastShownMilestoneKey)
+        }
     }
 
     private static func perDaySeconds(from defaults: UserDefaults) -> [String: Double] {

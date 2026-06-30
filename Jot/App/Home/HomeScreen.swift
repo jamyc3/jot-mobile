@@ -143,14 +143,6 @@ struct HomeScreen: View {
                         }
                     }
 
-                    if donationCardVisible {
-                        DonationCard(
-                            onDismiss: handleDonationCardDismiss,
-                            onSeeDonations: handleDonationCardOpen
-                        )
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-
                     // WS-F: the warm-hold switching nudge. Surfaces here when
                     // the record-and-bounce streak crossed threshold and the
                     // burst ended on home (the app set the projection). The
@@ -230,6 +222,16 @@ struct HomeScreen: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        // Donation prompt — a centered modal popup over the home screen,
+        // surfaced once a usage milestone is crossed (see `DictationStats`).
+        // Re-fires at each milestone (2h → 5h → 10h …).
+        .overlay {
+            if donationCardVisible {
+                donationPopup
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: donationCardVisible)
         // Floating selection-Cancel: pinned to the top so it's reachable
         // anywhere in a long list (the in-header Cancel scrolled away). Glass
         // so the list reads through it.
@@ -748,6 +750,36 @@ struct HomeScreen: View {
 
     // MARK: - Donation card
 
+    /// The donation prompt presented as a centered modal popup: a dimmed,
+    /// tap-to-dismiss scrim behind the existing `DonationCard` content.
+    private var donationPopup: some View {
+        ZStack {
+            Color.black.opacity(0.38)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { handleDonationCardDismiss() }
+            DonationCard(
+                onDismiss: handleDonationCardDismiss,
+                onSeeDonations: handleDonationCardOpen
+            )
+            // Opaque surface so it reads as a modal popup over the home
+            // content (DonationCard's own fill is near-transparent — built for
+            // the wallpaper, not over other cards).
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(JotDesign.background)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.jotInk.opacity(0.08), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.22), radius: 26, x: 0, y: 12)
+            .padding(.horizontal, 28)
+            .transition(.scale(scale: 0.92).combined(with: .opacity))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     /// Re-reads `DictationStats.shouldShowDonationCard` and updates the local
     /// @State flag. Cheap (two UserDefaults reads + a date math step), so
     /// it's fine to call from every plausible entry point — onAppear,
@@ -766,7 +798,9 @@ struct HomeScreen: View {
     /// is high enough that re-asking after a soft-dismiss would feel like
     /// nagging.
     private func handleDonationCardDismiss() {
-        DictationStats.donationCardState = .dismissed
+        // Advance past the current milestone — the prompt re-fires at the next
+        // one (2h → 5h → 10h …) rather than being silenced forever.
+        DictationStats.acknowledgeDonationPrompt(donated: false)
         withAnimation(.easeInOut(duration: 0.3)) {
             donationCardVisible = false
         }
@@ -777,7 +811,9 @@ struct HomeScreen: View {
     /// app: a false-positive is better UX than re-asking an actual donor).
     /// Then open the donations page in Safari and hide the card.
     private func handleDonationCardOpen() {
-        DictationStats.donationCardState = .donated
+        // Advance past the current milestone (also stamps the donated flag);
+        // re-fires at the next milestone.
+        DictationStats.acknowledgeDonationPrompt(donated: true)
         if let url = URL(string: "https://jot-transcribe.com/donations/") {
             UIApplication.shared.open(url)
         }

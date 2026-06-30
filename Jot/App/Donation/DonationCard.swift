@@ -1,10 +1,11 @@
 import SwiftUI
 import UIKit
 
-/// Home-screen card surfaced once the cumulative dictation duration crosses
-/// the donation threshold (see `DictationStats.donationThresholdSeconds`).
-/// Dismissible. Renders inline above the transcript list — flows past on
-/// scroll so it never blocks the user's primary workflow.
+/// Donation prompt content, presented as a centered modal popup on the home
+/// screen (`HomeScreen.donationPopup`) once cumulative dictation crosses a
+/// usage milestone (see `DictationStats.donationMilestonesSeconds`). It
+/// re-fires at each milestone (2h → 5h → 10h …); "Not now" defers it to the
+/// next milestone rather than silencing it forever.
 ///
 /// Copy here is **deliberately impersonal**. Unlike the Mac app, which
 /// signs the pitch as "charities I support", the iOS card never references
@@ -63,7 +64,7 @@ struct DonationCard: View {
                     .font(.system(.callout))
                     .foregroundStyle(Color.jotMute)
                     .buttonStyle(.plain)
-                    .accessibilityHint("Dismisses this card permanently")
+                    .accessibilityHint("Dismisses this reminder until your next usage milestone")
 
                 Spacer(minLength: 0)
             }
