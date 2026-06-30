@@ -54,10 +54,12 @@ reference; this doc is the mobile adaptation.
    languages are **out of scope** for mobile v1 (owner: "all ~25 v3 languages").
    So the mobile map is just two buckets: **English → v2 (bundled)**, **European
    → v3 (download)**.
-5. **Low-RAM iPhones get v3 int4.** Owner decision: devices that can't hold the
-   600M-class v3 (the same devices that today fall back to the 110M English model
-   — iPhone 11, 12/13 non-Pro, SE) route multilingual to **`.tdt_0_6b_v3_int4`**
-   (~1.1 GB, lower RAM) instead of being locked out. See §4.
+5. ~~**Low-RAM iPhones get v3 int4.**~~ **SUPERSEDED (owner, 2026-06-29):** sub-6GB
+   / 4GB is now formally UNSUPPORTED (official support = iPhone 14 Pro+, all
+   ≥6GB). There is no int4 low-RAM variant and no 110M dictation fallback — both
+   were removed (`deferred-engineering.md` #8). English is always bundled v2;
+   European is v3 (int8) on every supported device. The int4 sketch in §3.1/§4
+   below is historical and does NOT reflect shipped code.
 6. **The CTC vocab-boost model already exists on mobile** — `CtcModelCache.shared`
    (`VocabularySettingsView.swift:63`). It is the same model the owner added; no
    new "boost" surface is introduced here. Out of scope, mentioned only so the

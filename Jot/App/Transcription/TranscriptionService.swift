@@ -123,24 +123,18 @@ final class TranscriptionService {
     /// CTC subset (`parakeet-ctc-110m-coreml`) the rescorer uses — different
     /// FluidAudio repo, different on-disk directory.
     nonisolated private static var selectedVersion: AsrModelVersion {
-        // English keeps the device-capability path (bundled v2 / 110M). Every
-        // European language resolves to int8 Parakeet v3 — one shared
-        // multilingual model, downloaded on first selection. FIRST PASS: v3 on
-        // every device (no int4 / device-RAM gating yet — design doc §4).
-        if LanguageChoice.current.isEnglish {
-            return DeviceCapability.is600MCapable ? .v2 : .tdtCtc110m
-        }
-        return .v3
+        // English is always the bundled Parakeet 0.6B v2 (official support is
+        // iPhone 14 Pro+, all ≥6GB / 600M-capable; sub-6GB is unsupported).
+        // Every European language resolves to int8 Parakeet v3 — one shared
+        // multilingual model, downloaded on first selection.
+        LanguageChoice.current.isEnglish ? .v2 : .v3
     }
 
     /// FluidAudio `Repo` paired with `selectedVersion`. Used for
     /// `MLModelConfigurationUtils.defaultModelsDirectory(for:)` and for
     /// the user-facing speech-model identifier.
     private static var selectedRepo: Repo {
-        if LanguageChoice.current.isEnglish {
-            return DeviceCapability.is600MCapable ? .parakeetV2 : .parakeetTdtCtc110m
-        }
-        return .parakeetV3
+        LanguageChoice.current.isEnglish ? .parakeetV2 : .parakeetV3
     }
 
     private let standIn: (any TranscriptionStandIn)?
@@ -634,7 +628,7 @@ final class TranscriptionService {
             // one-shot batch transcribe of a complete recording we hand
             // the manager a fresh decoder state per call (no streaming
             // carry-over). Decoder-layer count is version-specific
-            // (1 for `tdtCtc110m`, 2 for v2/v3/tdtJa) and
+            // (2 for v2/v3) and
             // `AsrModelVersion.decoderLayers` is the SDK's source of
             // truth. Mirrors the Mac app's `Transcriber.swift`.
             var decoderState = TdtDecoderState.make(
@@ -1158,26 +1152,20 @@ final class TranscriptionService {
     /// Resolve the bundled model directory for FluidAudio's
     /// `AsrModels.load(from:)`.
     ///
-    /// Resolve the model directory for FluidAudio's `AsrModels.load(from:)`,
-    /// branching on device capability:
+    /// Resolve the model directory for FluidAudio's `AsrModels.load(from:)`:
     ///
-    /// - **Capable devices** (`DeviceCapability.is600MCapable`) run the
-    ///   bundled Parakeet 0.6B v2, vendored at
+    /// - **English** runs the bundled Parakeet 0.6B v2, vendored at
     ///   `Resources/Models/Parakeet/parakeet-tdt-0.6b-v2/` inside the app bundle.
     ///   First dictation is instant + offline, no download. Loaded straight from
     ///   the app bundle.
-    /// - **Sub-6GB devices** run the smaller 110M, which is NOT bundled —
-    ///   `MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetTdtCtc110m)`
-    ///   points at FluidAudio's default Application Support cache (already a
-    ///   stable, update-proof path), where `AsrModels.download` lands the weights
-    ///   on first need.
+    /// - **European languages** resolve to v3, which is NOT bundled — it
+    ///   downloads into FluidAudio's default Application Support cache for
+    ///   `.parakeetV3` (via `selectedRepo`) on first selection.
     private static func modelDirectory() -> URL {
-        // Only English on a capable device runs the bundled 600M (v2) straight
-        // from the read-only app bundle. A European language resolves to v3,
-        // which is NOT bundled — it downloads into FluidAudio's default
-        // App-Support cache for `.parakeetV3` (via `selectedRepo`), exactly like
-        // the sub-6GB 110M path.
-        if LanguageChoice.current.isEnglish, DeviceCapability.is600MCapable {
+        // English runs the bundled 600M (v2) straight from the read-only app
+        // bundle. A European language resolves to v3, which downloads into
+        // FluidAudio's default App-Support cache for `.parakeetV3`.
+        if LanguageChoice.current.isEnglish {
             if let bundled = bundled600mDirectory() {
                 return bundled
             }
@@ -1421,17 +1409,21 @@ final class TranscriptionService {
         let log = Logger(subsystem: "com.vineetu.jot.mobile.Jot", category: "transcription")
         // The legacy default location used by FluidAudio before we moved
         // these models into the bundle. Resolves to
-        // `~/Library/Application Support/FluidAudio/Models/`.
+        // `~/Library/Application Support/FluidAudio/Models/` (any repo's
+        // default dir shares this parent; v2 is the bundled English model).
         let appSupportRoot = MLModelConfigurationUtils
-            .defaultModelsDirectory(for: .parakeetTdtCtc110m)
+            .defaultModelsDirectory(for: .parakeetV2)
             .deletingLastPathComponent()
 
-        // Folder names match Repo.folderName for the corresponding repos:
-        //   .parakeetTdtCtc110m → "parakeet-tdt-ctc-110m"
-        //   .parakeetCtc110m    → "parakeet-ctc-110m-coreml"
-        //   .parakeetEou320     → "parakeet-eou-streaming/320ms" (the
-        //                         top-level `parakeet-eou-streaming` dir
-        //                         catches every ms variant in one shot)
+        // Legacy folder names to reclaim — weights from pre-bundle 0.9.x
+        // installs that are no longer used (the 110M dictation model was
+        // never bundled and is no longer a fallback; the EOU streaming dirs
+        // catch every ms variant in one shot):
+        //   "parakeet-tdt-ctc-110m"    (dead 110M dictation weights)
+        //   "parakeet-ctc-110m-coreml" (only the CTC vocab scorer is current,
+        //                               and it's bundled — this is the legacy
+        //                               App-Support copy, safe to remove)
+        //   "parakeet-eou-streaming"
         // The Parakeet 600M (v2) cache is `parakeet-tdt-0.6b-v2-coreml` —
         // NOT in this allowlist; the variant is selectable in Settings
         // again and any cached weights should stay so the user doesn't
@@ -1519,7 +1511,7 @@ final class TranscriptionService {
 
         let log = Logger(subsystem: "com.vineetu.jot.mobile.Jot", category: "transcription")
         let nemotronRoot = MLModelConfigurationUtils
-            .defaultModelsDirectory(for: .parakeetTdtCtc110m)
+            .defaultModelsDirectory(for: .parakeetV2)
             .deletingLastPathComponent()
             .appendingPathComponent("nemotron-streaming", isDirectory: true)
 

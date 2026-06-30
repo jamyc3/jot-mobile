@@ -404,27 +404,17 @@ enum AppGroup {
     }
 
     /// User-selected speech-model variant (raw `String`).
-    /// Supported values:
-    /// - `"tdtCtc110m"` (Parakeet TDT-CTC 110M, bundled default)
-    /// - `"parakeetV2"` (Parakeet 0.6B v2, opt-in download)
     ///
-    /// `TranscriptionService` and `StreamingTranscriptionService` resolve
-    /// this string at every session boundary — flipping the variant in
-    /// Settings only takes effect on the next dictation start, never
-    /// mid-session.
-    ///
-    /// Truly unknown values (including stale `"nemotron0_6b"` tags from
-    /// prior builds) fall back to the bundled `"tdtCtc110m"` default so
-    /// a malformed write can't brick transcription. This is the
-    /// auto-migration path for users who had Nemotron selected before
-    /// the rip — first read after upgrade silently routes them back to
-    /// the bundled variant.
+    /// Jot ships a single bundled English speech model (Parakeet 0.6B v2).
+    /// This getter always resolves to `"english"` regardless of what is
+    /// persisted, so any legacy or malformed tag — `"tdtCtc110m"` (a dead
+    /// 110M dictation model that was never actually bundled), `"parakeetV2"`,
+    /// `"nemotron0_6b"` (ripped), unset, or garbage — can never brick
+    /// transcription. The setter still records the raw value for diagnostics.
     static var speechModelVariant: String {
         get {
-            // Jot ships a single bundled speech model. Every persisted tag —
-            // legacy (`"tdtCtc110m"`, `"parakeetV2"`, `"nemotron0_6b"`),
-            // unset, or malformed — resolves to the sole `"english"` model so
-            // a stale write can never brick transcription.
+            // Single bundled speech model — every persisted tag resolves to
+            // `"english"` so a stale write can never brick transcription.
             "english"
         }
         set { defaults.set(newValue, forKey: Keys.speechModelVariant) }

@@ -354,7 +354,14 @@ the 4GB best-effort band is formally dropped; or a model-selection refactor touc
 comment cleanup. Verify the remaining English path still resolves to bundled v2 on all
 supported devices and the legacy App-Support sweep is untouched.
 
-**Status.** Captured 2026-06-29 at owner's request ("that code should have been removed long
-ago; it's why you added the wrong model"). Not started.
+**Status.** ✅ **DONE 2026-06-30.** Removed the device-capability branch from
+`TranscriptionService.selectedVersion`/`selectedRepo`/`modelDirectory()` (English is always
+bundled v2; European is v3); the two legacy App-Support sweeps now compute their parent dir from
+`.parakeetV2` instead of the dead `.parakeetTdtCtc110m` and KEEP cleaning the legacy
+`parakeet-tdt-ctc-110m` folder (real pre-bundle disk). Fixed the self-contradicting comments in
+`TranscriptionService` / `AppGroup` (no longer claim a bundled 110M dictation model), and updated
+`ARCHITECTURE.md` (Role note + capability-gate bullets) and `docs/multilingual-dictation/design.md`
+(int4/sub-6GB sketch marked superseded) in the same pass. Build verified. The CTC vocab scorer and
+`sweepLegacyAppSupportWeights` are untouched.
 
 ---
