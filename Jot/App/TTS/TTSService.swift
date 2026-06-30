@@ -78,6 +78,14 @@ final class TTSService {
     private(set) var isSpeaking: Bool = false
     private(set) var cloneState: CloneState = .idle
 
+    /// One-time PocketTTS language-pack download progress (the non-English
+    /// preset voices download on first use). `packDownloadLanguage` is non-nil
+    /// only while a pack is actually downloading; `packDownloadFraction` is
+    /// 0...1. Drives the Playground's download progress bar.
+    private(set) var packDownloadLanguage: PocketTtsLanguage? = nil
+    private(set) var packDownloadFraction: Double = 0
+    var isDownloadingPack: Bool { packDownloadLanguage != nil }
+
     /// The user's cloned voices, loaded from the App Group registry on first
     /// access and kept in sync on add/delete. Each maps a display name to a
     /// `.bin` conditioning file under `ApplicationSupport/TTSVoices/`.
@@ -243,6 +251,26 @@ final class TTSService {
     /// is an `actor`, so calls hop off the main actor automatically.
     private func ensurePocket(_ language: PocketTtsLanguage = .english) async throws -> PocketTtsManager {
         if let cached = pocketByLanguage[language] { return cached }
+        // Pre-download the language pack WITH progress, using the same args the
+        // model store uses internally (directory: nil, precision: .fp16). After
+        // this, `initialize()` finds the files present and just loads them — no
+        // double download. The progress bar only appears once a real download
+        // reports progress; an already-cached pack returns fast and never fires
+        // the handler (so no flash for English / previously-downloaded packs).
+        defer {
+            packDownloadLanguage = nil
+            packDownloadFraction = 0
+        }
+        _ = try await PocketTtsResourceDownloader.ensureModels(
+            language: language,
+            progressHandler: { [weak self] progress in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.packDownloadLanguage = language
+                    self.packDownloadFraction = progress.fractionCompleted
+                }
+            }
+        )
         let mgr = PocketTtsManager(language: language)
         try await mgr.initialize()
         pocketByLanguage[language] = mgr

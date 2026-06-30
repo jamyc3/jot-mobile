@@ -94,7 +94,10 @@ struct TTSPlaygroundView: View {
                     languageSection
                     voiceSection
                     generateButton
-                    if hasGenerated || ttsService.isSpeaking {
+                    if ttsService.isDownloadingPack {
+                        downloadCard
+                    }
+                    if (hasGenerated || ttsService.isSpeaking) && !ttsService.isDownloadingPack {
                         previewSection
                     }
                     if let generateError {
@@ -247,6 +250,33 @@ struct TTSPlaygroundView: View {
         if selectedVoice.isCloned { return "Your cloned voice · tap to change" }
         if selectedVoice.isPocketPreset { return "Built-in \(language.label) voice · tap to change" }
         return "Bundled preset · tap to change"
+    }
+
+    /// One-time language-pack download progress, shown on the first Generate in
+    /// a not-yet-downloaded language (FR/DE/IT/PT/ES). The pack downloads once,
+    /// then runs entirely on-device.
+    @ViewBuilder
+    private var downloadCard: some View {
+        let pct = Int((ttsService.packDownloadFraction * 100).rounded())
+        LiquidGlassCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 9) {
+                    ProgressView().controlSize(.small).tint(Color.jotAccent)
+                    Text("Downloading \(language.label) voices… \(pct)%")
+                        .font(JotType.rowTitle)
+                        .tracking(-0.2)
+                        .foregroundStyle(Color.jotPageInk)
+                }
+                ProgressView(value: ttsService.packDownloadFraction)
+                    .tint(Color.jotAccent)
+                Text("One-time download, then \(language.label) runs entirely on your iPhone.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.jotPageInkCaption)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Downloading \(language.label) voices, \(pct) percent")
     }
 
     @ViewBuilder
