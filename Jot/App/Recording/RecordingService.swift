@@ -211,6 +211,18 @@ final class RecordingService {
     private var priorMode: AVAudioSession.Mode?
     private var priorOptions: AVAudioSession.CategoryOptions?
 
+    /// Timestamp of the last DELIBERATE `setCategory` swap we perform on the
+    /// live warm engine (idle→mixable, or mixable→exclusive on resume). A
+    /// category swap on a running engine can post `AVAudioEngineConfigurationChange`
+    /// asynchronously; without this, `handleEngineConfigChange` would read it as
+    /// an EXTERNAL route change and cool the warm hold (or stop the resuming
+    /// recording) — self-defeating the mixable-idle change. When a config change
+    /// arrives within `deliberateSwapGrace` of one of our swaps, we treat it as
+    /// the echo of our own action and ignore it. External changes (headphones,
+    /// media reset) outside that window still cool as before.
+    private var lastDeliberateSessionSwapAt: Date?
+    private let deliberateSwapGrace: TimeInterval = 1.0
+
     // MARK: - Streaming preview (batch pseudo-streaming)
     //
     // Per-recording sample queue feeding the live partial-transcript preview.
@@ -768,12 +780,19 @@ final class RecordingService {
         warmCooldownTask?.cancel()
         warmCooldownTask = nil
 
-        // Restore `.mixWithOthers` (dropped at warm entry by
-        // `dropMixWithOthersForWarmIdle`) BEFORE resuming, so the next dictation
-        // keeps the `.micUnavailable` mitigation (can come up while another app
-        // holds the mic). On throw, tear the engine down and signal `start()` to
-        // cold-start rather than resume a non-mixable session. Measured on-device
-        // at 15–19ms — no warm-resume regression.
+        // Switch from the MIXABLE idle session (`.playAndRecord +
+        // .mixWithOthers`, set by `makeWarmIdleSessionMixable`) back to the
+        // exclusive `.record` capture category BEFORE resuming, so the recording
+        // is clean (mixable capture would bleed the other app's audio into the
+        // transcript). `[.mixWithOthers]` is a no-op on `.record`, kept only for
+        // parity with `configureSession`. On throw, tear the engine down and
+        // signal `start()` to cold-start rather than resume on the wrong
+        // category. Measured on-device at 15–19ms on the prior category swap —
+        // this bigger `.playAndRecord`→`.record` swap needs re-verification.
+        // Mark BEFORE the swap so its async config-change echo is treated as
+        // ours (see `handleEngineConfigChange`) and doesn't `internalStop` the
+        // recording we're resuming.
+        lastDeliberateSessionSwapAt = Date()
         do {
             try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: [.mixWithOthers])
         } catch {
@@ -1380,13 +1399,13 @@ final class RecordingService {
 
         log.info("Warm hold entered; expiresAt=\(expiresAt.timeIntervalSince1970, privacy: .public)")
 
-        // Drop `.mixWithOthers` for the idle warm window so another app starting
-        // playback (YouTube, Music) generates an interruption `.began` that
-        // `handleInterruption` yields on (`restoreSession` → `setActive(false,
-        // .notifyOthersOnDeactivation)` lets the other app's audio through).
-        // Restored on warm-resume by `startFromWarmHold`. Idle-only — never
-        // during active capture (`enterWarmHold` already guards `!isCapturingSlice`).
-        dropMixWithOthersForWarmIdle()
+        // Make the idle warm session MIXABLE so other apps' audio (YouTube,
+        // Reddit's in-app player, Music, a parallel voice app like Wispr) plays
+        // alongside a warm-held Jot instead of being blocked. Switched back to
+        // exclusive `.record` capture on warm-resume by `startFromWarmHold`.
+        // Idle-only — never during active capture (`enterWarmHold` already
+        // guards `!isCapturingSlice`).
+        makeWarmIdleSessionMixable()
 
         if isPipelineInFlight {
             pendingWarmHoldPublish = true
@@ -1427,30 +1446,54 @@ final class RecordingService {
 
     // MARK: - Warm-hold mic yielding
 
-    /// Drop `.mixWithOthers` for the idle warm window so another app starting
-    /// playback generates an interruption `.began` that `handleInterruption`
-    /// yields on (validated on-device: YouTube + Apple Music both interrupt and
-    /// recover). A mixable `.record` session suppresses that interruption, which
-    /// is why a warm-held Jot would otherwise silently block the other app's
-    /// audio forever. Restored on warm-resume by `startFromWarmHold`.
+    /// Make the idle warm-hold session MIXABLE so other apps' audio (YouTube,
+    /// Reddit's in-app player, Music, a parallel voice app) keeps playing
+    /// alongside a warm-held Jot instead of being blocked.
     ///
-    /// Idle-window only — the caller (`enterWarmHold`) already guards
-    /// `engine.isRunning, isTapInstalled, !isCapturingSlice`, so this never runs
-    /// during active capture. No `setActive` cycle (options-only on the live
-    /// session); on a real iPhone the option clears in place (opts 1→0).
+    /// WHY `.playAndRecord`: `.mixWithOthers` is only honoured on
+    /// `.playAndRecord` / `.playback` / `.multiRoute` — NOT the `.record`
+    /// category Jot captures with (Apple docs). A plain `.record` session is
+    /// inherently non-mixable, so a warm-held Jot blocks any app whose player
+    /// doesn't send an audio interruption (Reddit and many in-app/web/muted-
+    /// autoplay players don't). A mixable `.playAndRecord` session neither
+    /// interrupts nor is interrupted by other apps EXCEPT for hard
+    /// interruptions (calls/alarms), which still reach `handleInterruption` and
+    /// cool the engine. Capture switches back to exclusive `.record` in
+    /// `startFromWarmHold` so the recording stays clean (a mixable capture
+    /// would bleed the other app's audio into the transcript).
     ///
-    /// On throw, skip the drop and keep the session exactly as the warm engine
-    /// had it (never leave it indeterminate). The background `setCategory` can
-    /// fail with `cannotInterruptOthers` (561017449); if so we simply stay
-    /// mixable for this window — the only cost is that this window won't yield,
-    /// which is strictly no worse than the pre-fix behavior.
-    private func dropMixWithOthersForWarmIdle() {
+    /// WHY THIS IS SAFE re: the 2026-04-21 `.record` fix: that fix avoided
+    /// bringing up a duplex `.playAndRecord` graph on a BACKGROUND COLD engine
+    /// START (the Action Button `AURemoteIO` invalid-state failure). This is a
+    /// different moment — a category change on an ALREADY-RUNNING warm engine
+    /// (`enterWarmHold` guards `engine.isRunning, isTapInstalled,
+    /// !isCapturingSlice`), not an engine start. The cold `start()` path is
+    /// untouched and still uses `.record`.
+    ///
+    /// On throw, fall back to the prior non-mixable `.record` idle behavior
+    /// (strictly no worse than before this change) rather than leave the
+    /// session indeterminate.
+    private func makeWarmIdleSessionMixable() {
         let session = AVAudioSession.sharedInstance()
+        // Mark BEFORE the swap so the async config-change echo is inside the
+        // grace window (see `handleEngineConfigChange`).
+        lastDeliberateSessionSwapAt = Date()
         do {
-            try session.setCategory(.record, mode: .measurement, options: [])
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers])
+            // Re-activate so the mixable route/policy actually takes effect on
+            // the live session (a category change alone isn't always applied to
+            // the hardware route until re-activation). Mixable activation does
+            // not interrupt other apps.
+            try session.setActive(true, options: [])
         } catch {
             let ns = error as NSError
-            log.error("Warm-hold mixWithOthers drop failed — domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) desc=\(ns.localizedDescription, privacy: .public). Staying mixable for this window.")
+            log.error("Warm-hold mixable (.playAndRecord) failed — domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) desc=\(ns.localizedDescription, privacy: .public). Falling back to non-mixable .record for this window.")
+            do {
+                try session.setCategory(.record, mode: .measurement, options: [])
+            } catch {
+                let ns2 = error as NSError
+                log.error("Warm-hold .record fallback also failed — domain=\(ns2.domain, privacy: .public) code=\(ns2.code, privacy: .public). Leaving session as-is.")
+            }
         }
     }
 
@@ -2299,12 +2342,16 @@ final class RecordingService {
         switch type {
         case .began:
             if isWarm {
-                // The production warm-hold yield: dropping `.mixWithOthers` at
-                // warm entry makes the idle session non-mixable, so another app
-                // starting playback delivers this interruption. Cooling here
-                // (`restoreSession` → `setActive(false, .notifyOthersOnDeactivation)`)
-                // is what hands the mic + route back to that app.
-                log.notice("warm-hold yielded mic to another app (interruption began)")
+                // The idle warm session is now MIXABLE (`.playAndRecord +
+                // .mixWithOthers`, set in `makeWarmIdleSessionMixable`), so
+                // ordinary other-app playback (YouTube, Reddit, Music) typically
+                // COEXISTS rather than interrupting us — the whole point. A
+                // `.began` that still reaches us is a harder interruption (phone
+                // call, alarm, Siri, or another app grabbing a non-mixable
+                // record session); cooling the engine (`restoreSession` →
+                // `setActive(false, .notifyOthersOnDeactivation)`) to hand the
+                // route back stays the correct response for those.
+                log.notice("warm-hold cooled on interruption (began)")
                 exitWarmHold()
             } else {
                 log.notice("Audio session interrupted — stopping recording")
@@ -2336,6 +2383,17 @@ final class RecordingService {
     }
 
     private func handleEngineConfigChange() {
+        // Ignore the echo of our OWN deliberate warm-session category swap
+        // (idle→mixable `.playAndRecord`, or mixable→`.record` on resume). Such
+        // a swap can post this notification async; treating it as an external
+        // route change would cool the warm hold we just armed / stop the
+        // recording we just resumed. External changes outside the grace window
+        // still cool as before.
+        if let swapAt = lastDeliberateSessionSwapAt,
+           Date().timeIntervalSince(swapAt) < deliberateSwapGrace {
+            log.notice("Engine configuration change ignored — echo of a deliberate session category swap")
+            return
+        }
         if isWarm {
             log.notice("Engine configuration changed during warm hold — cooling engine")
             exitWarmHold()
