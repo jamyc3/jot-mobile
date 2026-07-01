@@ -330,6 +330,10 @@ struct JotApp: App {
         //
         // Failure is internally handled by `warmUp()` (flips
         // `modelState = .failed`); the task body cannot throw.
+        // Seed the recent-languages MRU with the active language once, so the
+        // first language switch keeps the prior language in the quick-switch list.
+        LanguageChoice.seedRecentsIfNeeded()
+
         let warmTranscription = transcription
         Task(priority: .userInitiated) { @MainActor in
             // Unified warm path: `warmIfNeeded()` owns the on-disk gate

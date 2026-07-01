@@ -336,6 +336,9 @@ struct SettingsView: View {
                 guard newValue != dictationLanguage else { return }
                 dictationLanguage = newValue
                 AppGroup.transcriptionLanguage = newValue
+                if let lang = LanguageChoice(rawValue: newValue) {
+                    LanguageChoice.recordRecent(lang)
+                }
                 TranscriptionService.shared.handleLanguageChange()
             }
         )
@@ -393,9 +396,25 @@ struct SettingsView: View {
             Spacer(minLength: 12)
 
             Menu {
-                Picker("Language", selection: languageBinding) {
-                    ForEach(LanguageChoice.presentationOrder) { lang in
-                        Text(lang.displayName).tag(lang.rawValue)
+                // Quick-switch: the active language + recently used, up top.
+                Section("Recent") {
+                    ForEach(LanguageChoice.recentLanguages) { lang in
+                        Button {
+                            languageBinding.wrappedValue = lang.rawValue
+                        } label: {
+                            if lang.rawValue == dictationLanguage {
+                                Label(lang.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(lang.displayName)
+                            }
+                        }
+                    }
+                }
+                Section("All languages") {
+                    Picker("Language", selection: languageBinding) {
+                        ForEach(LanguageChoice.presentationOrder) { lang in
+                            Text(lang.displayName).tag(lang.rawValue)
+                        }
                     }
                 }
             } label: {

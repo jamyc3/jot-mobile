@@ -166,6 +166,45 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    // MARK: - Recent languages (MRU quick-switch)
+
+    private static let recentsKey = "jot.dictation.recentLanguages"
+
+    /// How many recent languages the picker surfaces at the top.
+    static let maxRecents = 5
+
+    /// Most-recently-used dictation languages (≤ `maxRecents`), the active one
+    /// always first. Shared across the wizard + Settings pickers via the App
+    /// Group, so it's consistent everywhere and survives app updates. The active
+    /// language is forced to the front so the list always reflects the current
+    /// selection even if it was set outside the picker (watch, deep link).
+    static var recentLanguages: [LanguageChoice] {
+        let stored = (AppGroup.defaults.stringArray(forKey: recentsKey) ?? [])
+            .compactMap { LanguageChoice(rawValue: $0) }
+        var list = stored
+        let active = current
+        list.removeAll { $0 == active }
+        list.insert(active, at: 0)
+        return Array(list.prefix(maxRecents))
+    }
+
+    /// Move `language` to the front of the recents list (cap `maxRecents`).
+    /// Call whenever the user selects a dictation language.
+    static func recordRecent(_ language: LanguageChoice) {
+        var raws = AppGroup.defaults.stringArray(forKey: recentsKey) ?? []
+        raws.removeAll { $0 == language.rawValue }
+        raws.insert(language.rawValue, at: 0)
+        AppGroup.defaults.set(Array(raws.prefix(maxRecents)), forKey: recentsKey)
+    }
+
+    /// Seed the current language into the recents on first ever use, so the
+    /// first language switch still keeps the prior (default) language visible.
+    /// Idempotent — a no-op once anything has been recorded.
+    static func seedRecentsIfNeeded() {
+        let stored = AppGroup.defaults.stringArray(forKey: recentsKey) ?? []
+        if stored.isEmpty { recordRecent(current) }
+    }
+
     /// Default language from the system locale, falling back to `.english` when
     /// the locale isn't a supported transcription language. (Not wired as the
     /// persisted default in the first pass — kept for the wizard step.)

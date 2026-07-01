@@ -270,6 +270,7 @@ struct LanguageStep: View {
         guard picked.rawValue != languageRaw else { return }
         languageRaw = picked.rawValue
         AppGroup.transcriptionLanguage = picked.rawValue
+        LanguageChoice.recordRecent(picked)
         // Evicts the old model + downloads/warms the newly-selected one.
         transcriptionService.handleLanguageChange()
     }
@@ -312,43 +313,25 @@ private struct LanguagePickerSheet: View {
         }
     }
 
+    private var isSearching: Bool {
+        !query.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     var body: some View {
         NavigationStack {
-            List(filtered) { lang in
-                Button {
-                    onPick(lang)
-                    dismiss()
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(lang.englishName)
-                            .font(.system(size: 15))
-                            .foregroundStyle(Color.jotPageInk)
-                        if lang.nativeName != lang.englishName {
-                            Text(lang.nativeName)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color.jotMute)
-                        }
-                        Spacer(minLength: 8)
-                        if lang.isEnglish {
-                            Text("Built in")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.jotMute)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .strokeBorder(Color.jotMute.opacity(0.4), lineWidth: 0.5)
-                                )
-                        }
-                        if lang.rawValue == selectedRaw {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Color.jotAccent)
-                        }
+            List {
+                if isSearching {
+                    ForEach(filtered) { languageRow($0) }
+                } else {
+                    // Recent languages up top for quick switching — the active
+                    // one first, then previously-used, up to five.
+                    Section("Recent") {
+                        ForEach(LanguageChoice.recentLanguages) { languageRow($0) }
                     }
-                    .contentShape(Rectangle())
+                    Section("All languages") {
+                        ForEach(ordered) { languageRow($0) }
+                    }
                 }
-                .buttonStyle(.plain)
             }
             .listStyle(.plain)
             .navigationTitle("Language")
@@ -363,6 +346,44 @@ private struct LanguagePickerSheet: View {
         .presentationDetents([.large])
         // Owner prefers light theme by default.
         .preferredColorScheme(.light)
+    }
+
+    @ViewBuilder
+    private func languageRow(_ lang: LanguageChoice) -> some View {
+        Button {
+            onPick(lang)
+            dismiss()
+        } label: {
+            HStack(spacing: 8) {
+                Text(lang.englishName)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.jotPageInk)
+                if lang.nativeName != lang.englishName {
+                    Text(lang.nativeName)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.jotMute)
+                }
+                Spacer(minLength: 8)
+                if lang.isEnglish {
+                    Text("Built in")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.jotMute)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(Color.jotMute.opacity(0.4), lineWidth: 0.5)
+                        )
+                }
+                if lang.rawValue == selectedRaw {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.jotAccent)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
