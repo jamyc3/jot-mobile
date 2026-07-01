@@ -61,13 +61,14 @@ import AppIntents
 /// hit an iOS 26.2 Shortcuts-daemon commit bug ("Something went wrong,
 /// please try again later") that broke the WHOLE provider binding —
 /// including the Action Button tile. For a while every shortcut therefore
-/// carried a single phrase. The record tile now carries three close verb
-/// variants again ("Jot this down" / "… it down" / "… something down") to
-/// widen Siri's near-exact matching; `AskJotIntent` stays single ("Ask
+/// carried a single phrase. The record tile now carries five close verb
+/// variants ("Jot down" / "… this down" / "… it down" / "… that down" /
+/// "… something down") to widen Siri's near-exact matching, with the bare
+/// "Jot down" first as the primary; `AskJotIntent` stays single ("Ask
 /// Jot"). Because this re-enters the condition that previously broke
 /// binding, the on-device gate after ANY phrase change is: the Action
 /// Button must still bind AND still record. If it regresses on a given iOS
-/// release, collapse the record tile back to a single phrase.
+/// release, collapse the record tile back to fewer phrases.
 ///
 /// Provider is plain `struct`, not `public struct`: the provider lives in
 /// the main app target and doesn't need cross-module visibility. Apple's
@@ -96,8 +97,13 @@ struct JotAppShortcuts: AppShortcutsProvider {
                 // past that iOS now. On-device gate after any change here:
                 // confirm the Action Button still binds AND still records. If
                 // it regresses, collapse back to a single phrase.
+                // "Jot down" itself — the natural bare phrase the owner asked
+                // for — is `\(.applicationName) down` (the placeholder IS the
+                // verb). Listed first as the primary match, then close variants.
+                "\(.applicationName) down",
                 "\(.applicationName) this down",
                 "\(.applicationName) it down",
+                "\(.applicationName) that down",
                 "\(.applicationName) something down"
             ],
             shortTitle: "Jot down",
