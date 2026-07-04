@@ -35,7 +35,7 @@
         $attachment,
         ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio"
     ).@count == $extensionItem.attachments.@count
-).@count == $extensionItems.@count
+).@count == extensionItems.@count
 </string>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>

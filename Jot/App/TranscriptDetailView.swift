@@ -191,6 +191,16 @@ struct TranscriptDetailView: View {
     @State private var canRetranscribe: Bool = false
     @State private var isRetranscribing: Bool = false
     @State private var retranscribeError: String? = nil
+
+    /// Diarization Lab (experimental, `AppGroup.Keys.diarizationLabEnabled`):
+    /// "Detect speakers" runs entirely on-demand against the retained source
+    /// audio and shows an ephemeral result sheet — nothing is persisted to the
+    /// transcript (no schema change for this lab prototype).
+    @State private var diarizationLabOn: Bool = AppGroup.defaults.bool(forKey: AppGroup.Keys.diarizationLabEnabled)
+    @State private var isDiarizing: Bool = false
+    @State private var diarizeError: String? = nil
+    @State private var diarizationSheet: DiarizationSheetData?
+
     @State private var showAIGuide: Bool = false
     /// Set by the guide's "Download Jot's AI" link; consumed in the guide's
     /// `onDismiss` to open AI settings without a sheet-over-sheet race.
@@ -420,6 +430,9 @@ struct TranscriptDetailView: View {
                 }
             )
         }
+        .sheet(item: $diarizationSheet) { data in
+            DiarizationResultSheet(data: data)
+        }
         .sheet(isPresented: $showTranslateSheet) {
             // Ephemeral translate sheet (features.md §3.9) — Apple on-device
             // Translation via TranslationGateway; reads the active tab's text.
@@ -550,9 +563,6 @@ struct TranscriptDetailView: View {
         HStack(spacing: 6) {
             HStack(spacing: 6) {
                 Text(relativeDateText)
-                Text("·")
-                    .foregroundStyle(Color.jotMuteWeak)
-                Text(wordCountText)
                 if let durationText {
                     Text("·")
                         .foregroundStyle(Color.jotMuteWeak)
@@ -581,32 +591,69 @@ struct TranscriptDetailView: View {
             Spacer(minLength: 0)
 
             if canRetranscribe {
-                Menu {
-                    Text("Re-transcribe this audio in…")
-                    ForEach(LanguageChoice.presentationOrder) { lang in
-                        Button(lang.displayName) { retranscribe(in: lang) }
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        if isRetranscribing {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: retranscribeError != nil
-                                  ? "exclamationmark.arrow.triangle.2.circlepath"
-                                  : "arrow.triangle.2.circlepath")
-                                .font(.system(size: 10, weight: .semibold))
+                if diarizationLabOn {
+                    // Diarization Lab on: Re-transcribe + Detect speakers share
+                    // one overflow menu instead of two separate trailing
+                    // controls — two full-width actions on one line clipped
+                    // silently off-screen (a real bug found in-session).
+                    Menu {
+                        Button {
+                            diarizeSpeakers()
+                        } label: {
+                            Label(diarizeError != nil ? "Retry detect speakers" : "Detect speakers",
+                                  systemImage: "person.wave.2")
                         }
-                        Text(isRetranscribing ? "Re-transcribing…"
-                             : (retranscribeError != nil ? "Retry re-transcribe" : "Re-transcribe"))
-                            .font(.system(size: 11, weight: .medium))
+                        Divider()
+                        Text("Re-transcribe this audio in…")
+                        ForEach(LanguageChoice.presentationOrder) { lang in
+                            Button(lang.displayName) { retranscribe(in: lang) }
+                        }
+                    } label: {
+                        if isRetranscribing || isDiarizing {
+                            ProgressView().controlSize(.mini)
+                        } else if retranscribeError != nil || diarizeError != nil {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Color.red)
+                        } else {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Color.jotAccent)
+                        }
                     }
-                    .foregroundStyle(retranscribeError != nil ? Color.red : Color.jotAccent)
+                    .disabled(isRetranscribing || isDiarizing)
+                    .accessibilityLabel("More actions: re-transcribe or detect speakers")
+                } else {
+                    Menu {
+                        Text("Re-transcribe this audio in…")
+                        ForEach(LanguageChoice.presentationOrder) { lang in
+                            Button(lang.displayName) { retranscribe(in: lang) }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            if isRetranscribing {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: retranscribeError != nil
+                                      ? "exclamationmark.arrow.triangle.2.circlepath"
+                                      : "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            Text(isRetranscribing ? "Re-transcribing…"
+                                 : (retranscribeError != nil ? "Retry re-transcribe" : "Re-transcribe"))
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(retranscribeError != nil ? Color.red : Color.jotAccent)
+                    }
+                    .disabled(isRetranscribing)
+                    .accessibilityLabel("Re-transcribe this recording in another language")
                 }
-                .disabled(isRetranscribing)
-                .accessibilityLabel("Re-transcribe this recording in another language")
             }
         }
-        .onAppear { canRetranscribe = RetainedAudioStore.hasAudio(for: transcript.id) }
+        .onAppear {
+            canRetranscribe = RetainedAudioStore.hasAudio(for: transcript.id)
+            diarizationLabOn = AppGroup.defaults.bool(forKey: AppGroup.Keys.diarizationLabEnabled)
+        }
     }
 
     /// Re-run transcription on the **retained source audio** in a chosen
@@ -636,6 +683,66 @@ struct TranscriptDetailView: View {
                     retranscribeError = error.localizedDescription
                 }
             }
+        }
+    }
+
+    /// Runs the offline VBx diarization pipeline against this transcript's
+    /// retained source audio and shows the result in an ephemeral sheet —
+    /// nothing is persisted (Diarization Lab prototype; see
+    /// `docs/speaker-diarization-lab/design.md`). Backs off if a live
+    /// transcription is in flight rather than risking FluidAudio's shared
+    /// CoreML/BNNS state under two concurrent graphs.
+    private func diarizeSpeakers() {
+        guard !isDiarizing, let url = RetainedAudioStore.url(for: transcript.id) else { return }
+        isDiarizing = true
+        diarizeError = nil
+        Task {
+            if await TranscriptionService.shared.isBusy {
+                await MainActor.run {
+                    isDiarizing = false
+                    diarizeError = "Busy transcribing — try again in a moment."
+                }
+                return
+            }
+            do {
+                let result = try await DiarizerHolder.shared.diarize(audioFileURL: url)
+                await MainActor.run {
+                    isDiarizing = false
+                    if !DiarizationLabeling.isMultiSpeaker(result) {
+                        diarizationSheet = DiarizationSheetData(isSingleSpeaker: true, rows: [])
+                    } else {
+                        let order = DiarizationLabeling.firstAppearanceOrder(result.segments)
+                        let labels = DiarizationLabeling.assignOwnerLabel(
+                            orderedIDs: order,
+                            speakerDatabase: result.speakerDatabase ?? [:],
+                            ownerCentroid: OwnerVoiceprintStore.centroid
+                        )
+                        let distributed = DiarizationLabeling.distributeText(transcript.displayText, segments: result.segments)
+                        let rows = distributed.map { seg, text -> DiarizationRow in
+                            DiarizationRow(
+                                label: displayName(for: labels[seg.speakerId]),
+                                start: seg.startTimeSeconds,
+                                end: seg.endTimeSeconds,
+                                text: text
+                            )
+                        }
+                        diarizationSheet = DiarizationSheetData(isSingleSpeaker: false, rows: rows)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isDiarizing = false
+                    diarizeError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func displayName(for label: SpeakerLabel?) -> String {
+        switch label {
+        case .owner: return "You"
+        case .anonymous(let n): return "Speaker \(n)"
+        case nil: return "Speaker"
         }
     }
 
@@ -1694,13 +1801,6 @@ struct TranscriptDetailView: View {
 
     private var relativeDateText: String {
         transcript.createdAt.formatted(.relative(presentation: .named))
-    }
-
-    private var wordCountText: String {
-        let count = bodyTextForActiveTab
-            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
-            .count
-        return count == 1 ? "1 word" : "\(count) words"
     }
 
     private var durationText: String? {

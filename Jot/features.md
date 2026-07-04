@@ -555,6 +555,9 @@ Jot exposes a "Save a Note" Shortcuts action that takes a piece of text and save
 ### 10.5 Shortcuts: Ask Your Notes
 Jot exposes an "Ask Your Notes" Shortcuts action that takes a spoken or typed question and returns a short answer drawn from the user's own transcripts — the same [Ask Jot](#14-ask-jot) engine, reachable from the Shortcuts app without opening Jot. The action runs headless and returns its answer as plain spoken-style prose with no [citation chips](#14-3-cited-answers) (there is nowhere to render them on that surface). Useful for a quick hands-free "what did I say about…?" — see [§14.8](#14-8-ask-from-shortcuts).
 
+### 10.6 Share Sheet: Send to Jot
+Jot is a native destination in iOS's Share Sheet for audio files — no Shortcut needed. From any app that has an audio file (Files, Voice Memos, Mail attachments, and similar), tapping Share and choosing Jot queues the file and shows a brief "Saved to Jot" confirmation without opening the app. The next time Jot is opened normally, it transcribes every queued file in the background and adds each one to the [transcript library](#1-2-transcript-library-with-time-grouping) — no manual step needed to complete the import. Jot only appears in the share sheet for audio; sharing anything else (photos, links, documents) does not offer Jot as a target. Fully on-device, like every other transcription surface.
+
 ---
 
 ## 11. Haptics & Sensory Feedback

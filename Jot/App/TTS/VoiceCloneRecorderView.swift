@@ -28,11 +28,27 @@ struct VoiceCloneRecorderView: View {
     Pack my red box with a dozen quality jugs, then speak clearly and naturally.
     """
 
+    /// Shown fresh (required, not just displayed) on EVERY clone creation,
+    /// and the exact string recorded into `VoiceCloneConsentStore` at
+    /// acceptance time — kept as one constant so the UI and the stored
+    /// record can never drift apart.
+    static let disclaimerText = "By creating this voice, you confirm it's your own — or that you have explicit permission to clone it — and you're solely responsible for how it's used. Jot isn't responsible for misuse."
+
     @State private var recorder: SampleRecorder = SampleRecorder()
     @State private var voiceName: String = ""
     @State private var elapsed: TimeInterval = 0
     @State private var timerTask: Task<Void, Never>?
     @State private var errorMessage: String?
+
+    /// Required acknowledgment of `disclaimerText` — reset on every new
+    /// take (see `startRecording`), so it's re-required every single time a
+    /// clone is created, not just once per app install.
+    @State private var hasAcknowledgedDisclaimer: Bool = false
+
+    /// `VoiceCloneGuard` verification — runs before every clone, no bypass.
+    /// See that type's doc comment for the hard-block policy rationale.
+    @State private var isVerifying: Bool = false
+    @State private var blockedMessage: String?
 
     @State private var ttsService = TTSService.shared
 
@@ -55,7 +71,9 @@ struct VoiceCloneRecorderView: View {
     private var canCreate: Bool {
         hasUsableTake
             && !voiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && hasAcknowledgedDisclaimer
             && !isCloning
+            && !isVerifying
             && !recorder.isRecording
     }
 
@@ -73,9 +91,16 @@ struct VoiceCloneRecorderView: View {
                         if let errorMessage {
                             errorCard(errorMessage)
                         }
+                        if let blockedMessage {
+                            blockedCard(blockedMessage)
+                        }
+                        if isVerifying {
+                            verifyingStatus
+                        }
                         if isCloning {
                             cloningStatus
                         }
+                        disclaimerCheckbox
                         createButton
                         Spacer(minLength: 12)
                     }
@@ -88,7 +113,7 @@ struct VoiceCloneRecorderView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismissAndCleanup() }
-                        .disabled(isCloning)
+                        .disabled(isCloning || isVerifying)
                 }
             }
         }
@@ -144,7 +169,7 @@ struct VoiceCloneRecorderView: View {
                 )
             }
             .buttonStyle(.plain)
-            .disabled(isCloning)
+            .disabled(isCloning || isVerifying)
             .accessibilityLabel(recorder.isRecording ? "Stop recording" : "Record voice sample")
 
             Text(timerLabel)
@@ -186,8 +211,46 @@ struct VoiceCloneRecorderView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(Color.jotMuteWeak.opacity(0.5), lineWidth: 0.5)
                 )
-                .disabled(isCloning)
+                .disabled(isCloning || isVerifying)
         }
+    }
+
+    private var verifyingStatus: some View {
+        HStack(spacing: 12) {
+            ProgressView().controlSize(.small)
+            Text("Verifying this is your voice… this can take a moment the first time.")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.jotInk)
+            Spacer()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+    }
+
+    /// Distinct from `errorCard` — this is a hard, non-dismissable-by-retry
+    /// block (no override; see `VoiceCloneGuard`), so it reads as a stop
+    /// sign, not a transient error.
+    private func blockedCard(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "hand.raised.fill")
+                .foregroundStyle(Color(.systemRed))
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.jotInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.systemRed).opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color(.systemRed).opacity(0.3), lineWidth: 1)
+        )
     }
 
     private var cloningStatus: some View {
@@ -233,7 +296,7 @@ struct VoiceCloneRecorderView: View {
         Button {
             createVoice()
         } label: {
-            Text(isCloning ? "Creating…" : "Create voice")
+            Text(isVerifying ? "Verifying…" : (isCloning ? "Creating…" : "Create voice"))
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Color.white)
                 .frame(maxWidth: .infinity)
@@ -249,10 +312,37 @@ struct VoiceCloneRecorderView: View {
         .accessibilityLabel("Create voice")
     }
 
+    /// Required, active acknowledgment — NOT passive text. Re-required on
+    /// every single clone creation (reset in `startRecording`), not just
+    /// once per app install. Gates `canCreate`. Acceptance is recorded in
+    /// `VoiceCloneConsentStore` (on-device only) at the moment the clone is
+    /// actually created — see `createVoice()`.
+    private var disclaimerCheckbox: some View {
+        Button {
+            hasAcknowledgedDisclaimer.toggle()
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: hasAcknowledgedDisclaimer ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 18))
+                    .foregroundStyle(hasAcknowledgedDisclaimer ? Color.jotBlueTop : Color.jotPageInkSecondary)
+                Text(Self.disclaimerText)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color.jotPageInkSecondary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Self.disclaimerText)
+        .accessibilityValue(hasAcknowledgedDisclaimer ? "Checked" : "Unchecked")
+        .accessibilityAddTraits(.isButton)
+    }
+
     // MARK: - Actions
 
     private func toggleRecording() {
         errorMessage = nil
+        blockedMessage = nil
         if recorder.isRecording {
             stopRecording()
         } else {
@@ -264,6 +354,10 @@ struct VoiceCloneRecorderView: View {
         do {
             try recorder.start()
             elapsed = 0
+            // A fresh take is a fresh clone attempt — require re-acknowledging
+            // the disclaimer rather than letting an earlier take's checkbox
+            // silently carry over.
+            hasAcknowledgedDisclaimer = false
             timerTask?.cancel()
             timerTask = Task {
                 while !Task.isCancelled, recorder.isRecording {
@@ -292,13 +386,29 @@ struct VoiceCloneRecorderView: View {
     }
 
     private func createVoice() {
-        guard let url = recorder.lastRecordingURL else { return }
+        guard let url = recorder.lastRecordingURL, hasAcknowledgedDisclaimer else { return }
         errorMessage = nil
+        blockedMessage = nil
         let name = voiceName
         Task {
+            isVerifying = true
+            let verdict = await VoiceCloneGuard.verify(sampleURL: url)
+            isVerifying = false
+            switch verdict {
+            case .blocked(let reason):
+                DiagnosticsLog.record(
+                    source: "tts", category: .tts, message: "clone blocked by voice guard",
+                    metadata: ["reason": reason]
+                )
+                blockedMessage = reason
+                return
+            case .passed:
+                break
+            }
             do {
                 try await ttsService.cloneVoice(sampleURL: url, name: name)
                 DiagnosticsLog.record(source: "tts", category: .tts, message: "clone created", metadata: ["name": name])
+                VoiceCloneConsentStore.record(voiceName: name, disclaimerText: Self.disclaimerText)
                 recorder.discardSample()
                 dismiss()
             } catch {

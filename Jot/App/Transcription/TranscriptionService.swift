@@ -145,6 +145,12 @@ final class TranscriptionService {
 
     private var isTranscribing: Bool = false
 
+    /// Read-only cross-feature visibility into `isTranscribing`. Diarization
+    /// (Settings → About → Diarization Lab) checks this before starting an
+    /// offline VBx pass, since FluidAudio's shared CoreML/BNNS state is not
+    /// safe under two concurrently-running graphs.
+    var isBusy: Bool { isTranscribing }
+
     // `deinit` is always nonisolated in Swift 6, so it can't touch
     // @MainActor state on this class. We exempt the observer token from
     // both observation tracking (nothing reads it from the UI) and actor

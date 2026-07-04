@@ -1,7 +1,7 @@
 {
   "app": "Jot",
   "generatedFrom": "Jot/features.md",
-  "note": "Join table between features.md sections and the visual mockup. Each screen lists the feature sections it demonstrates, its screenshot slot, and behavior/dimension annotations. captured:false => slot still needs a real screenshot. Dimensions come from JotDesign tokens (the real source of truth) — never hand-typed guesses.",
+  "note": "Join table between features.md sections and the visual mockup. Each screen lists the feature sections it demonstrates, its screenshot slot, and behavior/dimension annotations. captured:false => slot still needs a real screenshot. Dimensions come from JotDesign tokens (the real source of truth) \u2014 never hand-typed guesses.",
   "surfaces": [
     {
       "id": "1-home",
@@ -178,7 +178,7 @@
           ],
           "image": "screens/ios/detail-action-bar.png",
           "captured": false,
-          "target": "PROPOSED: the primary action is renamed **Articulate → Rewrite**. The bar = Delete · Edit · Rewrite · Copy; tapping Rewrite opens the prompt picker (now incl. Translate)."
+          "target": "PROPOSED: the primary action is renamed **Articulate \u2192 Rewrite**. The bar = Delete \u00b7 Edit \u00b7 Rewrite \u00b7 Copy; tapping Rewrite opens the prompt picker (now incl. Translate)."
         },
         {
           "id": "detail-rewrite-progress",
@@ -216,7 +216,7 @@
           ],
           "image": "screens/ios/detail-translate.png",
           "captured": false,
-          "target": "PROPOSED, not built. Entry: action bar **Rewrite** (renamed from Articulate) → the Rewrite picker has a **Translate** option → opens THIS ephemeral sheet: language chips / More… → instant on-device translation (Apple Translation, already wired) → Copy / Share, nothing saved. Approve this and the picker/action-bar mockups, then build."
+          "target": "PROPOSED, not built. Entry: action bar **Rewrite** (renamed from Articulate) \u2192 the Rewrite picker has a **Translate** option \u2192 opens THIS ephemeral sheet: language chips / More\u2026 \u2192 instant on-device translation (Apple Translation, already wired) \u2192 Copy / Share, nothing saved. Approve this and the picker/action-bar mockups, then build."
         },
         {
           "id": "detail-find-replace",
@@ -364,7 +364,7 @@
           ],
           "image": "screens/keyboard/kb-actions-dense.png",
           "captured": false,
-          "target": "Denser ••• grid: 4×2 = 8 smaller tiles. Row 1 (colored features): Add to Vocabulary · AI Rewrite · Translate · Close. Row 2 (monochrome edit): Copy · Paste · Undo · Redo. Brings back the edit actions; still fills the short pane with no scroll."
+          "target": "Denser \u2022\u2022\u2022 grid: 4\u00d72 = 8 smaller tiles. Row 1 (colored features): Add to Vocabulary \u00b7 AI Rewrite \u00b7 Translate \u00b7 Close. Row 2 (monochrome edit): Copy \u00b7 Paste \u00b7 Undo \u00b7 Redo. Brings back the edit actions; still fills the short pane with no scroll."
         },
         {
           "id": "kb-translate",
@@ -375,7 +375,7 @@
           ],
           "image": "screens/keyboard/kb-translate.png",
           "captured": false,
-          "target": "Keyboard ••• → Translate = a guide (like AI Rewrite): teaches the system Translate (select → Translate menu → replaces in place). Keyboard can't link the Translation framework, so no engine here."
+          "target": "Keyboard \u2022\u2022\u2022 \u2192 Translate = a guide (like AI Rewrite): teaches the system Translate (select \u2192 Translate menu \u2192 replaces in place). Keyboard can't link the Translation framework, so no engine here."
         },
         {
           "id": "kb-status-banner",
@@ -385,7 +385,7 @@
           ],
           "image": "screens/keyboard/kb-status-banner.png",
           "captured": false,
-          "issue": "Adding a word to Vocabulary shows the SUCCESS confirmation (“Added ‘…’ to your dictionary”) in the RED error banner with an ✕ icon, floating over the recents pane — should be success/green. It also does not appear instantly: it only surfaces after a follow-up action (e.g. pressing Enter).",
+          "issue": "Adding a word to Vocabulary shows the SUCCESS confirmation (\u201cAdded \u2018\u2026\u2019 to your dictionary\u201d) in the RED error banner with an \u2715 icon, floating over the recents pane \u2014 should be success/green. It also does not appear instantly: it only surfaces after a follow-up action (e.g. pressing Enter).",
           "bug": "keyboard-vocab-banner"
         },
         {
@@ -476,27 +476,6 @@
           "captured": true
         },
         {
-          "id": "tts-playground",
-          "title": "Text-to-Speech Playground",
-          "sections": [],
-          "image": "screens/ios/tts-playground.png",
-          "captured": false
-        },
-        {
-          "id": "tts-voice-picker",
-          "title": "Voice Picker",
-          "sections": [],
-          "image": "screens/ios/tts-voice-picker.png",
-          "captured": false
-        },
-        {
-          "id": "tts-clone",
-          "title": "Clone Your Voice",
-          "sections": [],
-          "image": "screens/ios/tts-clone.png",
-          "captured": false
-        },
-        {
           "id": "settings-acknowledgements",
           "title": "Acknowledgements",
           "sections": [
@@ -539,7 +518,7 @@
           ],
           "image": "screens/ios/rewrite-prompt-picker.png",
           "captured": true,
-          "target": "PROPOSED tweaks (design target): (1) the action bar's primary is renamed **Articulate → Rewrite**, so this picker opens from a 'Rewrite' button; (2) a new **Translate** option is added here (→ opens the Translate sheet, screen `detail-translate`). Cleaner layout overall is also the target."
+          "target": "PROPOSED tweaks (design target): (1) the action bar's primary is renamed **Articulate \u2192 Rewrite**, so this picker opens from a 'Rewrite' button; (2) a new **Translate** option is added here (\u2192 opens the Translate sheet, screen `detail-translate`). Cleaner layout overall is also the target."
         },
         {
           "id": "rewrite-saved-prompts",
@@ -606,22 +585,22 @@
           ],
           "image": "screens/ios/rewrite-apple-intelligence.png",
           "captured": false,
-          "target": "PROPOSED, not built. When Jot's AI model (Qwen) isn't downloaded AND the device has Apple Intelligence, tapping Rewrite opens THIS guide instead of pushing the 2.5 GB download — it teaches the free system Writing Tools path (select text → ✦ Writing Tools → Rewrite/Concise/Proofread → Copy, or Edit first to save). Qwen download is the secondary link. Apple-Intelligence-primary is my recommendation; flip if you'd rather show both equally."
+          "target": "PROPOSED, not built. When Jot's AI model (Qwen) isn't downloaded AND the device has Apple Intelligence, tapping Rewrite opens THIS guide instead of pushing the 2.5 GB download \u2014 it teaches the free system Writing Tools path (select text \u2192 \u2726 Writing Tools \u2192 Rewrite/Concise/Proofread \u2192 Copy, or Edit first to save). Qwen download is the secondary link. Apple-Intelligence-primary is my recommendation; flip if you'd rather show both equally."
         },
         {
           "id": "ai-engine-apple",
-          "title": "AI Engine — Apple Intelligence",
+          "title": "AI Engine \u2014 Apple Intelligence",
           "sections": [
             "6.3",
             "7.3"
           ],
           "image": "screens/ios/ai-engine-apple.png",
           "captured": false,
-          "target": "PROPOSED. AI Rewrite settings gains an ENGINE choice: Apple Intelligence (default — no download, everyone has it) vs Jot's AI (Qwen). This is the Apple Intelligence state: no custom prompts (Writing Tools doesn't use them), an explainer instead. Switching here is also how you 'turn off' Qwen after downloading."
+          "target": "PROPOSED. AI Rewrite settings gains an ENGINE choice: Apple Intelligence (default \u2014 no download, everyone has it) vs Jot's AI (Qwen). This is the Apple Intelligence state: no custom prompts (Writing Tools doesn't use them), an explainer instead. Switching here is also how you 'turn off' Qwen after downloading."
         },
         {
           "id": "ai-engine-qwen",
-          "title": "AI Engine — Jot's AI",
+          "title": "AI Engine \u2014 Jot's AI",
           "sections": [
             "6.3",
             "7.5",

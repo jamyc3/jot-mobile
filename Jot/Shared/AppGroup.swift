@@ -69,6 +69,12 @@ enum AppGroup {
         /// transcript playback; default off, and turning it on is what triggers
         /// the model download. See `docs/tts-lab/design.md`.
         static let ttsLabEnabled = "jot.tts.labEnabled"
+        /// Hidden "Speaker Diarization (Lab)" opt-in toggle. Revealed by the
+        /// same 5-tap-on-Version gesture as the TTS Lab (Settings → About).
+        /// Gates the experimental offline speaker-diarization feature; default
+        /// off. Turning it on kicks off building an owner voice profile from
+        /// recently retained recordings. See `docs/speaker-diarization-lab/design.md`.
+        static let diarizationLabEnabled = "jot.diarization.labEnabled"
         /// PROTOTYPE A/B (model-instant-load): load the Parakeet encoder on CPU+GPU
         /// instead of the Neural Engine, to test whether it avoids the ~60s
         /// post-update ANE device-specialization. Default off (= Neural Engine).

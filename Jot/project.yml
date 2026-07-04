@@ -24,8 +24,8 @@ settings:
     # is minimal — scripts can already do anything they want during a
     # build; the sandbox is defense-in-depth, not a security boundary.
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CURRENT_PROJECT_VERSION: "223"
-    MARKETING_VERSION: "1.0.7"
+    CURRENT_PROJECT_VERSION: "236"
+    MARKETING_VERSION: "2.0"
     # Vineet's team — same one used for Mac Jot. Pinned so xcodegen
     # regeneration doesn't wipe the signing team out of Xcode every time.
     DEVELOPMENT_TEAM: "8VB2ULDN22"
@@ -459,6 +459,19 @@ targets:
           NSExtensionAttributes:
             # Jot only appears in the share sheet when EVERY shared item is
             # audio (m4a/mp3/wav/caf/aiff all conform to public.audio).
+            #
+            # REAL BUG FOUND + FIXED 2026-07-04: the final comparison used
+            # to read `$extensionItems.@count` (dollar-sign — a bound
+            # predicate VARIABLE), inconsistent with the bare `extensionItems`
+            # keypath reference used everywhere else in this same predicate.
+            # Verified standalone with NSPredicate: the mismatched `$`
+            # reference throws NSInvalidArgumentException ("Can't get value
+            # for 'extensionItems' in bindings {}") the moment the predicate
+            # is evaluated against anything — which means the WHOLE
+            # predicate always crashed/never-matched, so Jot could never
+            # appear in the share sheet for ANY file, not just non-audio
+            # ones. Confirmed the fix (bare `extensionItems.@count`)
+            # evaluates correctly (true for audio, false for non-audio).
             NSExtensionActivationRule: |
               SUBQUERY (
                   extensionItems,
@@ -468,7 +481,7 @@ targets:
                       $attachment,
                       ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio"
                   ).@count == $extensionItem.attachments.@count
-              ).@count == $extensionItems.@count
+              ).@count == extensionItems.@count
     entitlements:
       path: Resources/ShareExtension.entitlements
       properties:

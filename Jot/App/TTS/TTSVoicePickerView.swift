@@ -16,6 +16,7 @@ struct TTSVoicePickerView: View {
 
     @State private var ttsService = TTSService.shared
     @State private var showCloneSheet = false
+    @State private var voiceToDelete: TTSVoice?
 
     private var presets: [TTSVoice] {
         language.isEnglish ? TTSService.voices : TTSService.pocketPresetVoices(for: language.pocket)
@@ -72,6 +73,37 @@ struct TTSVoicePickerView: View {
             .sheet(isPresented: $showCloneSheet) {
                 VoiceCloneRecorderView()
             }
+            .confirmationDialog(
+                "Delete this voice?",
+                isPresented: Binding(
+                    get: { voiceToDelete != nil },
+                    set: { if !$0 { voiceToDelete = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: voiceToDelete
+            ) { voice in
+                Button("Delete", role: .destructive) {
+                    deleteVoice(voice)
+                }
+                Button("Cancel", role: .cancel) {
+                    voiceToDelete = nil
+                }
+            } message: { voice in
+                Text("\u{201C}\(voice.label)\u{201D} will be removed from this iPhone. This can't be undone.")
+            }
+        }
+    }
+
+    /// Deletes the cloned voice and, if it was the active selection, falls
+    /// back to the language's default — mirrors `TTSPlaygroundView`'s own
+    /// `.onChange(of: language)` reset so a stale, now-missing `.bin` can
+    /// never be selected.
+    private func deleteVoice(_ voice: TTSVoice) {
+        let wasSelected = selected.id == voice.id
+        ttsService.deleteClonedVoice(voice)
+        voiceToDelete = nil
+        if wasSelected {
+            selected = TTSPlaygroundView.defaultVoice(for: language)
         }
     }
 
@@ -114,35 +146,54 @@ struct TTSVoicePickerView: View {
     }
 
     private func voiceRow(_ voice: TTSVoice, subline: String) -> some View {
-        Button {
-            selected = voice
-            dismiss()
-        } label: {
-            HStack(spacing: 14) {
-                voiceAvatar(voice)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(voice.label)
-                        .font(JotType.rowTitle)
-                        .tracking(-0.2)
-                        .foregroundStyle(Color.jotPageInk)
-                    Text(subline)
-                        .font(JotType.rowSub)
-                        .foregroundStyle(Color.jotPageInkSecondary)
+        HStack(spacing: 4) {
+            // Only the select region is a Button — the trailing delete
+            // button (cloned voices only) sits alongside it, not nested
+            // inside it, since a custom VStack row has no `.swipeActions`.
+            Button {
+                selected = voice
+                dismiss()
+            } label: {
+                HStack(spacing: 14) {
+                    voiceAvatar(voice)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(voice.label)
+                            .font(JotType.rowTitle)
+                            .tracking(-0.2)
+                            .foregroundStyle(Color.jotPageInk)
+                        Text(subline)
+                            .font(JotType.rowSub)
+                            .foregroundStyle(Color.jotPageInkSecondary)
+                    }
+                    Spacer(minLength: 12)
+                    if voice.id == selected.id {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Color.jotAccent)
+                    }
                 }
-                Spacer(minLength: 12)
-                if voice.id == selected.id {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Color.jotAccent)
-                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, JotDesign.Spacing.cardPaddingH)
-            .padding(.vertical, 13)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(voice.label)\(voice.id == selected.id ? ", selected" : "")")
+
+            if voice.isCloned {
+                Button {
+                    voiceToDelete = voice
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color(.systemRed))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete voice \(voice.label)")
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(voice.label)\(voice.id == selected.id ? ", selected" : "")")
+        .padding(.horizontal, JotDesign.Spacing.cardPaddingH)
+        .padding(.vertical, voice.isCloned ? 0 : 13)
+        .frame(minHeight: 44)
     }
 
     private var cloneRow: some View {

@@ -36,6 +36,17 @@ struct SettingsView: View {
     // instead revealed by tapping the Version row 5× — see `ttsLabRevealed`.)
     private let showDataImportExport = false     // Settings → "Your Data" export/import
 
+    // Feature flag — PAUSED (owner 2026-07-04): "let's turn this one off...
+    // not bring it up for a while." All TTS/voice-clone code (TTSService,
+    // TTSPlaygroundView, VoiceCloneRecorderView, VoiceCloneGuard,
+    // VoiceCloneConsentStore) stays intact and untouched — this just hides
+    // the two Settings entry points, same technique as `showDataImportExport`.
+    // Diarization Lab is UNCHANGED (owner: "I like the diarization one, let
+    // that be there") — gated only by `ttsLabRevealed`, not this flag.
+    // See `known-bugs-and-plans.md`'s "TTS Lab" entry + `ARCHITECTURE.md`'s
+    // "Diarization Lab & Voice-Clone Safety" note before re-enabling.
+    private let ttsFeatureEnabled = false
+
     /// Transcript import/export (independent on-device backup, not iCloud).
     @State private var showTranscriptExporter = false
     @State private var transcriptExportDoc: TranscriptBackupDocument?
@@ -88,6 +99,17 @@ struct SettingsView: View {
                 // If the Lab was already opted in (persisted), keep it revealed.
                 ttsLabRevealed = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled) || ttsLabRevealed
                 ttsLabEnabled = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled)
+                // Diarization Lab piggybacks on the same reveal flag but has
+                // its OWN persisted key. `handleVersionTap` only sets it on a
+                // fresh 5-tap reveal — a session where Labs were already
+                // revealed (from a prior run) would otherwise skip it
+                // entirely (found in-session: the Settings row appeared
+                // "on" while the feature flag underneath was still false).
+                // Catch that here too, once per reveal.
+                if ttsLabRevealed, !AppGroup.defaults.bool(forKey: AppGroup.Keys.diarizationLabEnabled) {
+                    AppGroup.defaults.set(true, forKey: AppGroup.Keys.diarizationLabEnabled)
+                    Task { await OwnerVoiceprintStore.build() }
+                }
                 vocabularyStore.load()
                 if clientAdapter == nil {
                     let client = LLMClientFactory.shared.client()
@@ -114,7 +136,9 @@ struct SettingsView: View {
                 AppGroup.defaults.set(newValue, forKey: AppGroup.Keys.ttsLabEnabled)
                 // Turning the Lab ON is the user's explicit opt-in to the
                 // model download (the deliberate sidestep of "download-first").
-                if newValue && !ttsService.isReady {
+                // Skipped entirely while TTS is paused (`ttsFeatureEnabled`) —
+                // no point silently downloading a model behind a hidden row.
+                if ttsFeatureEnabled, newValue, !ttsService.isReady {
                     Task { await ttsService.download() }
                 }
             }
@@ -848,7 +872,9 @@ struct SettingsView: View {
                     // "Text to Speech" — the on-device TTS Playground. Hidden by
                     // default; REVEALED by tapping the Version row 5× (the reveal
                     // persists via `ttsLabEnabled`). See `handleVersionTap`.
-                    if ttsLabRevealed {
+                    // PAUSED (owner 2026-07-04, `ttsFeatureEnabled`) — see that
+                    // flag's comment. Diarization Lab below is unaffected.
+                    if ttsLabRevealed && ttsFeatureEnabled {
                         cardDivider
 
                         NavigationLink {
@@ -866,6 +892,52 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Text to Speech")
                         .accessibilityHint("Generate and export speech on this iPhone.")
+
+                        cardDivider
+
+                        // Read-only, on-device record of accepted voice-clone
+                        // disclaimers — a legal/transparency record, not a
+                        // toggle. See `VoiceCloneConsentStore`.
+                        NavigationLink {
+                            VoiceCloneConsentView()
+                        } label: {
+                            settingsIconRow(
+                                systemImage: "checkmark.shield",
+                                tint: JotDesign.JotSemanticIcon.version,
+                                shaded: JotDesign.JotSemanticIcon.versionShaded,
+                                title: "Voice Clone Consent",
+                                subline: "Record of accepted voice-clone disclaimers",
+                                trailing: { RowChevron() }
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Voice Clone Consent")
+                        .accessibilityHint("View the on-device record of accepted voice-clone disclaimers.")
+                    }
+
+                    // Diarization Lab — revealed by the same 5-tap gesture.
+                    // Deliberately its OWN `if`, gated only on `ttsLabRevealed`
+                    // (NOT `ttsFeatureEnabled`) — owner: "I like the
+                    // diarization one, let that be there" when pausing TTS.
+                    // See `DiarizationLabView`.
+                    if ttsLabRevealed {
+                        cardDivider
+
+                        NavigationLink {
+                            DiarizationLabView()
+                        } label: {
+                            settingsIconRow(
+                                systemImage: "person.wave.2",
+                                tint: JotDesign.JotSemanticIcon.version,
+                                shaded: JotDesign.JotSemanticIcon.versionShaded,
+                                title: "Diarization Lab",
+                                subline: "Figure out who said what in a recording",
+                                trailing: { RowChevron() }
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Diarization Lab")
+                        .accessibilityHint("Experimental speaker diarization for recordings.")
                     }
 
                     cardDivider
@@ -1044,6 +1116,16 @@ struct SettingsView: View {
             // Persist the reveal so the Text-to-Speech row stays visible across
             // launches (read back on appear).
             AppGroup.defaults.set(true, forKey: AppGroup.Keys.ttsLabEnabled)
+
+            // Diarization Lab reveals alongside TTS Lab (same 5-tap gesture).
+            // Enabling it for the first time kicks off building an owner voice
+            // profile from recently-retained recordings in the background —
+            // see `OwnerVoiceprintStore`.
+            let wasDiarizationEnabled = AppGroup.defaults.bool(forKey: AppGroup.Keys.diarizationLabEnabled)
+            AppGroup.defaults.set(true, forKey: AppGroup.Keys.diarizationLabEnabled)
+            if !wasDiarizationEnabled {
+                Task { await OwnerVoiceprintStore.build() }
+            }
         }
     }
 

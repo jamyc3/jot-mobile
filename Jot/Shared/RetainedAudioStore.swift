@@ -81,6 +81,32 @@ enum RetainedAudioStore {
     /// (drives the "Re-transcribe" affordance visibility).
     static func hasAudio(for id: UUID) -> Bool { url(for: id) != nil }
 
+    /// All transcript IDs with currently-retained (non-expired) audio,
+    /// most-recently-modified first. Used by the Diarization Lab's owner
+    /// voice-profile builder to enumerate candidate solo recordings — there's
+    /// no per-transcript index, so this walks the store directory directly.
+    static func allRetainedIDs() -> [UUID] {
+        guard let dir = directory,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.contentModificationDateKey]
+              ) else { return [] }
+        let sorted = entries
+            .filter { !isExpired($0) }
+            .sorted {
+                let l = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let r = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return l > r
+            }
+        var seen = Set<UUID>()
+        var ids: [UUID] = []
+        for url in sorted {
+            let name = url.deletingPathExtension().lastPathComponent
+            guard let id = UUID(uuidString: name), seen.insert(id).inserted else { continue }
+            ids.append(id)
+        }
+        return ids
+    }
+
     /// Delete the retained audio for one transcript (call on transcript delete).
     static func delete(for id: UUID) {
         guard let dir = directory,
