@@ -2,8 +2,8 @@
 //  HowItWorksStep.swift
 //  Jot
 //
-//  Phase 6 — wizard panel W4 (renumbered from W5 after the bundled-Parakeet
-//  ship retired the standalone speech-model download step).
+//  Phase 6 — wizard panel W5 (renumbered back from W4 after the dictation
+//  language picker (W2) was added, shifting every later step by one).
 //
 //  Step-by-step redesign (wizard-overhaul): the capture flow is taught as
 //  FOUR explicit numbered steps, each held for ~3.25 seconds in a looping

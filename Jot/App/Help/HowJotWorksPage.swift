@@ -3,7 +3,7 @@
 //  Jot
 //
 //  Help → "How Jot works" — pushed from the Getting Started row. Reuses the
-//  setup wizard's W4 teaching block (`HowItWorksScene`): the animated
+//  setup wizard's W5 teaching block (`HowItWorksScene`): the animated
 //  mini-phone scene + the four numbered steps + the honest footnote, all with a
 //  self-looping driver and a Reduce-Motion static frame. No wizard coupling.
 //

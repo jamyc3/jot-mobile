@@ -29,7 +29,7 @@ background capture started in `ContentView.updateDictateTapObserver`.
 - **Warm-hold** — orthogonal; untouched.
 - **Ask** — keeps its own `InlineDictationSession` and is now its SOLE user (the one intentional
   exception). Do not add new callers of that type outside Ask.
-- **Wizard** — its W5 keyboard test uses its own `keyboardDictateTapped` observer and starts a
+- **Wizard** — its W6 keyboard test uses its own `keyboardDictateTapped` observer and starts a
   pipeline recording; it never used the (now-removed) inline receiver.
 - **FAB / cold-keyboard / Action Button / DictateIntent / warm-resume** captures — still save.
 
@@ -60,6 +60,10 @@ This step is REQUIRED for feature-shaped requests. It's skippable for: pure bug 
 
 **Pair the edits.** When a change alters behavior, update `features.md §` AND — *only if the change crosses a subsystem/boundary* (a new subsystem, a moved boundary, a changed cross-process contract, a new invariant) — the matching `ARCHITECTURE.md` row/note in the same change. Most edits won't touch `ARCHITECTURE.md`; it is intentionally coarse so it survives refactors. Treat a stale row (moved file, dead invariant) as broken. See its own "Keeping this current" section.
 
+**Also check Atlas.** `atlas/gen/frag/*.html` + `atlas/atlas.json` mirror the shipped, user-facing feature set (mirrors `features.md`, not a scratch pad). Before calling a change done: if it ships a feature that already has an Atlas screen, verify that screen's content still matches (copy, layout, any values shown); if the change abandons/pauses/reverts a feature that had an ad-hoc pre-implementation mockup, delete that mockup (its job is done) and redeploy (`_deploy/` tarball → PUT, keep `gen/frag/` and `_deploy/frag/` in exact sync). Don't wait to be asked — this is as routine as updating `features.md`.
+
+**This pairing is not optional and not one-time.** A large refactor (e.g. the root-view decouple) can delete or rename entire subsystems while every individual step still "works" — `ARCHITECTURE.md` went stale for weeks after `FocusedFieldInsert.swift` was deleted in one such refactor because doc-currency wasn't part of that review's checklist. Treat "does `features.md`/`ARCHITECTURE.md`/Atlas still match what I just shipped" as part of DONE for every piece of work, not a separate cleanup pass to get to later.
+
 ## Style rules when editing `features.md`
 
 - **User-facing only.** No file paths, Swift class/struct/func/var names, framework names (`NotificationCenter`, `UserDefaults`, `App Group`, SwiftUI primitives), or library names (`FluidAudio`, `MLXLLM`, `Phi-4`). Exception: user-visible model labels shown in Settings UI (e.g. "Parakeet 600M (more accurate)") are fine because the user sees them on screen.
@@ -71,8 +75,8 @@ This step is REQUIRED for feature-shaped requests. It's skippable for: pure bug 
 
 ## Wizard / setup-flow conventions
 
-- The 7-panel wizard (W1–W7) lives in `Jot/App/SetupWizard/`. Each panel has its own file under `Steps/`. (The optional AI-offer follow-on was removed; the wizard is now exactly W1–W7.)
-- **Wizard contract:** any recording started inside the wizard (W5 keyboard test triggered via the keyboard's Dictate-tap notification) MUST be released before the wizard dismisses — **gently, via `recordingService.cancel()`** (honours Warm Hold, discards the never-saved W5 audio), NOT `forceStop()` (per the standing "never force-stop the mic" rule). Force-cut on leave/end is fine; never on wizard entry/re-entry. The teardown lives in `SetupWizardView.closeAndComplete()` and individual step `.onDisappear` hooks; the pipeline-in-flight-after-Stop case is reset with `markPipelineFinished()` + `publishPipelinePhase(.idle)`. Failing to release leaks a zombie recording into the home view. Don't bypass.
+- The 8-panel wizard (W1–W8) lives in `Jot/App/SetupWizard/`. Each panel has its own file under `Steps/`. (The optional AI-offer follow-on was removed; a dictation-language picker (W2) was added later.)
+- **Wizard contract:** any recording started inside the wizard (W6 keyboard test triggered via the keyboard's Dictate-tap notification) MUST be released before the wizard dismisses — **gently, via `recordingService.cancel()`** (honours Warm Hold, discards the never-saved W6 audio), NOT `forceStop()` (per the standing "never force-stop the mic" rule). Force-cut on leave/end is fine; never on wizard entry/re-entry. The teardown lives in `SetupWizardView.closeAndComplete()` and individual step `.onDisappear` hooks; the pipeline-in-flight-after-Stop case is reset with `markPipelineFinished()` + `publishPipelinePhase(.idle)`. Failing to release leaks a zombie recording into the home view. Don't bypass.
 
 ## Build / run
 

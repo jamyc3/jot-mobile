@@ -21,7 +21,7 @@ import SwiftUI
 ///
 /// Visual changes:
 ///   - `WallpaperBackground` replaces `JotDesign.background`.
-///   - Italic serif "AI." 44pt + coral EXPERIMENTAL chip hero block.
+///   - Italic serif "AI" 44pt + coral EXPERIMENTAL chip hero block.
 ///   - Single compact model strip (purple `wand.and.stars` IconTile) replaces
 ///     the older MODEL card; `Change` opens `SwitchModelPicker`.
 ///   - Each prompt row now renders an IconTile + serif name + DEFAULT tag
