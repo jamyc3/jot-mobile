@@ -179,6 +179,13 @@ enum DictationPipeline {
         // R7: in-field dictation bypasses DictationStats).
         if !transient {
             DictationStats.record(durationSeconds: duration)
+            // Parakeet-upgrade nudge (deferred-engineering follow-up to Apple
+            // becoming the default dictation engine): count English dictations
+            // that ran on Apple's engine and arm the keyboard's one-time "switch to
+            // Jot's own engine" strip once the streak crosses threshold on an
+            // eligible device. Mirrors the warm-hold switching-nudge's
+            // App-Group projection + Darwin-notification pattern.
+            maybeArmParakeetUpgradeNudge()
         }
 
         let cleanup = CleanupSettings.load()
@@ -660,6 +667,38 @@ enum DictationPipeline {
                 )
             }
         }
+    }
+
+    /// Arms the keyboard's one-time "switch to Jot's own engine" nudge once
+    /// the user has done 5 English dictations on Apple's engine, on a device
+    /// capable of running Parakeet 600M well, and hasn't already declined or
+    /// switched. Never double-stacks with the warm-hold nudge — `AppGroup
+    /// .warmHoldNudgeShouldShow` gates it out, and `KeyboardView.topStrip`
+    /// gives the warm-hold nudge precedence as defense-in-depth.
+    private static func maybeArmParakeetUpgradeNudge() {
+        // `useAppleEngine` is the INTENDED engine (English + toggle); the
+        // stop-pass silently falls back to FluidAudio if Apple fails. So this
+        // counts "attempted on Apple," not "confirmed on Apple." Acceptable
+        // for a nudge — the rare all-Apple-failures user who's effectively on
+        // FluidAudio might still get nudged, harmlessly (Opus nudge review B).
+        guard TranscriptionService.shared.useAppleEngine else { return }
+        DictationStats.incrementAppleDictationCount()
+        guard DictationStats.appleDictationCount >= 5,
+              // `is600MCapable` is the codebase's existing "can run Parakeet
+              // 600M well" line (~iPhone 12 Pro / 14 and later) — reused here
+              // rather than inventing a second device-capability table.
+              DeviceCapability.is600MCapable,
+              // `is600MCapable` alone isn't enough: it wrongly reports the
+              // A12Z iPad as capable (see `TranscriptionService.parakeetUsable`
+              // doc comment). Never offer an upgrade to an engine that can't
+              // actually run on this device.
+              TranscriptionService.parakeetUsable,
+              AppGroup.useAppleDictationForEnglish,
+              !AppGroup.parakeetNudgeDeclined,
+              !AppGroup.warmHoldNudgeShouldShow
+        else { return }
+        AppGroup.showParakeetUpgradeNudge = true
+        CrossProcessNotification.post(name: CrossProcessNotification.parakeetUpgradeNudgeChanged)
     }
 
     private static func updateFollowUpDiscoveryState(

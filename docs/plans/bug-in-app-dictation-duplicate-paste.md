@@ -1,6 +1,18 @@
 # Bug: in-app dictation duplicates the text on stop (transcript Edit / Feedback fields)
 
-> **Status: BRIDGE IMPLEMENTED (2026-06-03) — full app builds; PENDING on-device test.** The first attempt (collapse to one keyboard paste path: delete the keyboard same-field guards + the in-process `FocusedFieldInsert` side door) **dropped the in-app paste on device** — confirming the host's SwiftUI re-render on stop disconnects the keyboard proxy (nil-context), so the keyboard flush has nothing to insert into in-Jot. Pivoted to a **bridge**: restored `FocusedFieldInsert` (the in-process insert is the sole in-app deliverer), and on the transient path **clear the keyboard's pending paste BEFORE the publish/phase-flip** so the keyboard flush finds no pending session and skips — closing the duplicate race deterministically (no main-app/keyboard double-insert). The keyboard's documentIdentifier/keyboardType same-field guards stay **removed** (CEO's "paste wherever the cursor is" choice for *other* apps; in-app the keyboard never reaches them — it skips on the cleared session). **True single path is deferred to the root-decoupling refactor** (`refactor-decouple-root-view.md`), which isolates the field so the keyboard flush works in-app and the bridge can be deleted. **On-device test:** in-Jot paste lands EXACTLY once across transcript Edit / Feedback / Wizard W5 (not zero, not twice); no new Recents row (no-save holds); other-app paste still lands once. Original confirmation/diagnosis + fix plan retained below.
+> **⛔ SUPERSEDED (2026-07-05).** The `FocusedFieldInsert` bridge this doc's fix
+> depends on was deleted in the root-view-decouple refactor (commit `c79ebac` —
+> see `Jot/ARCHITECTURE.md:125` and `Jot/CLAUDE.md`'s "DICTATION ARCHITECTURE —
+> unification COMPLETE" section). Since that refactor, an in-Jot stop (Edit /
+> Feedback) is delivered through the same single keyboard auto-paste flush as
+> any other host — there is no in-process deliverer left, so the dual-deliverer
+> race described below is **structurally impossible now**. Keeping this doc for
+> history; do not use it to diagnose current in-app dictation symptoms. A newer,
+> different symptom in the same subsystem (dictated text sometimes silently
+> **not** inserted at all, rather than duplicated) is tracked separately at
+> [bug-edit-dictation-not-saved.md](bug-edit-dictation-not-saved.md).
+
+> **Status (historical): BRIDGE IMPLEMENTED (2026-06-03) — full app builds; PENDING on-device test.** The first attempt (collapse to one keyboard paste path: delete the keyboard same-field guards + the in-process `FocusedFieldInsert` side door) **dropped the in-app paste on device** — confirming the host's SwiftUI re-render on stop disconnects the keyboard proxy (nil-context), so the keyboard flush has nothing to insert into in-Jot. Pivoted to a **bridge**: restored `FocusedFieldInsert` (the in-process insert is the sole in-app deliverer), and on the transient path **clear the keyboard's pending paste BEFORE the publish/phase-flip** so the keyboard flush finds no pending session and skips — closing the duplicate race deterministically (no main-app/keyboard double-insert). The keyboard's documentIdentifier/keyboardType same-field guards stay **removed** (CEO's "paste wherever the cursor is" choice for *other* apps; in-app the keyboard never reaches them — it skips on the cleared session). **True single path is deferred to the root-decoupling refactor** (`refactor-decouple-root-view.md`), which isolates the field so the keyboard flush works in-app and the bridge can be deleted. **On-device test:** in-Jot paste lands EXACTLY once across transcript Edit / Feedback / Wizard W5 (not zero, not twice); no new Recents row (no-save holds); other-app paste still lands once. Original confirmation/diagnosis + fix plan retained below.
 
 ## ✅ Confirmation — original hypothesis is RIGHT; it's an intermittent race (on-device, 2026-06-03)
 

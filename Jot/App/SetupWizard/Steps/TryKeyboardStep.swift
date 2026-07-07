@@ -291,6 +291,19 @@ struct TryKeyboardStep: View {
         return .tapJotDown
     }
 
+    /// "Say something out loud — like *"I am awesome."*" — lead in the body
+    /// sans, example in Fraunces italic. One `Text` run (string interpolation,
+    /// not the deprecated `+` concatenation) so it still wraps as one block.
+    private var saySomethingLine: Text {
+        let lead = Text("Say something out loud — like ")
+            .font(.system(size: 15, weight: .regular))
+            .foregroundColor(Color.jotPageInkSecondary)
+        let example = Text("“I am awesome.”")
+            .font(.custom(JotType.frauncesItalicText, size: 16))
+            .foregroundColor(Color.jotPageInk)
+        return Text("\(lead)\(example)")
+    }
+
     @ViewBuilder
     private var inFieldCue: some View {
         switch cueState {
@@ -316,14 +329,7 @@ struct TryKeyboardStep: View {
             // The phrase prompt that used to live in the subtitle — same
             // styling, now inside the box. Example phrase in Fraunces italic,
             // the rest in the body sans.
-            (
-                Text("Say something out loud — like ")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundColor(Color.jotPageInkSecondary)
-                + Text("“I am awesome.”")
-                    .font(.custom(JotType.frauncesItalicText, size: 16))
-                    .foregroundColor(Color.jotPageInk)
-            )
+            saySomethingLine
             .multilineTextAlignment(.leading)
             .lineSpacing(1.5)
             .fixedSize(horizontal: false, vertical: true)

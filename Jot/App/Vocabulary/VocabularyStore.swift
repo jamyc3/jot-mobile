@@ -41,6 +41,12 @@ final class VocabularyStore {
 
     private(set) var terms: [VocabTerm] = []
 
+    /// Set when the most recent `save()` failed to write the vocabulary
+    /// file to disk; `nil` once a later save succeeds. Surfaced as a
+    /// footnote in `VocabularySettingsView` — previously this failure
+    /// was swallowed entirely, silently dropping the user's edit.
+    private(set) var lastSaveError: String?
+
     /// Master toggle. When off, the vocabulary file is still preserved
     /// and editable; it's just not applied to transcription. Stored in
     /// UserDefaults so the preference survives reinstalls (provided the
@@ -91,10 +97,19 @@ final class VocabularyStore {
         let body = Self.serialize(terms)
         do {
             try body.write(to: url, atomically: true, encoding: .utf8)
+            lastSaveError = nil
         } catch {
-            // Swallow for now — surface in Settings status row in a
-            // follow-up. Blocking the UI on a persistence failure is
-            // worse than the silent drop for the MVP.
+            // Blocking the UI on a persistence failure is worse than
+            // letting the app carry on — but the failure must be visible
+            // somewhere, so it's recorded to Diagnostics and surfaced as
+            // a status footnote in VocabularySettingsView rather than
+            // dropped silently.
+            lastSaveError = error.localizedDescription
+            DiagnosticsLog.record(
+                source: "main-app",
+                category: .vocabularySaveFailed,
+                message: "Vocabulary save failed: \(error.localizedDescription)"
+            )
         }
         // Nudge the rescorer to re-tokenize against the updated file.
         // Cheap when the rescorer is already prepared; throws

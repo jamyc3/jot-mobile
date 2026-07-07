@@ -101,6 +101,12 @@ struct HomeScreen: View {
     /// flag is just a cache that lets the body invalidate cleanly.
     @State private var donationCardVisible: Bool = false
 
+    /// Mirrors `DictationStats.shouldShowMacAppPromo` the same way
+    /// `donationCardVisible` mirrors the donation card's own threshold —
+    /// re-evaluated at the same entry points. Unlike the donation card this
+    /// fires at most once ever (see `DictationStats.acknowledgeMacAppPromo`).
+    @State private var macAppPromoVisible: Bool = false
+
     /// Darwin observer for the keyboard-dictate tap, installed only while the
     /// wizard is NOT presented (the wizard owns its own observer during its
     /// lifetime — see `SetupWizardView`). Re-installed / torn down by the
@@ -224,14 +230,21 @@ struct HomeScreen: View {
         }
         // Donation prompt — a centered modal popup over the home screen,
         // surfaced once a usage milestone is crossed (see `DictationStats`).
-        // Re-fires at each milestone (2h → 5h → 10h …).
+        // Re-fires at each milestone (2h → 5h → 10h …). The Mac-app promo is
+        // the same style of popup but fires at most once; if both happen to
+        // be armed at once the donation prompt wins (it's the recurring one,
+        // so it'll get another chance — the Mac promo only gets this one).
         .overlay {
             if donationCardVisible {
                 donationPopup
                     .transition(.opacity)
+            } else if macAppPromoVisible {
+                macAppPromoPopup
+                    .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.3), value: donationCardVisible)
+        .animation(.easeInOut(duration: 0.3), value: macAppPromoVisible)
         // Floating selection-Cancel: pinned to the top so it's reachable
         // anywhere in a long list (the in-header Cancel scrolled away). Glass
         // so the list reads through it.
@@ -310,6 +323,7 @@ struct HomeScreen: View {
             copyHaptic.prepare()
             selectionHaptic.prepare()
             refreshDonationCardVisibility()
+            refreshMacAppPromoVisibility()
             askAvailable = AskController.isAvailable
             // WS-B: arm the unified keyboard-dictate observer unless the wizard
             // is currently presenting (it owns the tap then).
@@ -332,18 +346,21 @@ struct HomeScreen: View {
         .onChange(of: recordingService.isRecording) { _, isRecording in
             guard !isRecording else { return }
             // Recording ended (stopped, cancelled, errored, or pipeline done).
-            // Re-check the donation-card threshold for the user landing back
-            // on home.
+            // Re-check the donation-card + Mac-promo thresholds for the user
+            // landing back on home.
             refreshDonationCardVisibility()
+            refreshMacAppPromoVisibility()
         }
         // Keyboard dictations increment the stats counter from another
         // process without ever opening Jot.app. When the user returns to
-        // the app, re-evaluate donation card + warm-hold-nudge visibility so
-        // the threshold crossing is reflected. (Hero reconciliation stays on
-        // `AppRootView`, which owns the hero presentation.)
+        // the app, re-evaluate donation card + Mac-promo + warm-hold-nudge
+        // visibility so the threshold crossing is reflected. (Hero
+        // reconciliation stays on `AppRootView`, which owns the hero
+        // presentation.)
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 refreshDonationCardVisibility()
+                refreshMacAppPromoVisibility()
                 refreshWarmHoldNudge()
             }
         }
@@ -425,15 +442,6 @@ struct HomeScreen: View {
                     do {
                         homeLog.notice("RECORDING START FROM: HomeScreen.keyboardDictateTapped (in-Jot keyboard tap)")
                         let startedAt = Date()
-                        // A capture must never inherit a stale inline-ownership
-                        // flag. `ownsActiveRecording` is set ONLY by Ask's
-                        // `InlineDictationSession`; if Ask ever leaves it true,
-                        // a later capture that starts via `start()` directly would
-                        // carry it, and the keyboard Stop would bail out of
-                        // `handleStopRequested` BEFORE stopping the mic (the
-                        // warm-resume "won't stop" regression). This is a normal
-                        // capture, so clear it defensively before starting.
-                        recording.ownsActiveRecording = false
                         try await recording.start()
                         // Seed the activity coordinator's start anchor so any
                         // later hero adoption reads THIS recording's start time
@@ -820,6 +828,66 @@ struct HomeScreen: View {
         withAnimation(.easeInOut(duration: 0.3)) {
             donationCardVisible = false
         }
+    }
+
+    // MARK: - Jot for Mac promo
+
+    /// Same centered-modal-popup treatment as `donationPopup`, over
+    /// `MacAppPromoCard` instead of `DonationCard`.
+    private var macAppPromoPopup: some View {
+        ZStack {
+            Color.black.opacity(0.38)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { handleMacAppPromoDismiss() }
+            MacAppPromoCard(
+                onDismiss: handleMacAppPromoDismiss,
+                onOpen: handleMacAppPromoOpen
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(JotDesign.background)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.jotInk.opacity(0.08), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.22), radius: 26, x: 0, y: 12)
+            .padding(.horizontal, 28)
+            .transition(.scale(scale: 0.92).combined(with: .opacity))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Re-reads `DictationStats.shouldShowMacAppPromo` and updates the local
+    /// @State flag. Cheap (one UserDefaults bool + one double read), so it's
+    /// fine to call from every plausible entry point, same as the donation
+    /// card's own refresh.
+    private func refreshMacAppPromoVisibility() {
+        let next = DictationStats.shouldShowMacAppPromo
+        guard next != macAppPromoVisible else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            macAppPromoVisible = next
+        }
+    }
+
+    /// "Not now" tapped. Terminal — unlike the donation card this never
+    /// re-fires (see `DictationStats.acknowledgeMacAppPromo`).
+    private func handleMacAppPromoDismiss() {
+        DictationStats.acknowledgeMacAppPromo()
+        withAnimation(.easeInOut(duration: 0.3)) {
+            macAppPromoVisible = false
+        }
+    }
+
+    /// "Get Jot for Mac" tapped. Marks the prompt seen (terminal, same as
+    /// dismiss) and opens the Jot for Mac screen via the Router.
+    private func handleMacAppPromoOpen() {
+        DictationStats.acknowledgeMacAppPromo()
+        withAnimation(.easeInOut(duration: 0.3)) {
+            macAppPromoVisible = false
+        }
+        router.showJotForMac = true
     }
 
     // MARK: - Transcript actions

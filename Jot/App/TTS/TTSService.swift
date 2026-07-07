@@ -708,12 +708,7 @@ final class TTSService {
         guard let export = AVAssetExportSession(
             asset: asset, presetName: AVAssetExportPresetAppleM4A
         ) else { throw TTSError.audioFormat }
-        export.outputURL = out
-        export.outputFileType = .m4a
-        await export.export()
-        if export.status != .completed {
-            throw export.error ?? TTSError.audioFormat
-        }
+        try await export.export(to: out, as: .m4a)
     }
 
     /// Stop any in-flight playback and release the audio session. Gentle:

@@ -1,7 +1,7 @@
 {
   "app": "Jot",
   "generatedFrom": "Jot/features.md",
-  "note": "Join table between features.md sections and the visual mockup. Each screen lists the feature sections it demonstrates, its screenshot slot, and behavior/dimension annotations. captured:false => slot still needs a real screenshot. Dimensions come from JotDesign tokens (the real source of truth) \u2014 never hand-typed guesses.",
+  "note": "Join table between features.md sections and the visual mockup. Each screen lists the feature sections it demonstrates, its screenshot slot, and behavior/dimension annotations. captured:false => slot still needs a real screenshot. Dimensions come from JotDesign tokens (the real source of truth) — never hand-typed guesses.",
   "surfaces": [
     {
       "id": "1-home",
@@ -178,7 +178,7 @@
           ],
           "image": "screens/ios/detail-action-bar.png",
           "captured": false,
-          "target": "PROPOSED: the primary action is renamed **Articulate \u2192 Rewrite**. The bar = Delete \u00b7 Edit \u00b7 Rewrite \u00b7 Copy; tapping Rewrite opens the prompt picker (now incl. Translate)."
+          "target": "PROPOSED: the primary action is renamed **Articulate → Rewrite**. The bar = Delete · Edit · Rewrite · Copy; tapping Rewrite opens the prompt picker (now incl. Translate)."
         },
         {
           "id": "detail-rewrite-progress",
@@ -216,7 +216,7 @@
           ],
           "image": "screens/ios/detail-translate.png",
           "captured": false,
-          "target": "PROPOSED, not built. Entry: action bar **Rewrite** (renamed from Articulate) \u2192 the Rewrite picker has a **Translate** option \u2192 opens THIS ephemeral sheet: language chips / More\u2026 \u2192 instant on-device translation (Apple Translation, already wired) \u2192 Copy / Share, nothing saved. Approve this and the picker/action-bar mockups, then build."
+          "target": "PROPOSED, not built. Entry: action bar **Rewrite** (renamed from Articulate) → the Rewrite picker has a **Translate** option → opens THIS ephemeral sheet: language chips / More… → instant on-device translation (Apple Translation, already wired) → Copy / Share, nothing saved. Approve this and the picker/action-bar mockups, then build."
         },
         {
           "id": "detail-find-replace",
@@ -258,56 +258,65 @@
         },
         {
           "id": "wiz-w2",
-          "title": "W2 Microphone Permission",
+          "title": "W2 Dictation Language Picker",
           "sections": [
-            "4.2"
+            "4.8"
           ],
           "image": "screens/ios/wiz-w2.png",
-          "captured": false
-        },
-        {
-          "id": "wiz-w3",
-          "title": "W3 Keyboard Install & Full Access",
-          "sections": [
-            "4.3"
-          ],
-          "image": "screens/ios/wiz-w3.png",
           "captured": true
         },
         {
-          "id": "wiz-w4",
-          "title": "W4 How It Works",
+          "id": "wiz-w3",
+          "title": "W3 Microphone Permission",
           "sections": [
-            "4.4"
+            "4.2"
+          ],
+          "image": "screens/ios/wiz-w3.png",
+          "captured": false
+        },
+        {
+          "id": "wiz-w4",
+          "title": "W4 Keyboard Install & Full Access",
+          "sections": [
+            "4.3"
           ],
           "image": "screens/ios/wiz-w4.png",
           "captured": true
         },
         {
           "id": "wiz-w5",
-          "title": "W5 Keyboard Try-It",
+          "title": "W5 How It Works",
           "sections": [
-            "4.5"
+            "4.4"
           ],
           "image": "screens/ios/wiz-w5.png",
           "captured": true
         },
         {
           "id": "wiz-w6",
-          "title": "W6 Warm Hold Opt-In",
+          "title": "W6 Keyboard Try-It",
           "sections": [
-            "4.6"
+            "4.5"
           ],
           "image": "screens/ios/wiz-w6.png",
           "captured": true
         },
         {
           "id": "wiz-w7",
-          "title": "W7 Completion",
+          "title": "W7 Warm Hold Opt-In",
+          "sections": [
+            "4.6"
+          ],
+          "image": "screens/ios/wiz-w7.png",
+          "captured": true
+        },
+        {
+          "id": "wiz-w8",
+          "title": "W8 Completion",
           "sections": [
             "4.7"
           ],
-          "image": "screens/ios/wiz-w7.png",
+          "image": "screens/ios/wiz-w8.png",
           "captured": true
         }
       ]
@@ -364,7 +373,7 @@
           ],
           "image": "screens/keyboard/kb-actions-dense.png",
           "captured": false,
-          "target": "Denser \u2022\u2022\u2022 grid: 4\u00d72 = 8 smaller tiles. Row 1 (colored features): Add to Vocabulary \u00b7 AI Rewrite \u00b7 Translate \u00b7 Close. Row 2 (monochrome edit): Copy \u00b7 Paste \u00b7 Undo \u00b7 Redo. Brings back the edit actions; still fills the short pane with no scroll."
+          "target": "Denser ••• grid: 4×2 = 8 smaller tiles. Row 1 (colored features): Add to Vocabulary · AI Rewrite · Translate · Close. Row 2 (monochrome edit): Copy · Paste · Undo · Redo. Brings back the edit actions; still fills the short pane with no scroll."
         },
         {
           "id": "kb-translate",
@@ -375,7 +384,7 @@
           ],
           "image": "screens/keyboard/kb-translate.png",
           "captured": false,
-          "target": "Keyboard \u2022\u2022\u2022 \u2192 Translate = a guide (like AI Rewrite): teaches the system Translate (select \u2192 Translate menu \u2192 replaces in place). Keyboard can't link the Translation framework, so no engine here."
+          "target": "Keyboard ••• → Translate = a guide (like AI Rewrite): teaches the system Translate (select → Translate menu → replaces in place). Keyboard can't link the Translation framework, so no engine here."
         },
         {
           "id": "kb-status-banner",
@@ -385,7 +394,7 @@
           ],
           "image": "screens/keyboard/kb-status-banner.png",
           "captured": false,
-          "issue": "Adding a word to Vocabulary shows the SUCCESS confirmation (\u201cAdded \u2018\u2026\u2019 to your dictionary\u201d) in the RED error banner with an \u2715 icon, floating over the recents pane \u2014 should be success/green. It also does not appear instantly: it only surfaces after a follow-up action (e.g. pressing Enter).",
+          "issue": "Adding a word to Vocabulary shows the SUCCESS confirmation (“Added ‘…’ to your dictionary”) in the RED error banner with an ✕ icon, floating over the recents pane — should be success/green. It also does not appear instantly: it only surfaces after a follow-up action (e.g. pressing Enter).",
           "bug": "keyboard-vocab-banner"
         },
         {
@@ -426,6 +435,16 @@
           "image": "screens/keyboard/kb-rewrite-guide.png",
           "captured": false,
           "target": "Revised AI Rewrite guide: title in New York serif (Jot's display font, no longer clashing with the system sans), and instead of the words 'Writing Tools' it shows the actual menu glyph + a preview of the iOS selection menu with it highlighted, so people recognize what to tap. Same treatment applies to the Translate guide."
+        },
+        {
+          "id": "kb-upgrade-nudge",
+          "title": "Parakeet Upgrade Nudge",
+          "sections": [
+            "5.2b"
+          ],
+          "image": "screens/keyboard/kb-upgrade-nudge.png",
+          "captured": false,
+          "target": "One-time keyboard nudge after 5 English dictations on Apple's default engine, on a Parakeet-capable device (iPhone 14 Pro+ / iPad M1+, i.e. parakeetUsable): a Liquid-Glass strip in the top-strip slot — \"More accurate dictation available. Switch to Jot's own on-device engine.\" with Switch (deep-links to the upgrade sheet) / Not now (permanent decline). Twin of the warm-hold nudge; never co-shows with it."
         }
       ]
     },
@@ -446,15 +465,6 @@
             "6.5"
           ],
           "image": "screens/ios/settings-main.png",
-          "captured": true
-        },
-        {
-          "id": "settings-model-mgmt",
-          "title": "Speech Model Management",
-          "sections": [
-            "6.1"
-          ],
-          "image": "screens/ios/settings-model-mgmt.png",
           "captured": true
         },
         {
@@ -492,6 +502,16 @@
           ],
           "image": "screens/ios/settings-donations.png",
           "captured": true
+        },
+        {
+          "id": "settings-upgrade-engine",
+          "title": "Switch to Jot's Engine",
+          "sections": [
+            "5.2b"
+          ],
+          "image": "screens/settings/settings-upgrade-engine.png",
+          "captured": false,
+          "target": "Medium-detent sheet reached from the keyboard upgrade nudge (jot://upgrade-engine). \"Use Jot's engine\" flips English dictation Apple→Parakeet (instant today; a download step attaches once the bundled model is stripped). \"Keep Apple\" = permanent decline. Same no-pressure tone as the donation card."
         }
       ]
     },
@@ -502,23 +522,13 @@
       "platform": "ios",
       "screens": [
         {
-          "id": "rewrite-activation",
-          "title": "Activation Model",
-          "sections": [
-            "7.3"
-          ],
-          "image": "screens/ios/rewrite-activation.png",
-          "captured": false
-        },
-        {
           "id": "rewrite-prompt-picker",
           "title": "Prompt Picker",
           "sections": [
             "7.5"
           ],
           "image": "screens/ios/rewrite-prompt-picker.png",
-          "captured": true,
-          "target": "PROPOSED tweaks (design target): (1) the action bar's primary is renamed **Articulate \u2192 Rewrite**, so this picker opens from a 'Rewrite' button; (2) a new **Translate** option is added here (\u2192 opens the Translate sheet, screen `detail-translate`). Cleaner layout overall is also the target."
+          "captured": true
         },
         {
           "id": "rewrite-saved-prompts",
@@ -527,15 +537,6 @@
             "7.7"
           ],
           "image": "screens/ios/rewrite-saved-prompts.png",
-          "captured": false
-        },
-        {
-          "id": "rewrite-model-download",
-          "title": "Model Download Management",
-          "sections": [
-            "7.8"
-          ],
-          "image": "screens/ios/rewrite-model-download.png",
           "captured": false
         },
         {
@@ -584,31 +585,28 @@
             "3.3"
           ],
           "image": "screens/ios/rewrite-apple-intelligence.png",
-          "captured": false,
-          "target": "PROPOSED, not built. When Jot's AI model (Qwen) isn't downloaded AND the device has Apple Intelligence, tapping Rewrite opens THIS guide instead of pushing the 2.5 GB download \u2014 it teaches the free system Writing Tools path (select text \u2192 \u2726 Writing Tools \u2192 Rewrite/Concise/Proofread \u2192 Copy, or Edit first to save). Qwen download is the secondary link. Apple-Intelligence-primary is my recommendation; flip if you'd rather show both equally."
+          "captured": false
         },
         {
           "id": "ai-engine-apple",
-          "title": "AI Engine \u2014 Apple Intelligence",
+          "title": "AI Engine — Apple Intelligence",
           "sections": [
             "6.3",
             "7.3"
           ],
           "image": "screens/ios/ai-engine-apple.png",
-          "captured": false,
-          "target": "PROPOSED. AI Rewrite settings gains an ENGINE choice: Apple Intelligence (default \u2014 no download, everyone has it) vs Jot's AI (Qwen). This is the Apple Intelligence state: no custom prompts (Writing Tools doesn't use them), an explainer instead. Switching here is also how you 'turn off' Qwen after downloading."
+          "captured": false
         },
         {
           "id": "ai-engine-qwen",
-          "title": "AI Engine \u2014 Jot's AI",
+          "title": "AI Engine — Jot's AI",
           "sections": [
             "6.3",
             "7.5",
             "7.7"
           ],
           "image": "screens/ios/ai-engine-qwen.png",
-          "captured": false,
-          "target": "PROPOSED. The Qwen-selected state of the new engine choice: model shows READY, and YOUR custom prompts appear (only shown when Qwen is the engine). 'Use Apple Intelligence' frees the 2.5 GB."
+          "captured": false
         }
       ]
     },
@@ -636,15 +634,6 @@
             "8.2"
           ],
           "image": "screens/ios/vocab-empty.png",
-          "captured": false
-        },
-        {
-          "id": "vocab-add",
-          "title": "Term Addition",
-          "sections": [
-            "8.3"
-          ],
-          "image": "screens/ios/vocab-add.png",
           "captured": false
         },
         {
@@ -693,15 +682,6 @@
           "captured": true
         },
         {
-          "id": "help-rewrite-guide",
-          "title": "AI Rewrite Guide",
-          "sections": [
-            "9.3"
-          ],
-          "image": "screens/ios/help-rewrite-guide.png",
-          "captured": false
-        },
-        {
           "id": "help-privacy",
           "title": "Privacy Explainer",
           "sections": [
@@ -709,15 +689,6 @@
           ],
           "image": "screens/ios/help-privacy.png",
           "captured": false
-        },
-        {
-          "id": "help-troubleshooting",
-          "title": "Collapsible Troubleshooting",
-          "sections": [
-            "9.5"
-          ],
-          "image": "screens/ios/help-troubleshooting.png",
-          "captured": true
         },
         {
           "id": "help-feedback",
@@ -827,15 +798,6 @@
           "captured": false
         },
         {
-          "id": "privacy-warm-hold",
-          "title": "Warm Hold Disclosure",
-          "sections": [
-            "13.2"
-          ],
-          "image": "screens/ios/privacy-warm-hold.png",
-          "captured": false
-        },
-        {
           "id": "privacy-full-access",
           "title": "Full Access Disclosure",
           "sections": [
@@ -888,15 +850,6 @@
           ],
           "image": "screens/ios/ask-indexing.png",
           "captured": true
-        },
-        {
-          "id": "ask-model-choice",
-          "title": "Answer Model Choice",
-          "sections": [
-            "14.5"
-          ],
-          "image": "screens/ios/ask-model-choice.png",
-          "captured": false
         },
         {
           "id": "ask-howto",

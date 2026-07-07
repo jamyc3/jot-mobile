@@ -1,8 +1,10 @@
-<!-- §3.7 Edit Transcript → PROPOSED Find & Replace (edit-mode only). The user fixes a
-     term the speech model misheard several times ("Okta" → heard as "okay"). A find &
-     replace bar sits above the keyboard: find field, replace field, live match count,
-     Replace All. Whole-word + case-insensitive by default. Changed text shows italic
-     like any edit. See detail-vocab-offer for the learn-it offer on Save. -->
+<!-- §3.7 Edit Transcript → Find & Replace (edit-mode only, shipped). The user fixes a
+     term the speech model misheard several times ("Okta" -> heard as "okay"). A find &
+     replace bar sits above the keyboard: find field with a live match-count label (e.g.
+     "3 matches"), replace field, Replace All. Whole-word + case-insensitive by default.
+     There is no in-text highlighting or prev/next match navigation in the real UI -- the
+     editable text stays plain until Replace All runs. See detail-vocab-offer for the
+     learn-it offer on Save. -->
 <div style="position:absolute;inset:0;display:flex;flex-direction:column">
 
   <div class="jot-donebtn" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0;font-size:18px;font-weight:700;opacity:0.4;margin-top:8px">‹</div>
@@ -11,38 +13,29 @@
     <span>2 hours ago</span><span>·</span><span>41 words</span><span>·</span><span>0:18</span>
   </div>
 
-  <!-- Editable text. Matches of the find term are highlighted; the active match is ringed. -->
+  <!-- Editable text stays plain -- the real editor has no match highlighting. -->
   <div class="jot-card" style="padding:18px;font-size:16px;line-height:1.6;color:var(--jot-ink)">
-    Make sure the
-    <span style="background:rgba(26,140,255,0.16);outline:1.5px solid var(--jot-accent);border-radius:4px;padding:0 2px">okay</span>
-    integration is set up before the demo. I'll ping the
-    <span style="background:rgba(26,140,255,0.16);border-radius:4px;padding:0 2px">okay</span>
-    admin to provision the SSO app, and once
-    <span style="background:rgba(26,140,255,0.16);border-radius:4px;padding:0 2px">okay</span>
-    is live we can route the whole team through it.
+    Make sure the okay integration is set up before the demo. I'll ping the okay admin to
+    provision the SSO app, and once okay is live we can route the whole team through it.
   </div>
 
   <div style="flex:1"></div>
 
-  <!-- PROPOSED: Find & Replace bar (sits above the edit bar) -->
+  <!-- Find & Replace bar (sits above the edit bar) -->
   <div class="jot-card" style="position:absolute;left:0;right:0;bottom:302px;padding:10px 12px;border-radius:16px;display:flex;flex-direction:column;gap:8px">
-    <!-- Find row -->
+    <!-- Find row: text field + live match-count label (no prev/next nav in the real UI) -->
     <div style="display:flex;align-items:center;gap:8px">
       <div style="flex:1;display:flex;align-items:center;gap:8px;background:rgba(120,120,128,0.14);border:0.5px solid var(--jot-card-border);border-radius:10px;padding:8px 10px">
         <svg viewBox="0 0 24 24" style="width:15px;height:15px;flex:none"><circle cx="11" cy="11" r="7" fill="none" stroke="var(--jot-ink-cap)" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="var(--jot-ink-cap)" stroke-width="2" stroke-linecap="round"/></svg>
         <span style="font-size:15px;color:var(--jot-ink)">okay</span>
       </div>
-      <span style="font-size:13px;font-weight:600;color:var(--jot-ink-2);min-width:30px;text-align:center">1/3</span>
-      <div style="display:flex;flex-direction:column;gap:2px">
-        <span style="font-size:11px;color:var(--jot-ink-cap);line-height:1">▲</span>
-        <span style="font-size:11px;color:var(--jot-ink-cap);line-height:1">▼</span>
-      </div>
+      <span style="font-size:12px;font-weight:600;color:var(--jot-ink);white-space:nowrap">3 matches</span>
     </div>
     <!-- Replace row -->
     <div style="display:flex;align-items:center;gap:8px">
       <div style="flex:1;display:flex;align-items:center;gap:8px;background:rgba(120,120,128,0.14);border:0.5px solid var(--jot-card-border);border-radius:10px;padding:8px 10px">
         <svg viewBox="0 0 24 24" style="width:15px;height:15px;flex:none"><path d="M4 7h13l-3-3M20 17H7l3 3" fill="none" stroke="var(--jot-ink-cap)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span style="font-size:15px;color:var(--jot-ink);font-style:italic">Okta</span>
+        <span style="font-size:15px;color:var(--jot-ink)">Okta</span>
       </div>
       <div class="jot-cta" style="width:auto;padding:0 16px;height:38px;font-size:14px;box-shadow:none">Replace All</div>
     </div>

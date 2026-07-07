@@ -222,12 +222,13 @@ struct CorrectionReviewStrip: View {
                 if let verdictFeedback {
                     // Resolved consequence line (bold lead + rest), matching the
                     // app's resolved copy. Base dwell 950ms (set in wordChip).
-                    (Text(verdictFeedback.strong)
+                    let strongPart = Text(verdictFeedback.strong)
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundColor(Color.jotKeyboardKeyInk)
-                     + Text(verdictFeedback.rest)
+                    let restPart = Text(verdictFeedback.rest)
                         .font(.system(size: 13.5))
-                        .foregroundColor(Color.jotKeyboardStreamText))
+                        .foregroundColor(Color.jotKeyboardStreamText)
+                    Text("\(strongPart)\(restPart)")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .transition(.opacity)
@@ -317,7 +318,7 @@ struct CorrectionReviewStrip: View {
         let after = Text(ask.contextAfter)
             .font(serif)
             .foregroundColor(Color.jotKeyboardStreamText)
-        return before + word + after
+        return Text("\(before)\(word)\(after)")
     }
 
     private func wordChip(word: String, inText: Bool, verdict: String, ask: CorrectionBridge.Ask) -> some View {

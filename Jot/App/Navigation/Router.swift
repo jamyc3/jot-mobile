@@ -65,6 +65,20 @@ final class Router {
     /// Drives the "Ask Jot" sheet (the sparkles pill next to search).
     var showAskSheet = false
 
+    /// Drives the Parakeet-upgrade screen (deferred-engineering follow-up to
+    /// the Apple Dictation A/B spike) — the destination of the keyboard's
+    /// `jot://upgrade-engine` deep link (its Parakeet-upgrade nudge's
+    /// "Switch" tap). Set by `JotApp`'s `.onOpenURL`.
+    var showUpgradeEngine = false
+
+    /// Drives the "Jot for Mac" screen when opened from the home screen's
+    /// one-time Mac-app promo popup (see `DictationStats
+    /// .shouldShowMacAppPromo`). The permanent Settings → About row reaches
+    /// the same `JotForMacView` via a `NavigationLink` push instead — this
+    /// flag exists only for the home-popup entry point, which has no
+    /// Settings nav stack to push onto.
+    var showJotForMac = false
+
     /// Drives the programmatic push to `RecordingHeroView` (the return-to-app /
     /// recording hero). Set by the FAB tap, the return-pill tap, and the
     /// external-keyboard bounce (`presentExternalKeyboardHeroIfPending`); fed into

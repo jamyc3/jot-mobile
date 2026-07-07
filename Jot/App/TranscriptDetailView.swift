@@ -697,7 +697,7 @@ struct TranscriptDetailView: View {
         isDiarizing = true
         diarizeError = nil
         Task {
-            if await TranscriptionService.shared.isBusy {
+            if TranscriptionService.shared.isBusy {
                 await MainActor.run {
                     isDiarizing = false
                     diarizeError = "Busy transcribing — try again in a moment."

@@ -136,6 +136,17 @@ enum DiagnosticsCategory: String, Codable {
     /// see whether the survive-app-updates stable-copy actually engaged and
     /// whether the load was cold (~tens of seconds) or warm (sub-second).
     case modelLoad
+    /// Apple-engine dictation trace: step-by-step record of Apple
+    /// SpeechTranscriber/DictationTranscriber dictation (asset install,
+    /// buffer build, results loop, completion, or any failure) — surfaced
+    /// here instead of only `os.log` because this owner reviews in-app
+    /// Diagnostics, not Console.
+    case appleDictation
+    /// Writing the vocabulary file to disk (`VocabularyStore.save()`)
+    /// threw. Previously swallowed with zero user signal; now recorded so
+    /// a "my term disappeared" report is diagnosable from Help →
+    /// Diagnostics instead of guessed at.
+    case vocabularySaveFailed
 }
 
 struct DiagnosticsEntry: Codable, Identifiable, Equatable {

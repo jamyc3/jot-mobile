@@ -1,6 +1,6 @@
 <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
   <span class="jot-donebtn" style="padding:7px 11px">‹</span>
-  <div style="flex:1;text-align:center;font-weight:600;font-size:17px;color:var(--jot-ink);margin-right:34px">AI Rewrite</div>
+  <div style="flex:1;text-align:center;font-weight:600;font-size:17px;color:var(--jot-ink);margin-right:34px">AI</div>
 </div>
 
 <div style="display:flex;align-items:flex-end;gap:10px;margin:6px 0 2px">
@@ -8,50 +8,128 @@
   <span class="jot-pill warning" style="height:22px;margin-bottom:6px"><span class="dot"></span>EXPERIMENTAL</span>
 </div>
 
-<div class="jot-section">Prompts</div>
+<!-- enginePicker + modelStrip ALWAYS render above the prompts list in Jot's-AI
+     mode (AIRewriteSettingsView.swift: heroBlock → enginePicker → modelStrip →
+     promptsHeader → promptsCard → newPromptCTA) — there is no code path that
+     shows a bare Prompts section with nothing above it. -->
+<div class="jot-section">Rewrite engine</div>
 <div class="jot-card">
-  <div class="jot-row">
+  <div class="jot-row" style="padding:13px 16px;opacity:.7">
+    <span class="jot-tile" style="--c1:#A35BFF;--c2:#3B9BFF;background:linear-gradient(135deg,#FF5E9A,#A35BFF,#3B9BFF,#3BD6C6)">
+      <svg viewBox="0 0 24 24"><path d="M12 2l1.9 5.3L19 9l-5.1 1.7L12 16l-1.9-5.3L5 9l5.1-1.7z"/></svg>
+    </span>
+    <div class="grow">
+      <div class="jot-row-title">Apple Intelligence</div>
+      <div class="jot-row-sub">Built in · no download · frees 2.5 GB</div>
+    </div>
+    <span class="jot-chev">›</span>
+  </div>
+  <div class="jot-row" style="padding:13px 16px">
     <span class="jot-tile" style="--c1:#FF6B57;--c2:#D15847">
+      <svg viewBox="0 0 24 24"><path d="M12 2l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></svg>
+    </span>
+    <div class="grow">
+      <div class="jot-row-title">Jot's AI</div>
+      <div class="jot-row-sub">Qwen 3.5 4B · on this iPhone</div>
+    </div>
+    <span class="jot-pill success"><span class="dot"></span>READY</span>
+  </div>
+</div>
+<div class="jot-caption">Jot's AI runs your own prompts entirely on this iPhone. Switch to Apple Intelligence to free up 2.5 GB.</div>
+
+<div class="jot-section" style="margin-top:14px">Prompts</div>
+<div class="jot-card">
+  <div class="jot-row" style="align-items:flex-start;padding:18px">
+    <span class="jot-tile" style="--c1:#FF6B57;--c2:#D15847;margin-top:2px">
       <svg viewBox="0 0 24 24"><path d="M5 5l14 14M16 4l4 4-2 2-4-4z"/><path d="M4 20l3-1 9-9-2-2-9 9z" fill="#fff"/></svg>
     </span>
     <div class="grow">
-      <div class="jot-row-title">Cleanup</div>
-      <div class="jot-row-sub">"um so like the thing" → "The thing."</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="jot-row-title" style="font-family:ui-serif,'New York',Georgia,serif">Cleanup</span>
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--jot-ink-cap);background:rgba(0,0,0,0.08);padding:2px 6px;border-radius:4px">Default</span>
+      </div>
+      <div class="jot-row-sub" style="margin-top:4px">Polish dictation · keep voice</div>
+      <div style="margin-top:8px;font-size:12.5px;font-style:italic;color:var(--jot-ink-2);opacity:0.85">"Yo can you hear me testing the new mic gating on the keyboard"</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+        <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:none;stroke:#D15847;stroke-width:2.4"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+        <span style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#D15847">Cleanup</span>
+      </div>
+      <div style="font-size:13px;color:var(--jot-ink);margin-top:2px">Yo, can you hear me? Testing the new mic gating on the keyboard.</div>
     </div>
-    <span class="jot-chev">›</span>
+    <span style="flex:none;opacity:0.35;font-size:18px;letter-spacing:-2px">⣿</span>
   </div>
-  <div class="jot-row">
-    <span class="jot-tile" style="--c1:#1FCED1;--c2:#19A9AB">
+  <div style="border-top:0.5px solid var(--jot-sep);margin:0 18px"></div>
+  <div class="jot-row" style="align-items:flex-start;padding:18px">
+    <span class="jot-tile" style="--c1:#1FCED1;--c2:#19A9AB;margin-top:2px">
       <svg viewBox="0 0 24 24"><path d="M4 5h16v10H8l-4 4z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>
     </span>
     <div class="grow">
-      <div class="jot-row-title">AI prompt</div>
-      <div class="jot-row-sub">"build me an app idea" → "Context / Task / Requirements…"</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="jot-row-title" style="font-family:ui-serif,'New York',Georgia,serif">AI prompt</span>
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--jot-ink-cap);background:rgba(0,0,0,0.08);padding:2px 6px;border-radius:4px">Default</span>
+      </div>
+      <div class="jot-row-sub" style="margin-top:4px">Structure for Claude · ChatGPT · etc</div>
+      <div style="margin-top:8px;font-size:12.5px;font-style:italic;color:var(--jot-ink-2);opacity:0.85">"uh I'm trying to figure out why my swiftui list does weird animations when I scroll on iOS 18 but not 17…"</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+        <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:none;stroke:#D15847;stroke-width:2.4"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+        <span style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#D15847">AI prompt</span>
+      </div>
+      <div style="font-size:13px;color:var(--jot-ink);margin-top:2px">
+        <b>Context:</b> SwiftUI List shows unexpected animations when scrolling on iOS 18 — works fine on iOS 17. Suspect it's tied to the iOS 18 Identifiable changes.<br>
+        <b>Task:</b> Diagnose the cause and find a fix that works on both iOS 17 and 18.
+      </div>
     </div>
-    <span class="jot-chev">›</span>
+    <span style="flex:none;opacity:0.35;font-size:18px;letter-spacing:-2px">⣿</span>
   </div>
-  <div class="jot-row">
-    <span class="jot-tile" style="--c1:#7C5CFF;--c2:#664BD1">
+  <div style="border-top:0.5px solid var(--jot-sep);margin:0 18px"></div>
+  <div class="jot-row" style="align-items:flex-start;padding:18px">
+    <span class="jot-tile" style="--c1:#7C5CFF;--c2:#664BD1;margin-top:2px">
       <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="1.6"/><circle cx="6" cy="17" r="1.6"/><path d="M11 7h9M11 17h9" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
     </span>
     <div class="grow">
-      <div class="jot-row-title">Action Items</div>
-      <div class="jot-row-sub">"call Sam Friday ship the build" → "☐ Call Sam (Fri) ☐ Ship build"</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="jot-row-title" style="font-family:ui-serif,'New York',Georgia,serif">Action Items</span>
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--jot-ink-cap);background:rgba(0,0,0,0.08);padding:2px 6px;border-radius:4px">Default</span>
+      </div>
+      <div class="jot-row-sub" style="margin-top:4px">Extract tasks · assignees · deadlines</div>
+      <div style="margin-top:8px;font-size:12.5px;font-style:italic;color:var(--jot-ink-2);opacity:0.85">"ok so vineet you take the design ship by friday priya followup with legal monday i'll write the launch post next week"</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+        <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:none;stroke:#D15847;stroke-width:2.4"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+        <span style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#D15847">Action Items</span>
+      </div>
+      <div style="font-size:13px;color:var(--jot-ink);margin-top:2px">
+        • Vineet — ship design by Friday<br>
+        • Priya — follow up with legal Monday<br>
+        • Me — write launch post next week
+      </div>
     </div>
-    <span class="jot-chev">›</span>
+    <span style="flex:none;opacity:0.35;font-size:18px;letter-spacing:-2px">⣿</span>
   </div>
-  <div class="jot-row">
-    <span class="jot-tile" style="--c1:#1A8CFF;--c2:#1573D1">
-      <svg viewBox="0 0 24 24"><path d="M3 6h18v12H3z" fill="none" stroke="#fff" stroke-width="2"/><path d="M3 7l9 6 9-6" fill="none" stroke="#fff" stroke-width="2"/></svg>
+  <div style="border-top:0.5px solid var(--jot-sep);margin:0 18px"></div>
+  <div class="jot-row" style="align-items:flex-start;padding:18px">
+    <span class="jot-tile" style="--c1:#34C759;--c2:#2BA349;margin-top:2px">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18v12H3z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M3.5 7l8.5 6 8.5-6" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>
     </span>
     <div class="grow">
-      <div class="jot-row-title">Email</div>
-      <div class="jot-row-sub">"tell them it's delayed" → "Subject: Timeline update…"</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="jot-row-title" style="font-family:ui-serif,'New York',Georgia,serif">Email</span>
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--jot-ink-cap);background:rgba(0,0,0,0.08);padding:2px 6px;border-radius:4px">Default</span>
+      </div>
+      <div class="jot-row-sub" style="margin-top:4px">Business email · BLUF · subject line</div>
+      <div style="margin-top:8px;font-size:12.5px;font-style:italic;color:var(--jot-ink-2);opacity:0.85">"draft email to sarah pushing the deadline to next friday because design isn't done yet"</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+        <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:none;stroke:#D15847;stroke-width:2.4"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+        <span style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#D15847">Email</span>
+      </div>
+      <div style="font-size:13px;color:var(--jot-ink);margin-top:2px">
+        <b>Subject: Deadline push to next Friday</b><br>
+        Hi Sarah, I'd like to push the deadline to next Friday — design isn't done yet. Thanks.
+      </div>
     </div>
-    <span class="jot-chev">›</span>
+    <span style="flex:none;opacity:0.35;font-size:18px;letter-spacing:-2px">⣿</span>
   </div>
 </div>
-<div class="jot-caption">Drag to reorder. Swipe a prompt to delete. Tap to edit.</div>
+<div class="jot-caption">Drag the handle to reorder. Swipe a prompt to delete. Tap to edit.</div>
 
 <div class="jot-card" style="margin-top:12px">
   <div class="jot-row" style="justify-content:center">
@@ -59,4 +137,4 @@
   </div>
 </div>
 
-<div class="jot-caption">Titles and tags use the system's built-in AI automatically.</div>
+<div class="jot-caption">Titles and tags use the system's built-in AI automatically. They don't need a custom prompt.</div>

@@ -307,6 +307,25 @@ public actor VocabularyRescorerHolder {
         )
     }
 
+    /// **Engine A/B Test Lab support (2026-07-05, temporary).** Same as
+    /// `rescore(...)` but returns the per-correction `VocabularyGate.Proposal`
+    /// list too. See `mergeWithProposals(...)`'s doc comment for the
+    /// `recordProvenance` semantics.
+    func rescoreWithProposals(
+        transcript: String,
+        tokenTimings: [TokenTiming],
+        audioSamples: [Float],
+        recordProvenance: Bool = true
+    ) async throws -> (text: String, proposals: [VocabularyGate.Proposal])? {
+        let spotResult = try await spot(audioSamples: audioSamples)
+        return await mergeWithProposals(
+            transcript: transcript,
+            tokenTimings: tokenTimings,
+            spotResult: spotResult,
+            recordProvenance: recordProvenance
+        )
+    }
+
     /// The EXPENSIVE half of the rescore: the CTC keyword-spot pass
     /// (MelSpectrogram + AudioEncoder CoreML inference over the full
     /// audio buffer). Depends ONLY on the audio + the loaded vocabulary —
@@ -350,6 +369,29 @@ public actor VocabularyRescorerHolder {
         tokenTimings: [TokenTiming],
         spotResult: CtcKeywordSpotter.SpotKeywordsResult?
     ) async -> String? {
+        (await mergeWithProposals(transcript: transcript, tokenTimings: tokenTimings, spotResult: spotResult))?.text
+    }
+
+    /// **Engine A/B Test Lab support (2026-07-05, temporary).** Same as
+    /// `merge(...)` — identical behavior — but also returns the individual
+    /// gate decisions (`VocabularyGate.Proposal`: original word → term,
+    /// APPLY/BLOCK/OVERRIDE, confidence), which `merge(...)` computes
+    /// internally but discards. Added so the A/B Lab can show WHERE each
+    /// engine's vocab boost actually fired, not just the final before/after
+    /// text. `merge(...)` is now a thin wrapper over this (`recordProvenance:
+    /// true`) — behavior for every existing caller is unchanged.
+    ///
+    /// `recordProvenance: false` is for a SHADOW/comparison run (e.g. the
+    /// background FluidAudio comparison kicked off alongside a real Apple-
+    /// engine publish) that must NOT write to `CorrectionProvenance`'s
+    /// single pending slot — that slot belongs to the dictation actually
+    /// being published, and a concurrent shadow write would race it.
+    func mergeWithProposals(
+        transcript: String,
+        tokenTimings: [TokenTiming],
+        spotResult: CtcKeywordSpotter.SpotKeywordsResult?,
+        recordProvenance: Bool = true
+    ) async -> (text: String, proposals: [VocabularyGate.Proposal])? {
         // Re-fetch the live handles. The split lets `spot(...)` run while
         // TDT decodes; by the time we merge, `vocabulary`/`rescorer` are
         // the same handles the spot used (a vocab rebuild between spot and
@@ -417,10 +459,12 @@ public actor VocabularyRescorerHolder {
             // the proposals' publishedStart offsets are valid for — downstream
             // transforms (segmenter/filler/number/cleanup) shift the text, and
             // the provenance reconcile absorbs that drift by diffing from here.
-            await CorrectionProvenance.shared.record(gated.proposals, gatedText: gated.text)
-            return gated.text
+            if recordProvenance {
+                await CorrectionProvenance.shared.record(gated.proposals, gatedText: gated.text)
+            }
+            return (gated.text, gated.proposals)
         }
-        return transcript
+        return (transcript, [])
     }
 }
 

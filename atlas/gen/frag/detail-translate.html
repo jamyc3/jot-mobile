@@ -1,6 +1,8 @@
-<!-- PROPOSED (not built) — Translate sheet, option B: globe in the transcript action bar opens
-     this ephemeral sheet. Apple Translation engine (already wired), quick language chips, result +
-     Copy/Share, nothing saved. Design target — the app should be built to match this. -->
+<!-- §3.9 Translate: shipped (TranslateSheet.swift). Globe in the transcript action bar opens
+     this ephemeral sheet. Apple's on-device Translation engine, a horizontally-scrolling row of
+     every supported language (the transcript's own source language is filtered out; there is no
+     "More..." overflow button -- all ~19 languages, including English, sit in the one scrollable
+     row), result + Copy/Share, nothing saved. -->
 
 <!-- dimmed transcript detail peeking behind the sheet -->
 <div style="opacity:.5">
@@ -25,12 +27,12 @@
   <div class="jot-section" style="margin:0 0 10px">Translate to</div>
   <!-- language chips (horizontal) -->
   <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:18px">
+    <span style="flex:none;padding:8px 15px;border-radius:999px;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);font-size:14px;color:var(--jot-ink)">English</span>
     <span style="flex:none;padding:8px 15px;border-radius:999px;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);font-size:14px;color:var(--jot-ink)">Spanish</span>
     <span style="flex:none;padding:8px 16px;border-radius:999px;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));color:#fff;font-size:14px;font-weight:600;box-shadow:0 0 14px rgba(26,140,255,0.3)">French</span>
     <span style="flex:none;padding:8px 15px;border-radius:999px;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);font-size:14px;color:var(--jot-ink)">German</span>
     <span style="flex:none;padding:8px 15px;border-radius:999px;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);font-size:14px;color:var(--jot-ink)">Italian</span>
-    <span style="flex:none;padding:8px 15px;border-radius:999px;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);font-size:14px;color:var(--jot-ink)">中文</span>
-    <span style="flex:none;padding:8px 14px;border-radius:999px;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);font-size:14px;color:var(--jot-accent)">More…</span>
+    <span style="flex:none;padding:8px 15px;border-radius:999px;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);font-size:14px;color:var(--jot-ink)">Portuguese</span>
   </div>
 
   <!-- translated result -->

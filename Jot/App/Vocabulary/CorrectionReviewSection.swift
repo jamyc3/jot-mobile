@@ -159,10 +159,11 @@ struct CorrectionReviewSection: View {
     /// The spoken line for a row — Fraunces italic (like the keyboard), with the
     /// gated word emphasized + dash-underlined so it's findable in the snippet.
     private func contextLine(_ ctx: (before: String, gated: String, after: String)) -> some View {
-        (Text(ctx.before).foregroundColor(Color.jotPageInkCaption)
-            + Text(ctx.gated).foregroundColor(Color.jotPageInk)
-                .underline(true, pattern: .dash, color: Color.jotPageInkCaption)
-            + Text(ctx.after).foregroundColor(Color.jotPageInkCaption))
+        let before = Text(ctx.before).foregroundColor(Color.jotPageInkCaption)
+        let gated = Text(ctx.gated).foregroundColor(Color.jotPageInk)
+            .underline(true, pattern: .dash, color: Color.jotPageInkCaption)
+        let after = Text(ctx.after).foregroundColor(Color.jotPageInkCaption)
+        return Text("\(before)\(gated)\(after)")
             .font(.custom(JotType.frauncesItalicText, size: 14))
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
@@ -289,8 +290,7 @@ struct CorrectionRowHeader: View {
                             .overlay(Capsule().strokeBorder(Color.jotPageSeparator, lineWidth: 0.5))))
             // Plain label, not 3rd-person narration ("Jot wrote this for…") — the
             // badge already says CHANGED/KEPT; this just names the heard word.
-            (Text("Original ").foregroundStyle(Color.jotPageInkCaption)
-                + Text("\u{201C}\(record.originalWord)\u{201D}").foregroundStyle(Color.jotPageInkSecondary))
+            Text("\(Text("Original ").foregroundStyle(Color.jotPageInkCaption))\(Text("\u{201C}\(record.originalWord)\u{201D}").foregroundStyle(Color.jotPageInkSecondary))")
                 .font(.system(size: 12.5))
             Spacer(minLength: 0)
         }
@@ -353,7 +353,8 @@ enum CorrectionCopy {
     /// accordion card AND the (scheme-following) word bubble.
     static func resolvedText(_ r: CorrectionProvenance.Record, verdict: String) -> Text {
         let p = resolvedParts(r, verdict: verdict)
-        return Text(p.strong).font(.system(size: 13.5, weight: .semibold)).foregroundColor(Color.jotPageInk)
-            + Text(p.rest).foregroundColor(Color.jotPageInkSecondary)
+        let strong = Text(p.strong).font(.system(size: 13.5, weight: .semibold)).foregroundColor(Color.jotPageInk)
+        let rest = Text(p.rest).foregroundColor(Color.jotPageInkSecondary)
+        return Text("\(strong)\(rest)")
     }
 }

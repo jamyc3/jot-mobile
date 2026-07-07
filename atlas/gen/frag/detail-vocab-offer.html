@@ -1,9 +1,10 @@
-<!-- §3.7 + §8.8 PROPOSED: after a qualifying Replace All + Save, a gentle one-tap offer to
-     learn the term. Reuses the EXISTING transcript-pane add-to-vocabulary path
-     (TranscriptDetailView.confirmVocabAdd): adds the term, attaches the misheard form
-     "okay" as a sounds-like alias, and teaches the correction store (net +1) so the next
-     dictation self-corrects. Gated: 1-2 word term, 2+ matches replaced, not a common word.
-     Non-blocking — "Not now" dismisses; nothing is forced. -->
+<!-- §3.7 + §8.8: shipped. After a qualifying Replace All, a gentle one-tap offer to
+     learn the term (TranscriptDetailView.confirmReplaceVocab, same path as the selection
+     "Add to Vocabulary" flow): adds the term, attaches the misheard form "okay" as a
+     sounds-like alias, and teaches the correction store (net +1) so the next dictation
+     self-corrects. Gated: 1-2 word term, 2+ matches replaced, not a common word.
+     Non-blocking -- "Not now" dismisses; nothing is forced. Replaced text has no special
+     color treatment here -- it reads as ordinary saved text, same as any other edit. -->
 <div style="position:absolute;inset:0;display:flex;flex-direction:column">
 
   <div class="jot-donebtn" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0;font-size:18px;font-weight:700;margin-top:8px">‹</div>
@@ -12,15 +13,15 @@
     <span>2 hours ago</span><span>·</span><span>41 words</span><span>·</span><span>0:18</span>
   </div>
 
-  <!-- Text now corrected; the just-changed words flash success-green briefly. -->
+  <!-- Text already corrected via Replace All + saved (saveEdit() has already
+       run by the time this offer renders, isEditing=false) — plain read-mode
+       text, no italic. Italic is session-only edit-mode-only styling, never
+       persisted (TranscriptDetailView.swift:886-888). -->
   <div class="jot-card" style="padding:18px;font-size:16px;line-height:1.6;color:var(--jot-ink)">
-    Make sure the
-    <span style="background:rgba(52,199,89,0.18);border-radius:4px;padding:0 2px;color:var(--jot-success-ink)">Okta</span>
-    integration is set up before the demo. I'll ping the
-    <span style="background:rgba(52,199,89,0.18);border-radius:4px;padding:0 2px;color:var(--jot-success-ink)">Okta</span>
-    admin to provision the SSO app, and once
-    <span style="background:rgba(52,199,89,0.18);border-radius:4px;padding:0 2px;color:var(--jot-success-ink)">Okta</span>
-    is live we can route the whole team through it.
+    Make sure the Okta integration is set up before
+    the demo. I'll ping the Okta admin to provision
+    the SSO app, and once Okta is live we can route
+    the whole team through it.
   </div>
 
   <div style="flex:1"></div>
@@ -31,7 +32,7 @@
       <span class="jot-tile" style="--c1:#1FCED1;--c2:#19A9AB;width:34px;height:34px;flex:none"><svg viewBox="0 0 24 24"><path d="M5 4h11a2 2 0 012 2v14H7a2 2 0 00-2 2z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M5 18h13" fill="none" stroke="#fff" stroke-width="2"/></svg></span>
       <div style="flex:1;min-width:0">
         <div style="font-size:15.5px;font-weight:600;color:var(--jot-ink)">Add “Okta” to your vocabulary?</div>
-        <div style="font-size:13px;color:var(--jot-ink-2);line-height:1.4;margin-top:2px">Jot heard it as “okay” 3 times. Learn it so the next dictation gets it right by itself.</div>
+        <div style="font-size:13px;color:var(--jot-ink-2);line-height:1.4;margin-top:2px">Jot heard it as “okay” 3 times. Learn it so the next dictation gets it right.</div>
       </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px">

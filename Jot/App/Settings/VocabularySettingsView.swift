@@ -162,7 +162,13 @@ struct VocabularySettingsView: View {
                 }
             }
         } footer: {
-            Text("Helps Jot recognize names, technical terms, and words it tends to mishear. The list stays on your iPhone. Avoid adding terms that sound alike — Jot can only favor one, so the other won't take effect.")
+            VStack(alignment: .leading, spacing: 6) {
+                if store.lastSaveError != nil {
+                    Label("Couldn't save changes to this device — they may be lost. Try again.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                Text("Helps Jot recognize names, technical terms, and words it tends to mishear. The list stays on your iPhone. Avoid adding terms that sound alike — Jot can only favor one, so the other won't take effect.")
+            }
         }
     }
 

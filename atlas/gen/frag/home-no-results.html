@@ -20,10 +20,11 @@
   </div>
 </div>
 
-<div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:80px 24px 0">
-  <span class="jot-tile hero" style="--c1:#8B8E96;--c2:#72747B;margin-bottom:22px">
-    <svg viewBox="0 0 24 24"><path d="M10 2a8 8 0 105 14.3l5 5 1.4-1.4-5-5A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg>
-  </span>
-  <div class="jot-title" style="font-size:24px;margin-bottom:10px">No matches</div>
-  <div class="jot-row-sub" style="max-width:250px;line-height:1.45">Nothing matched “quarterly budget xyz.” Try a different search term.</div>
+<!-- RecentsListCard.noMatchesState — compact centered block, magnifying-glass
+     icon + two short lines. No query echo — real code always says the same
+     generic "Try a different search.", regardless of what was typed. -->
+<div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:60px 18px">
+  <svg viewBox="0 0 24 24" style="width:30px;height:30px;fill:none;stroke:var(--jot-ink-2);stroke-width:1.6;margin-bottom:12px"><path d="M10 2a8 8 0 105 14.3l5 5 1.4-1.4-5-5A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg>
+  <div class="jot-row-title" style="font-size:17px;font-weight:600;margin-bottom:6px">No matches</div>
+  <div class="jot-row-sub">Try a different search.</div>
 </div>

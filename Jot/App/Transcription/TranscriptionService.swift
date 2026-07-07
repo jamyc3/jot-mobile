@@ -2,6 +2,7 @@
 @preconcurrency import CoreML
 import FluidAudio
 import Foundation
+import Speech
 import UIKit
 import os.log
 import os.signpost
@@ -110,18 +111,15 @@ final class TranscriptionService {
     nonisolated static let vocabMergeTimeoutSeconds: Double = 2.0
     private let signposter = OSSignposter(subsystem: "com.vineetu.jot.mobile.Jot", category: "transcription")
 
-    /// The active dictation model — chosen by **device capability**, not by
-    /// the user (there is no model picker). Capable devices (≥6 GB-class RAM,
-    /// `DeviceCapability.is600MCapable`) run the bundled Parakeet 0.6B v2.
-    /// Sub-6GB devices (iPhone 11 / 12·13 non-Pro / SE) cannot hold the 600M's
-    /// ~2 GB resident footprint, so they fall back to the smaller Parakeet
-    /// TDT-CTC 110M — which is NOT bundled (keeps the IPA small) and is fetched
-    /// on first need via `AsrModels.download` into Application Support.
-    ///
-    /// NOTE: this is the *dictation* 110M (`parakeet-tdt-ctc-110m-coreml`,
-    /// fused preprocessor+encoder), entirely separate from the *vocabulary*
-    /// CTC subset (`parakeet-ctc-110m-coreml`) the rescorer uses — different
-    /// FluidAudio repo, different on-disk directory.
+    /// The active dictation model — chosen by **dictation language**, not by
+    /// the user (there is no model picker) and not by device capability.
+    /// English always runs the bundled Parakeet 0.6B v2 (official support is
+    /// iPhone 14 Pro+, all ≥6 GB / 600M-capable devices; sub-6 GB devices are
+    /// UNSUPPORTED entirely — there is no smaller-model fallback tier).
+    /// Every European language resolves to the shared multilingual Parakeet
+    /// v3 (int8), which is NOT bundled (keeps the IPA small) and is fetched
+    /// on first selection of that language via `AsrModels.download` into
+    /// Application Support.
     nonisolated private static var selectedVersion: AsrModelVersion {
         // English is always the bundled Parakeet 0.6B v2 (official support is
         // iPhone 14 Pro+, all ≥6GB / 600M-capable; sub-6GB is unsupported).
@@ -135,6 +133,22 @@ final class TranscriptionService {
     /// the user-facing speech-model identifier.
     private static var selectedRepo: Repo {
         LanguageChoice.current.isEnglish ? .parakeetV2 : .parakeetV3
+    }
+
+    /// Whether Parakeet can actually run on THIS device — the owner's
+    /// curated hardware tier: iPhone 14 Pro+ and iPad M1+ ONLY. Both
+    /// conditions are required:
+    /// - `is600MCapable` — the RAM floor (~2GB resident at inference).
+    /// - `DeviceCapability.parakeetTierDevice` — the curated generation
+    ///   floor, narrower than RAM alone. Some 6GB devices below this line
+    ///   (iPhone 12 Pro / 13 Pro) actually LOAD Parakeet fine but are
+    ///   deliberately excluded — Apple's engine only, by owner's choice, not
+    ///   a technical limitation. The 2020 iPad Pro (A12Z) is excluded for
+    ///   the opposite reason: it can't BUILD Parakeet's CoreML model at all
+    ///   despite 6GB RAM. See `parakeetTierDevice`'s doc for the full
+    ///   device→chip mapping.
+    nonisolated static var parakeetUsable: Bool {
+        DeviceCapability.is600MCapable && DeviceCapability.parakeetTierDevice
     }
 
     private let standIn: (any TranscriptionStandIn)?
@@ -221,6 +235,24 @@ final class TranscriptionService {
         if standIn != nil {
             modelState = .ready
             log.info("Parakeet warmUp satisfied by simulator transcription stand-in")
+            return
+        }
+        // NO PARAKEET WARM ON THE APPLE PATH. When the active language routes
+        // to Apple's engine (`useAppleEngine` — every Apple-supported language
+        // unless the user opted it down to Parakeet), warming FluidAudio's
+        // 600M model is warming an engine we won't use: wasted RAM + an ANE
+        // load on every capable device, and on the iPad it fails outright
+        // (error -4). Apple's own "warm" is its asset reserve/install
+        // (`preinstallAppleAssets`), not this. The small CTC vocabulary scorer
+        // is warmed separately (it IS used on the Apple English path) and is
+        // unaffected. This is also a PREREQUISITE for stripping the bundled
+        // model: once Parakeet is download-on-demand, an Apple-path user who
+        // never downloaded it must not have this warm trigger a pointless
+        // fetch. Single front door — covers `warmIfNeeded()`,
+        // `handleLanguageChange`, `purgeAndReload`, and the capture-first
+        // recording-start warm — so this one check gates them all.
+        if useAppleEngine {
+            log.info("Parakeet warmUp skipped — active language uses Apple's engine")
             return
         }
 
@@ -579,11 +611,13 @@ final class TranscriptionService {
 
     /// Branch on the active variant.
     ///
-    /// Runs the established batch pass through `AsrManager.transcribe`
-    /// plus the full post-pipeline cleanup (vocabulary rescore +
-    /// paragraph segmentation + filler-word cleanup + number
-    /// normalization).
-    private func runInference(on samples: [Float], label: String, audioDurationSeconds: Double) async throws -> String {
+    // MARK: - Stop-pass engines (docs/dictation-engine-rework/implementation-plan.md Step 5)
+    // Two PEER transcription methods (owner ask #4). Each fully owns its own
+    // preconditions: neither can gate, warm, or fail the other's path.
+
+    /// FluidAudio/Parakeet stop-pass. Owns: bundled-model integrity check,
+    /// prepare/load wait, manager guard, decoder state.
+    private func fluidAudioStopPass(samples: [Float], label: String) async throws -> ASRResult {
         // 4.2.3(ii) consent guard: do NOT silently download a model via
         // the record-then-transcribe path. The Settings "Download" button
         // is the only sanctioned download trigger. If the user flipped
@@ -593,9 +627,11 @@ final class TranscriptionService {
         // earlier — we only reach this branch on real-device transcribe.
         //
         // Capability-gated model presence:
-        // - English on a capable device runs the BUNDLED 600M — a missing model
-        //   means iOS app thinning stripped the IPA resources; the only recovery
-        //   is a reinstall, so throw rather than attempt a (nonexistent) download.
+        // - English on a capable device WHILE v2 IS STILL BUNDLED runs the
+        //   BUNDLED 600M — if the model is missing there (`bundled600mDirectory()`
+        //   present but its `.mlmodelc` files gone), iOS app thinning stripped the
+        //   IPA resources; the only recovery is a reinstall, so throw rather than
+        //   attempt a (nonexistent) download into the read-only bundle.
         // - Sub-6GB devices (110M) AND any EUROPEAN language (Parakeet v3) are
         //   download-on-first-need. A missing model is EXPECTED on first use: the
         //   user invoking dictation is the consent trigger, so we fall through to
@@ -604,15 +640,34 @@ final class TranscriptionService {
         //   (European on a capable device is NOT bundled, so the "reinstall"
         //   error must not fire for it — only for the genuinely-bundled English
         //   case.)
+        // - English on a capable device once v2 is NO LONGER BUNDLED (the future
+        //   bundle-strip, "Release S" — `bundled600mDirectory() == nil`) becomes
+        //   a normal download-on-demand model, exactly like a European language.
+        //   A carry-forward install ("Release T") has v2 in App Support already
+        //   → `modelsExist` true → this whole guard is skipped, instant load, no
+        //   download. A device that jumped straight to the stripped build without
+        //   ever running the carry-forward release has NO App-Support copy →
+        //   `modelsExist` false — but we must NOT throw "reinstall" (a reinstall
+        //   from the App Store gets the same stripped IPA and can't help). Instead
+        //   we fall through to `ensurePreparing()` → `loadOrFail()`, whose
+        //   version-generic download branch fetches the v2 weights (English's
+        //   `selectedVersion == .v2` / `selectedRepo == .parakeetV2`) into App
+        //   Support and surfaces `.downloading` progress — the same one-time
+        //   download-on-first-dictation flow a European v3 language uses. This is
+        //   the §C "skipped Release T" download-if-missing backstop
+        //   (docs/dictation-engine-rework/v2-carry-forward-migration-design.md).
+        //   In THIS build the bundle is still present, so `bundled600mDirectory()`
+        //   is non-nil and this branch is dormant; it activates purely on "v2
+        //   absent from the bundle."
         if standIn == nil
             && LanguageChoice.current.isEnglish
             && DeviceCapability.is600MCapable
+            && Self.bundled600mDirectory() != nil
             && !Self.modelsExistOnDiskForSelectedVariant() {
             throw TranscriptionError.loadFailed(
                 "The bundled speech model couldn't be found. Reinstall Jot from the App Store."
             )
         }
-        let inferenceStartedAt = Date()
         let prepareStartedAt = Date()
         try await ensurePreparing().value
         let prepareEndedAt = Date()
@@ -624,23 +679,168 @@ final class TranscriptionService {
             throw TranscriptionError.loadFailed("Model manager unavailable after load.")
         }
 
+        // FluidAudio 0.14.x dropped the `source:` overload in favor of
+        // an `inout TdtDecoderState` carried by the caller. For a
+        // one-shot batch transcribe of a complete recording we hand
+        // the manager a fresh decoder state per call (no streaming
+        // carry-over). Decoder-layer count is version-specific
+        // (2 for v2/v3) and
+        // `AsrModelVersion.decoderLayers` is the SDK's source of
+        // truth. Mirrors the Mac app's `Transcriber.swift`.
+        var decoderState = TdtDecoderState.make(
+            decoderLayers: Self.selectedVersion.decoderLayers
+        )
+        return try await manager.transcribe(
+            samples,
+            decoderState: &decoderState,
+            language: LanguageChoice.current.fluidAudioLanguage
+        )
+    }
+
+    /// Which concrete Apple engine backs `useAppleEngine == true`, chosen by
+    /// HARDWARE capability rather than language. `SpeechTranscriber` is
+    /// gated on `isAvailable` — `false` on older/under-6GB-RAM devices (e.g.
+    /// the 2020 A12Z iPad Pro) which have no on-device model for it and fail
+    /// every dictation with `SFSpeechErrorDomain Code=1 "...is not
+    /// subscribed to transcription.en"`. Apple's own docs say to use
+    /// `DictationTranscriber` instead in that case — it has no equivalent
+    /// `isAvailable` static (confirmed against the real SDK: it simply
+    /// doesn't exist on that class), because it isn't hardware-gated the
+    /// same way. Single branch point — every Apple-engine call site below
+    /// reads this once instead of scattering `SpeechTranscriber.isAvailable`
+    /// checks.
+    nonisolated static var appleEngineIsSpeechTranscriber: Bool { SpeechTranscriber.isAvailable }
+
+    private static var hasLoggedAppleEngineCapabilities = false
+
+    /// One-time capability snapshot so a device run is conclusively provable
+    /// from Diagnostics (Settings → Help → Diagnostics) — no debugger
+    /// needed. Fired once per process; every call after the first is a
+    /// no-op. Called from `stopPassTranscribe` the first time the Apple
+    /// engine is actually used.
+    private static func logAppleEngineCapabilityDiagnosticsIfNeeded() async {
+        guard !hasLoggedAppleEngineCapabilities else { return }
+        hasLoggedAppleEngineCapabilities = true
+        let speechIsAvailable = SpeechTranscriber.isAvailable
+        let speechSupportedCount = await SpeechTranscriber.supportedLocales.count
+        let speechInstalledCount = await SpeechTranscriber.installedLocales.count
+        let requestedLocale = Locale(identifier: LanguageChoice.current.appleLocaleIdentifier ?? "en-US")
+        // `DictationTranscriber` has no `isAvailable` static (doesn't exist
+        // on the real SDK) — the closest honest proxy is whether it
+        // supports the locale we're about to use.
+        let dictationLocaleSupported = await DictationTranscriber.supportedLocale(equivalentTo: requestedLocale) != nil
+        let dictationSupportedCount = await DictationTranscriber.supportedLocales.count
+        let dictationInstalledCount = await DictationTranscriber.installedLocales.count
+        DiagnosticsLog.record(
+            source: "main-app", category: .appleDictation,
+            message: "Apple engine capability snapshot",
+            metadata: [
+                "speechIsAvailable": "\(speechIsAvailable)",
+                "speechSupportedCount": "\(speechSupportedCount)",
+                "speechInstalledCount": "\(speechInstalledCount)",
+                "dictationLocaleSupported": "\(dictationLocaleSupported)",
+                "dictationSupportedCount": "\(dictationSupportedCount)",
+                "dictationInstalledCount": "\(dictationInstalledCount)",
+                "resolvedEngine": speechIsAvailable ? "speech" : "dictation",
+            ]
+        )
+    }
+
+    /// Apple stop-pass. Owns: the promoted-streaming-artifact check (Step 6)
+    /// and dispatch to whichever concrete Apple engine
+    /// `appleEngineIsSpeechTranscriber` selects. Nothing FluidAudio.
+    private func appleStopPass(samples: [Float]) async throws -> ASRResult {
+        // D2 promote (Step 6): if the streaming session that just ran this
+        // recording could vouch for full coverage, reuse its already-
+        // finalized text instead of re-transcribing — near-instant stop
+        // regardless of recording length. Exact-count match only; any
+        // divergence (pause/resume seams, queue-cap drops, factory
+        // fallback, live-text off, mid-session failure) falls through to
+        // the one-shot below. Always consume (nil out) the pending artifact
+        // so it can never be reused for a later stop.
+        if let pending = pendingStreamingArtifact {
+            pendingStreamingArtifact = nil
+            if pending.artifact.sourceSampleCount == samples.count,
+               Date().timeIntervalSince(pending.depositedAt) < 60 {
+                log.info("Apple: promoting streaming transcript — coverage exact (\(samples.count, privacy: .public) samples), skipping one-shot re-transcribe")
+                DiagnosticsLog.record(
+                    source: "main-app", category: .appleDictation,
+                    message: "Streaming transcript promoted at stop (no re-transcribe)",
+                    metadata: ["samples": "\(samples.count)", "chars": "\(pending.artifact.text.count)"]
+                )
+                return ASRResult(
+                    text: pending.artifact.text, confidence: 1.0,
+                    duration: Double(samples.count) / 16_000.0,
+                    processingTime: 0,
+                    tokenTimings: pending.artifact.tokenTimings
+                )
+            }
+            DiagnosticsLog.record(
+                source: "main-app", category: .appleDictation,
+                message: "Streaming artifact NOT promoted — coverage mismatch, running one-shot",
+                metadata: ["artifactSamples": "\(pending.artifact.sourceSampleCount)", "stopSamples": "\(samples.count)"]
+            )
+        }
+        if Self.appleEngineIsSpeechTranscriber {
+            log.info("Apple engine: routing to SpeechTranscriber for this dictation")
+            let result = try await AppleDictationEngine.transcribe(samples: samples)
+            log.info("Apple engine: SpeechTranscriber succeeded — chars=\(result.text.count, privacy: .public)")
+            return result
+        } else {
+            log.info("Apple engine: routing to DictationTranscriber (SpeechTranscriber.isAvailable == false on this hardware)")
+            let result = try await DictationOneShotEngine.transcribe(samples: samples)
+            log.info("Apple engine: DictationTranscriber succeeded — chars=\(result.text.count, privacy: .public)")
+            return result
+        }
+    }
+
+    /// Engine dispatch — NO cross-engine fallback. The language's selected
+    /// engine runs; a genuine failure surfaces as a failed dictation. When the
+    /// user is on Apple they get Apple, never a silent swap to Jot's own
+    /// (Parakeet) engine, and vice-versa (owner directive 2026-07-06: "when the
+    /// user selected Apple they want Apple, not Parakeet — just fail"). Reads
+    /// `useAppleEngine` exactly once per stop-pass.
+    private func stopPassTranscribe(samples: [Float], label: String) async throws -> ASRResult {
+        if useAppleEngine {
+            await Self.logAppleEngineCapabilityDiagnosticsIfNeeded()
+            do {
+                return try await appleStopPass(samples: samples)
+            } catch is CancellationError {
+                // Cancellation is NOT an engine failure — the stop-pass was torn
+                // down (task cancelled). Propagate rather than treating it as a
+                // dictation failure.
+                throw CancellationError()
+            } catch {
+                // NO fallback to Jot's own (Parakeet) engine. The user chose
+                // Apple → they get Apple; a real failure surfaces as a failed
+                // dictation, not a silent engine swap. (Also correct by
+                // necessity for isAppleOnly languages, which have no FluidAudio
+                // model, and Parakeet-can't-run hardware.)
+                log.error("Apple engine FAILED for \(LanguageChoice.current.rawValue, privacy: .public) — surfacing a failed dictation (no cross-engine fallback)")
+                DiagnosticsLog.record(
+                    source: "main-app",
+                    category: .appleDictation,
+                    message: "Apple-engine transcription failed",
+                    metadata: ["language": LanguageChoice.current.rawValue, "error": "\(error)"]
+                )
+                throw error
+            }
+        }
+        return try await fluidAudioStopPass(samples: samples, label: label)
+    }
+
+    /// Runs the established batch pass through the selected stop-pass engine
+    /// (`stopPassTranscribe`) plus the full post-pipeline cleanup (vocabulary
+    /// rescore + paragraph segmentation + filler-word cleanup + number
+    /// normalization).
+    private func runInference(on samples: [Float], label: String, audioDurationSeconds: Double) async throws -> String {
+        let inferenceStartedAt = Date()
+
         let inferenceInterval = signposter.beginInterval("transcribe-inference")
         log.info(
             "Parakeet inference begin — source=\(label, privacy: .public) startedAt=\(Self.timestamp(inferenceStartedAt), privacy: .public) audioDurationS=\(audioDurationSeconds, privacy: .public) sampleCount=\(samples.count, privacy: .public)"
         )
         do {
-            // FluidAudio 0.14.x dropped the `source:` overload in favor of
-            // an `inout TdtDecoderState` carried by the caller. For a
-            // one-shot batch transcribe of a complete recording we hand
-            // the manager a fresh decoder state per call (no streaming
-            // carry-over). Decoder-layer count is version-specific
-            // (2 for v2/v3) and
-            // `AsrModelVersion.decoderLayers` is the SDK's source of
-            // truth. Mirrors the Mac app's `Transcriber.swift`.
-            var decoderState = TdtDecoderState.make(
-                decoderLayers: Self.selectedVersion.decoderLayers
-            )
-
             // ── Concurrency: overlap the expensive CTC keyword-spot pass
             // with the TDT transcribe. The spot consumes ONLY the audio
             // (not the TDT text/timings), so it can run on the separate
@@ -659,7 +859,14 @@ final class TranscriptionService {
             // duration); the two tasks touch disjoint models with no shared
             // mutable state, so there is no data race under Swift 6 strict
             // concurrency.
+            // Apple-only languages (Japanese/Korean/Mandarin/Cantonese) are
+            // excluded regardless of the vocab setting — `CtcKeywordSpotter`
+            // is an English/Latin-script scorer (see
+            // `reference_on_device_model_inventory`); running it over
+            // non-Latin-script audio would spot garbage and could corrupt
+            // the merge. There is no equivalent scorer for these languages.
             let vocabEnabledForThisRun = VocabularyStore.shared.isEnabled
+                && !LanguageChoice.current.isAppleOnly
             // Snapshot the audio into a `let` so the concurrently-running
             // spot task captures an immutable value (no aliasing with the
             // TDT pass, which reads `samples` by value as well).
@@ -703,11 +910,14 @@ final class TranscriptionService {
                 return spot ?? nil
             }()
 
-            let result = try await manager.transcribe(
-                samples,
-                decoderState: &decoderState,
-                language: LanguageChoice.current.fluidAudioLanguage
-            )
+            // Engine selection is a single source of truth (`useAppleEngine`,
+            // below) shared with the live-preview streaming factory
+            // (`makeStreamingSession`) so the stop-pass and the preview never
+            // disagree about which engine is active for a given dictation.
+            // Every line below (vocab spot/merge, provenance, diagnostics)
+            // runs completely unmodified against whichever engine produced
+            // `result`. See `stopPassTranscribe` above and AppleDictationEngine.swift.
+            let result = try await stopPassTranscribe(samples: samples, label: label)
             let inferenceEndedAt = Date()
             let wallClockMS = Self.elapsedMilliseconds(from: inferenceStartedAt, to: inferenceEndedAt)
             let wallClockRTF = Self.realTimeFactor(elapsedMS: wallClockMS, audioDurationSeconds: result.duration)
@@ -762,7 +972,7 @@ final class TranscriptionService {
                 // fall-back. (Skip entirely when the spot produced nothing.)
                 let textForMerge = result.text
                 let merged = await withTimeout(seconds: Self.vocabMergeTimeoutSeconds) {
-                    await VocabularyRescorerHolder.shared.merge(
+                    await VocabularyRescorerHolder.shared.mergeWithProposals(
                         transcript: textForMerge,
                         tokenTimings: timings,
                         spotResult: resolvedSpot
@@ -770,7 +980,7 @@ final class TranscriptionService {
                 }
                 // Outer nil = merge timed out; inner nil = rescorer not ready.
                 if let merged, let rescored = merged {
-                    transcriptText = rescored
+                    transcriptText = rescored.text
                 } else if merged == nil {
                     self.log.error(
                         "vocabulary merge timed out after \(Self.vocabMergeTimeoutSeconds, privacy: .public)s; publishing raw transcript"
@@ -860,6 +1070,167 @@ final class TranscriptionService {
         return manager != nil && modelState == .ready
     }
 
+    // MARK: - Engine selection (shared by the stop-pass and live streaming)
+
+    /// Whether this dictation should run on Apple's on-device
+    /// `SpeechTranscriber` instead of FluidAudio's Parakeet TDT. Single
+    /// source of truth for BOTH the stop-pass (`runInference`) and the
+    /// live-preview streaming factory (`makeStreamingSession`) — they must
+    /// never disagree about which engine is active for the same dictation.
+    ///
+    /// Apple's `SpeechTranscriber` is the DEFAULT engine for every language it
+    /// supports (English + Spanish/French/German/Italian/Portuguese +
+    /// Japanese/Korean/Mandarin/Cantonese — device-verified). It's used when:
+    /// - the language is `isAppleOnly` (the 4 CJK — FluidAudio has no model,
+    ///   so Apple is the only option), OR
+    /// - the language is Apple-supported AND the user hasn't opted that
+    ///   language DOWN to Parakeet (`useAppleDictationForEnglish`, default
+    ///   true — now the general "prefer Apple where both exist" flag, flipped
+    ///   by the Parakeet upgrade nudge).
+    /// The 18 European languages Apple can't do (`!isAppleSupported`) always
+    /// use FluidAudio.
+    var useAppleEngine: Bool { Self.activeLanguageUsesApple }
+
+    /// Nonisolated twin of `useAppleEngine` (same predicate) so the
+    /// `nonisolated` warm-target computation (`allDeviceModelTargets`) can ask
+    /// "does the active language route to Apple?" without hopping to the main
+    /// actor. Reads only nonisolated state (`LanguageChoice.current`, App Group).
+    nonisolated static var activeLanguageUsesApple: Bool {
+        let lang = LanguageChoice.current
+        // Apple runs when the language is Apple-only (no Parakeet model exists),
+        // the user prefers Apple, OR Parakeet simply can't run on this device
+        // (`!parakeetUsable`). The last clause is engine SELECTION — pick the
+        // engine that can actually run — not a cross-engine fallback: it makes
+        // it structurally impossible to route an Apple-supported language onto a
+        // Parakeet engine that would fail (a stale flag, or the upgrade deep
+        // link, on sub-14-Pro / non-M1 hardware).
+        return lang.isAppleSupported
+            && (lang.isAppleOnly || AppGroup.useAppleDictationForEnglish || !parakeetUsable)
+    }
+
+    /// D2 promote (docs/dictation-engine-rework/implementation-plan.md
+    /// Step 6): the most recent streaming session's save-quality artifact,
+    /// if its teardown could vouch for full coverage. Consumed (and always
+    /// cleared) by `appleStopPass` on the very next stop-pass; also cleared
+    /// defensively at the top of `makeStreamingSession` so a stale artifact
+    /// from a torn-down prior slice can never survive into a fresh session.
+    private var pendingStreamingArtifact: (artifact: StreamingStopArtifact, depositedAt: Date)?
+
+    /// Arms (non-nil) or disarms (nil) the pending artifact. Every streaming
+    /// teardown site calls this exactly once — `RecordingService.
+    /// tearDownStreamingSession()`'s scheduler branch deposits
+    /// `scheduler.stopArtifact()` (which may itself be nil), and its
+    /// no-scheduler branch deposits `nil` — so staleness cannot cross
+    /// recordings.
+    func depositStreamingArtifact(_ artifact: StreamingStopArtifact?) {
+        pendingStreamingArtifact = artifact.map { ($0, Date()) }
+    }
+
+    /// Drives the Settings row's "Preparing Apple dictation…" subline while
+    /// `preinstallAppleAssets()` runs (Step 7). Observed directly from
+    /// `TranscriptionService.shared` the same way `modelState` already is
+    /// (see `SettingsView.languageStatusRow`) — no environment plumbing
+    /// needed for an `@Observable` singleton.
+    private(set) var isPreinstallingAppleAssets = false
+
+    /// Builds the live-preview streaming session for a new recording slice,
+    /// per the engine selected by `useAppleEngine`. Apple's `SpeechAnalyzer`
+    /// natively streams (volatile/finalized results as speech is recognized)
+    /// — genuinely different from FluidAudio's `PreviewScheduler`, which
+    /// re-transcribes a trailing overlap window on each pause/timer tick.
+    /// Falls back to FluidAudio's `PreviewScheduler` if Apple's session fails
+    /// to construct (asset install, format discovery, etc.) — mirrors the
+    /// stop-pass's existing Apple-engine resilience: the Apple-engine
+    /// preference must never leave a recording with no live preview at all.
+    func makeStreamingSession(
+        queue: StreamingBufferQueue,
+        presenter: StreamingPartial,
+        sessionID: UUID
+    ) async -> any StreamingSession {
+        // Belt-and-suspenders (Step 6): a fresh session is starting, so any
+        // artifact from the PRIOR slice/session can no longer be valid —
+        // clear it rather than rely solely on the teardown-side deposits.
+        pendingStreamingArtifact = nil
+        guard useAppleEngine else {
+            return PreviewScheduler(queue: queue, presenter: presenter, sessionID: sessionID)
+        }
+        do {
+            if Self.appleEngineIsSpeechTranscriber {
+                return try await AppleStreamingSession.make(queue: queue, presenter: presenter, sessionID: sessionID)
+            } else {
+                return try await DictationStreamingSession.make(queue: queue, presenter: presenter, sessionID: sessionID)
+            }
+        } catch {
+            // NO fallback to FluidAudio's preview — Apple-selected means Apple.
+            // Return a no-preview session (recording still captures; the stop-pass
+            // produces the transcript or fails honestly) rather than a silent
+            // Parakeet-engine live preview (owner directive 2026-07-06).
+            log.error("Apple streaming session failed to start — no live preview (no cross-engine fallback): \(error.localizedDescription, privacy: .public)")
+            DiagnosticsLog.record(
+                source: "main-app",
+                category: .appleDictation,
+                message: "Apple streaming session failed to start — no live preview",
+                metadata: ["error": "\(error)"]
+            )
+            return NoPreviewSession()
+        }
+    }
+
+    /// Root-cause fix for M2's asset-install half (Step 7,
+    /// docs/dictation-engine-rework/implementation-plan.md): Apple's
+    /// one-time speech-asset download used to happen lazily inside the
+    /// FIRST live recording's `AppleStreamingSession.make()`, stalling the
+    /// keyboard/hero strip for however long the download took. Fired once,
+    /// at the moment the user opts in — the Settings toggle flipping ON —
+    /// well ahead of any recording. Never throws: any failure (no network,
+    /// asset temporarily unavailable) is logged and left for the in-session
+    /// install inside `make()` to retry as a fallback, now expected to be a
+    /// fast no-op in the common case where this already succeeded.
+    func preinstallAppleAssets() async {
+        isPreinstallingAppleAssets = true
+        defer { isPreinstallingAppleAssets = false }
+        do {
+            // `makeConfiguredTranscriber` now reserves the locale before
+            // returning (REQUIRED on real iOS hardware — see its doc
+            // comment); this call moved inside the `do` since it's async
+            // throwing, but the function's "never throws" contract is
+            // unchanged — any failure here is caught below exactly like an
+            // asset-install failure always was.
+            //
+            // Branches on the SAME `appleEngineIsSpeechTranscriber` gate as
+            // the stop-pass/streaming factory: on hardware where
+            // `SpeechTranscriber.isAvailable == false`, pre-installing a
+            // SpeechTranscriber asset would just fail every launch (root
+            // cause, not a band-aid — preinstall must target whichever
+            // engine will actually run).
+            if Self.appleEngineIsSpeechTranscriber {
+                let transcriber = try await AppleStreamingSession.makeConfiguredTranscriber()
+                if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                    try await request.downloadAndInstall()
+                    log.info("Apple engine: pre-installed SpeechTranscriber assets at toggle-flip")
+                } else {
+                    log.info("Apple engine: SpeechTranscriber assets already installed")
+                }
+            } else {
+                let transcriber = try await DictationStreamingSession.makeConfiguredTranscriber()
+                if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                    try await request.downloadAndInstall()
+                    log.info("Apple engine: pre-installed DictationTranscriber assets at toggle-flip")
+                } else {
+                    log.info("Apple engine: DictationTranscriber assets already installed")
+                }
+            }
+        } catch {
+            log.error("Apple engine: asset pre-install failed — \(error.localizedDescription, privacy: .public)")
+            DiagnosticsLog.record(
+                source: "main-app",
+                category: .appleDictation,
+                message: "Apple dictation asset pre-install failed",
+                metadata: ["error": "\(error)"]
+            )
+        }
+    }
+
     func previewTranscribe(samples: [Float]) async -> String? {
         if let standIn {
             // Simulator: exercise the preview pipeline with the stand-in
@@ -924,7 +1295,7 @@ final class TranscriptionService {
         modelState = .ready
         log.info("Parakeet load bypassed on simulator")
         return
-        #endif
+        #else
 
         if manager != nil {
             modelState = .ready
@@ -1153,6 +1524,7 @@ final class TranscriptionService {
             )
             throw TranscriptionError.loadFailed(summary)
         }
+        #endif
     }
 
     /// Resolve the bundled model directory for FluidAudio's
@@ -1231,23 +1603,36 @@ final class TranscriptionService {
     /// The `(version, directory)` of the on-device DICTATION models worth
     /// warming, independent of the current language: the bundled English
     /// Parakeet 0.6B **v2** and the European Parakeet **v3** (downloaded on first
-    /// European pick). There is NO 110M *dictation* model on device — the only
-    /// 110M weights are the CTC *scorer* (vocabulary rescorer), warmed separately
-    /// via the vocab rescorer, not here. The unsupported sub-6GB (4GB) band has
-    /// no bundled dictation model, so nothing is added for it. Pure path
-    /// computation → `nonisolated`.
+    /// European pick). Both are gated on `parakeetUsable` — on a device that
+    /// can't run Parakeet at all (e.g. the A12Z iPad), neither is ever added,
+    /// so this returns empty and there is nothing to warm. There is NO 110M
+    /// *dictation* model on device — the only 110M weights are the CTC
+    /// *scorer* (vocabulary rescorer), warmed separately via the vocab
+    /// rescorer, not here. The unsupported sub-6GB (4GB) band has no bundled
+    /// dictation model, so nothing is added for it. Pure path computation →
+    /// `nonisolated`.
     nonisolated static func allDeviceModelTargets() -> [(version: AsrModelVersion, directory: URL)] {
         var targets: [(version: AsrModelVersion, directory: URL)] = []
-        // English dictation = bundled Parakeet 0.6B v2 (only 600M-capable
-        // devices run it; sub-6GB devices have no bundled dictation model to
-        // warm).
-        if DeviceCapability.is600MCapable {
+        // English dictation = bundled Parakeet 0.6B v2. Warm it as a secondary
+        // target ONLY when Parakeet could actually be used: it can run on this
+        // device (`parakeetUsable` — the iPad can't build it, error -4) AND the
+        // active language doesn't already route to Apple (`!activeLanguageUsesApple`
+        // — no Parakeet warm on the Apple path, the same rule the `warmUp()`
+        // front door enforces). On the Apple path Parakeet is never used, so
+        // pre-warming it is wasted RAM + (post-strip) a pointless download.
+        if Self.parakeetUsable && !Self.activeLanguageUsesApple {
             let v2Directory = bundled600mDirectory()
                 ?? MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetV2)
             targets.append((.v2, v2Directory))
         }
         // European dictation = Parakeet v3 (warmed only if already downloaded).
-        targets.append((.v3, MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetV3)))
+        // Gated on `parakeetUsable` too — a device that can't run Parakeet at
+        // all (e.g. the A12Z iPad) must never warm v3 either, and must not
+        // emit "not downloaded, skipped" diagnostics for an engine it can
+        // never use.
+        if Self.parakeetUsable {
+            targets.append((.v3, MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetV3)))
+        }
         return targets
     }
 
@@ -1351,7 +1736,18 @@ final class TranscriptionService {
     /// use." Returns `nil` on capable devices (no orphan risk — they download
     /// nothing).
     static func activeDownloadedModelDirectory() -> URL? {
-        DeviceCapability.is600MCapable ? nil : modelDirectory()
+        // Sub-6GB devices: the on-demand download IS the active model dir.
+        guard DeviceCapability.is600MCapable else { return modelDirectory() }
+        // Capable devices normally download nothing (v2 ships bundled) — EXCEPT
+        // the v2 carry-forward (docs/dictation-engine-rework/
+        // v2-carry-forward-migration-design.md §A3), which deposits the bundled
+        // 600M into the App-Support cache ahead of the future bundle strip. Once
+        // that carried copy is present it MUST be treated as in-use so a future
+        // orphan-model sweep (docs/plans/single-model-600m-rip-eou.md) never
+        // reclaims it out from under the stripped build. Return it so it's on
+        // the sweep's allowlist; else nil (nothing downloaded yet).
+        let carried = MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetV2)
+        return AsrModels.modelsExist(at: carried, version: .v2) ? carried : nil
     }
 
     /// Sweep stale `<modelDir>.purging-*` siblings left behind by interrupted
@@ -1656,7 +2052,7 @@ final class TranscriptionService {
             // SE-0414: pointer values are deliberately non-Sendable so the
             // checker isn't trivially defeated). We use a reference-type
             // `@unchecked Sendable` latch guarded by an `NSLock` — same
-            // pattern as `TapOnceGate` in `RecordingService.swift`. The lock
+            // pattern as `OneShotInputGate` below. The lock
             // is defense-in-depth; in practice `convert` invokes the block
             // synchronously on this thread so there is no real contention.
             let gate = OneShotInputGate()
@@ -1880,9 +2276,10 @@ extension TranscriptionService.TranscriptionError: CustomLocalizedStringResource
 /// without capturing a mutable `var` or a non-`Sendable` pointer (both of
 /// which fail Swift 6 strict-concurrency Sendable checks).
 ///
-/// `@unchecked Sendable` with `NSLock`: mirrors `TapOnceGate` in
-/// `RecordingService.swift`. Kept file-private; hoisting to a shared
-/// concurrency-helpers module is a follow-up cross-lane change.
+/// `@unchecked Sendable` with `NSLock`: same single-fire-gate shape used
+/// for the other `AVAudioConverterInputBlock` sites in this codebase.
+/// Kept file-private; hoisting to a shared concurrency-helpers module is
+/// a follow-up cross-lane change.
 private final class OneShotInputGate: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false

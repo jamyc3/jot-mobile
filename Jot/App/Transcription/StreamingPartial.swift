@@ -289,6 +289,17 @@ final class StreamingBufferQueue: @unchecked Sendable {
     private var ended = false
     private var waiter: CheckedContinuation<Item, Never>?
 
+    /// Backlog ceiling: ~120s of 16kHz mono Float32 (~7.7MB). The consumer
+    /// normally drains within ms; this only bites when the consumer is absent
+    /// for minutes (e.g. a first-use Apple asset install mid-recording).
+    /// Overflow drops the OLDEST chunk: the preview should show the newest
+    /// speech, and the saved transcript is unaffected (the stop-pass reads
+    /// CaptureContext, not this queue). A session that suffered drops can
+    /// never be promoted at stop — its consumed-sample count won't match the
+    /// capture (Step 6 coverage gate), by construction.
+    private static let maxBufferedSamples = 120 * 16_000
+    private var bufferedSamples = 0
+
     init() {}
 
     /// Pushes a sample chunk produced by the audio-tap. Called from the
@@ -310,6 +321,10 @@ final class StreamingBufferQueue: @unchecked Sendable {
             return
         }
         queue.append(samples)
+        bufferedSamples += samples.count
+        while bufferedSamples > Self.maxBufferedSamples, !queue.isEmpty {
+            bufferedSamples -= queue.removeFirst().count
+        }
         lock.unlock()
     }
 
@@ -336,6 +351,7 @@ final class StreamingBufferQueue: @unchecked Sendable {
         lock.lock()
         queue.removeAll(keepingCapacity: true)
         ended = false
+        bufferedSamples = 0
         if let waiter {
             self.waiter = nil
             lock.unlock()
@@ -352,6 +368,7 @@ final class StreamingBufferQueue: @unchecked Sendable {
             lock.lock()
             if !queue.isEmpty {
                 let head = queue.removeFirst()
+                bufferedSamples -= head.count
                 lock.unlock()
                 continuation.resume(returning: .samples(head))
                 return

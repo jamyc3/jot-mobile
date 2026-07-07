@@ -165,9 +165,7 @@ struct ActionsPopover: View {
             title: "Rewrite with Apple Intelligence",
             steps: [
                 Text("**Select** your text"),
-                Text("Tap ")
-                    + Text(Image(systemName: Self.writingToolsGlyph)).foregroundColor(Color.jotAccent)
-                    + Text(" in the menu"),
+                Text("Tap \(Text(Image(systemName: Self.writingToolsGlyph)).foregroundColor(Color.jotAccent)) in the menu"),
                 Text("Pick **Rewrite**, **Concise**, or **Proofread**"),
             ]
         )
@@ -180,9 +178,7 @@ struct ActionsPopover: View {
                 Text("**Select** your text"),
                 // Translate isn't on the first menu page — it's behind the menu's
                 // "more" arrow. Show the arrow glyph (not the word) and the real flow.
-                Text("Tap ")
-                    + Text(Image(systemName: "chevron.right")).foregroundColor(Color.jotAccent)
-                    + Text(", then **Translate**"),
+                Text("Tap \(Text(Image(systemName: "chevron.right")).foregroundColor(Color.jotAccent)), then **Translate**"),
                 Text("Pick a language to replace it"),
             ]
         )

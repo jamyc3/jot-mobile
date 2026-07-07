@@ -39,6 +39,8 @@
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Jot records your voice on-device so you can dictate text. Audio never leaves your iPhone.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Jot can use Apple's on-device dictation as an experimental alternative engine. Audio never leaves your iPhone.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Fraunces-Regular.ttf</string>

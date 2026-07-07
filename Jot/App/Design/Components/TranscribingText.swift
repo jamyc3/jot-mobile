@@ -79,19 +79,24 @@ struct TranscribingText: View {
         .accessibilityLabel(Text(text))
     }
 
-    /// Single concatenated `Text` run: the full transcript + (optionally) three
-    /// trailing dots. Concatenation keeps the tail IN the line-wrap flow so it
-    /// always lands right after the last word — an `HStack`-appended caret
-    /// instead pins to the edge of the whole text block once lines wrap.
+    /// Single `Text` run built from an `AttributedString`: the full transcript
+    /// + (optionally) three trailing dots. Keeping it ONE run (rather than
+    /// `Text` concatenation, deprecated iOS 26) keeps the tail IN the
+    /// line-wrap flow so it always lands right after the last word — an
+    /// `HStack`-appended caret instead pins to the edge of the whole text
+    /// block once lines wrap.
     private func run(dotOpacities: [Double]?) -> Text {
-        var run = Text(text).foregroundStyle(textColor)
+        var run = AttributedString(text)
+        run.foregroundColor = textColor
         if let dotOpacities {
-            run = run + Text(" ")
+            run += AttributedString(" ")
             for opacity in dotOpacities {
-                run = run + Text(".").foregroundStyle(dotColor.opacity(opacity))
+                var dot = AttributedString(".")
+                dot.foregroundColor = dotColor.opacity(opacity)
+                run += dot
             }
         }
-        return run
+        return Text(run)
             .font(font)
             .tracking(tracking)
     }
@@ -159,10 +164,14 @@ struct SteppingEllipsis: View {
     }
 
     private func run(dotOpacities: [Double]) -> Text {
-        var run = Text(leading).foregroundStyle(textColor) + Text(" ")
+        var run = AttributedString(leading)
+        run.foregroundColor = textColor
+        run += AttributedString(" ")
         for opacity in dotOpacities {
-            run = run + Text(".").foregroundStyle(dotColor.opacity(opacity))
+            var dot = AttributedString(".")
+            dot.foregroundColor = dotColor.opacity(opacity)
+            run += dot
         }
-        return run.font(font).tracking(tracking)
+        return Text(run).font(font).tracking(tracking)
     }
 }

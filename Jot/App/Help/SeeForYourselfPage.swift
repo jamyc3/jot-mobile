@@ -52,20 +52,20 @@ struct SeeForYourselfPage: View {
         .padding(.top, 4)
     }
 
-    /// Lead paragraph, bold lead-in then body. Composed inline so "No accounts,
-    /// no cloud, no telemetry." renders bold without an AttributedString detour.
+    /// Lead paragraph, bold lead-in then body. Composed via `Text` string
+    /// interpolation (not the deprecated `+` concatenation) so "No accounts,
+    /// no cloud, no telemetry." renders bold inline.
     private var lead: some View {
-        (
-            Text("No accounts, no cloud, no telemetry.")
-                .font(.system(size: 15.5, weight: .semibold))
-                .foregroundColor(Color.jotInk)
-            + Text(" Your words never leave this iPhone — and you don't have to trust us on that. iOS logs every domain every app contacts, and Jot's list is short.")
-                .font(.system(size: 15.5))
-                .foregroundColor(Color.jotPageInkSecondary)
-        )
-        .lineSpacing(3)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        let strong = Text("No accounts, no cloud, no telemetry.")
+            .font(.system(size: 15.5, weight: .semibold))
+            .foregroundColor(Color.jotInk)
+        let rest = Text(" Your words never leave this iPhone — and you don't have to trust us on that. iOS logs every domain every app contacts, and Jot's list is short.")
+            .font(.system(size: 15.5))
+            .foregroundColor(Color.jotPageInkSecondary)
+        return Text("\(strong)\(rest)")
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var reportSection: some View {

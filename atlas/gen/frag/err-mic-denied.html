@@ -16,12 +16,20 @@
   </span>
 </div>
 
-<!-- iOS-style alert -->
+<!-- iOS-style alert — the REAL, only main-app alert for this and every
+     other auto-start failure is the single generic dictateAutoStartError
+     alert (JotApp.swift:405-418), title "Couldn't start recording", single
+     OK button, no Settings deep link (matches features.md §12.1's "single
+     OK button... no Settings deep link" description). There is no dedicated
+     "Microphone Access Needed" alert anywhere in the codebase — a denied
+     mic permission from an auto-start (FAB/Action Button/URL) instead only
+     ever surfaces via surfaceAutoStartBanner → the KEYBOARD status banner
+     (§5.10), never a main-app modal at all. -->
 <div style="position:relative;margin-top:34px;display:flex;justify-content:center">
   <div style="width:280px;border-radius:20px;overflow:hidden;background:linear-gradient(var(--jot-card-top),var(--jot-card-bot));-webkit-backdrop-filter:blur(28px);backdrop-filter:blur(28px);border:0.5px solid var(--jot-card-border);box-shadow:0 16px 48px rgba(0,0,0,0.30)">
     <div style="padding:20px 20px 16px;text-align:center">
-      <div class="jot-row-title" style="font-size:17px;font-weight:600;margin-bottom:6px">Microphone Access Needed</div>
-      <div class="jot-row-sub" style="font-size:13px;line-height:1.4">Jot needs the microphone to dictate. Turn it on in iOS Settings → Privacy → Microphone → Jot.</div>
+      <div class="jot-row-title" style="font-size:17px;font-weight:600;margin-bottom:6px">Couldn't start recording</div>
+      <div class="jot-row-sub" style="font-size:13px;line-height:1.4">Microphone is busy — another app (like a call) is using it. Try again when it's free.</div>
     </div>
     <div style="border-top:0.5px solid var(--jot-sep);height:46px;display:flex;align-items:center;justify-content:center">
       <span style="color:var(--jot-accent);font-size:17px;font-weight:600">OK</span>

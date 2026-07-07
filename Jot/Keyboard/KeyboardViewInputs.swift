@@ -40,6 +40,7 @@ final class KeyboardViewInputs {
     var isStopRequestPending: Bool = false
     var statusBanner: String? = nil
     var showWarmHoldNudge: Bool = false
+    var showParakeetUpgradeNudge: Bool = false
     var keyboardAppearance: UIKeyboardAppearance = .default
     var hasSelection: Bool = false
     var showCorrectionNudge: Bool = false
@@ -87,6 +88,8 @@ struct KeyboardRootHostView: View {
     let onResumeRecording: () -> Void
     let onWarmHoldNudgeKeepMicReady: () -> Void
     let onWarmHoldNudgeDismiss: () -> Void
+    let onParakeetUpgradeNudgeUpgrade: () -> Void
+    let onParakeetUpgradeNudgeDismiss: () -> Void
     let onCorrectionVerdict: (String, String) -> Void
     let onCorrectionFinished: () -> Void
     let onAskDeckVerdict: (String, String) -> Void
@@ -110,6 +113,7 @@ struct KeyboardRootHostView: View {
             isStopRequestPending: inputs.isStopRequestPending,
             statusBanner: inputs.statusBanner,
             showWarmHoldNudge: inputs.showWarmHoldNudge,
+            showParakeetUpgradeNudge: inputs.showParakeetUpgradeNudge,
             keyboardAppearance: inputs.keyboardAppearance,
             hasSelection: inputs.hasSelection,
             onCopy: onCopy,
@@ -135,6 +139,8 @@ struct KeyboardRootHostView: View {
             onResumeRecording: onResumeRecording,
             onWarmHoldNudgeKeepMicReady: onWarmHoldNudgeKeepMicReady,
             onWarmHoldNudgeDismiss: onWarmHoldNudgeDismiss,
+            onParakeetUpgradeNudgeUpgrade: onParakeetUpgradeNudgeUpgrade,
+            onParakeetUpgradeNudgeDismiss: onParakeetUpgradeNudgeDismiss,
             showCorrectionNudge: inputs.showCorrectionNudge,
             correctionAsks: inputs.correctionAsks,
             onCorrectionVerdict: onCorrectionVerdict,

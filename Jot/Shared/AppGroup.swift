@@ -75,6 +75,13 @@ enum AppGroup {
         /// off. Turning it on kicks off building an owner voice profile from
         /// recently retained recordings. See `docs/speaker-diarization-lab/design.md`.
         static let diarizationLabEnabled = "jot.diarization.labEnabled"
+        /// Prefer Apple's on-device `SpeechTranscriber` over FluidAudio Parakeet
+        /// for English dictation, while keeping the existing CTC vocabulary
+        /// boost unchanged on top. English only. Default ON — Apple is the
+        /// shipped default engine; turning this off switches English dictation
+        /// to Jot's own Parakeet engine instead. See
+        /// `Jot/App/Transcription/AppleDictationEngine.swift`.
+        static let useAppleDictationForEnglish = "jot.transcription.useAppleDictationForEnglish"
         /// PROTOTYPE A/B (model-instant-load): load the Parakeet encoder on CPU+GPU
         /// instead of the Neural Engine, to test whether it avoids the ~60s
         /// post-update ANE device-specialization. Default off (= Neural Engine).
@@ -178,6 +185,19 @@ enum AppGroup {
         /// flag (§4). Once true the nudge never re-shows; turning warm hold ON
         /// is the other terminal state. Passive ignore does NOT set this.
         static let warmHoldNudgeSuppressed = "jot.warmHold.nudgeSuppressed"
+
+        /// Parakeet-upgrade nudge (deferred-engineering follow-up to Apple
+        /// becoming the default dictation engine): boolean projection the app
+        /// sets once the user has done 5 English dictations on Apple's engine
+        /// on an eligible device. Mirrors `warmHoldNudgeShouldShow` — the keyboard can't run
+        /// the dictation-count math, so it renders the nudge off this boolean
+        /// and clears it via the two terminal actions (Switch / Not now).
+        static let showParakeetUpgradeNudge = "jot.parakeetUpgrade.nudgeShouldShow"
+        /// Permanent "don't show again" flag for the Parakeet-upgrade nudge.
+        /// Mirrors `warmHoldNudgeSuppressed`. Switching to Jot's engine (the
+        /// nudge's accept path) does NOT set this — that's a different
+        /// terminal state (the switch itself makes the nudge moot).
+        static let parakeetNudgeDeclined = "jot.parakeetUpgrade.nudgeDeclined"
 
         /// Default-ON Lab kill-switch for the MiniLM embedding writer.
         /// Read by `TranscriptStore.append`, `PhoneSideWCSession.saveTranscript`,
@@ -378,6 +398,22 @@ enum AppGroup {
         set { defaults.set(newValue, forKey: Keys.warmHoldNudgeSuppressed) }
     }
 
+    /// Boolean projection the app sets when the Parakeet-upgrade nudge streak
+    /// crosses threshold (5 English dictations on Apple's engine, on an
+    /// eligible device). Mirrors `warmHoldNudgeShouldShow` — see that
+    /// accessor's doc for the cross-process reasoning.
+    static var showParakeetUpgradeNudge: Bool {
+        get { defaults.bool(forKey: Keys.showParakeetUpgradeNudge) }
+        set { defaults.set(newValue, forKey: Keys.showParakeetUpgradeNudge) }
+    }
+
+    /// Permanent "Don't show this again" flag for the Parakeet-upgrade nudge.
+    /// Mirrors `warmHoldNudgeSuppressed`.
+    static var parakeetNudgeDeclined: Bool {
+        get { defaults.bool(forKey: Keys.parakeetNudgeDeclined) }
+        set { defaults.set(newValue, forKey: Keys.parakeetNudgeDeclined) }
+    }
+
     /// Selected AI rewrite backend. Currently the only valid value is
     /// `"qwen35"` (Qwen 3.5 4B 4-bit via MLX). Legacy values (`"phi4"`,
     /// `"gemma"`, `"appleIntelligence"`) are recognized but treated as
@@ -432,6 +468,23 @@ enum AppGroup {
     static var transcriptionLanguage: String {
         get { defaults.string(forKey: Keys.transcriptionLanguage) ?? "english" }
         set { defaults.set(newValue, forKey: Keys.transcriptionLanguage) }
+    }
+
+    /// Whether English dictation uses Apple's on-device `SpeechTranscriber`
+    /// instead of FluidAudio's Parakeet. Single source of truth for the
+    /// default so every reader agrees.
+    ///
+    /// **Default = TRUE (2026-07-06):** Apple is the default engine when the
+    /// user hasn't explicitly chosen — so devices where Parakeet v2 can't run
+    /// (e.g. the 2020 iPad Pro) get working English dictation out of the box,
+    /// and capable devices default to Apple too (owner's "soft default for
+    /// all" direction). An explicit toggle choice (either way) always wins via
+    /// `set`. NOTE: this default-flip is a test-build choice — revisit whether
+    /// production should default-on globally vs. only on FluidAudio-incapable
+    /// devices before committing.
+    static var useAppleDictationForEnglish: Bool {
+        get { defaults.object(forKey: Keys.useAppleDictationForEnglish) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Keys.useAppleDictationForEnglish) }
     }
 
     /// "Live text while dictating" tri-state (`"auto"` / `"on"` / `"off"`).

@@ -175,6 +175,19 @@ struct JotApp: App {
         _streamingPartial = State(initialValue: streamingPartial)
         _cleanupService = State(initialValue: cleanup)
         _setupRerunTrigger = State(initialValue: rerunTrigger)
+
+        // §D (v2 carry-forward, docs/dictation-engine-rework/
+        // v2-carry-forward-migration-design.md): resolve the English dictation
+        // engine default ONCE, SYNCHRONOUSLY, and as EARLY as possible — before
+        // any Task below is scheduled and before the recording subsystem can
+        // service a start (Action Button / DictateIntent / cold jot://dictate
+        // can begin a recording with no UI). An existing Parakeet user on a
+        // capable device is flipped off the global-true Apple default so their
+        // first post-update English dictation stays on Parakeet; a new user
+        // keeps Apple. Guarded — runs at most once, so a later explicit Settings
+        // toggle always wins. Touches only an App-Group value (no schema change).
+        V2CarryForwardMigration.resolveEnglishEngineDefaultIfNeeded()
+
         // One-shot sweep of any orphaned model-purge dirs from prior crashed
         // purges. Detached + best-effort, does not block launch.
         TranscriptionService.sweepOrphanedPurgingDirs()
@@ -288,6 +301,17 @@ struct JotApp: App {
         // iPhone was 3–5x slower than real-time (10–15s tails after
         // stop). Gated by a `UserDefaults` flag — runs at most once.
         TranscriptionService.sweepNemotronAppSupportWeights()
+
+        // §A carry-forward (docs/dictation-engine-rework/
+        // v2-carry-forward-migration-design.md): copy the bundled Parakeet 600M
+        // v2 into FluidAudio's Application-Support cache — the exact directory a
+        // future stripped build's English loader falls through to — so the
+        // eventual bundle strip (Release S) is a zero-download data move. Only
+        // on Parakeet-capable devices, only while v2 is still bundled (this
+        // build STILL bundles it — NOT the strip). Idempotent presence+verify
+        // check every launch, off the main thread, atomic temp→verify→rename;
+        // a no-op once complete.
+        V2CarryForwardMigration.runIfNeeded()
 
         // One-shot migration: reclaim ~2.4 GB of HuggingFace cache from
         // upgrading users who downloaded Phi-4 mini under prior builds.
@@ -455,6 +479,14 @@ struct JotApp: App {
                         return
                     }
 
+                    // `jot://upgrade-engine` — the keyboard's Parakeet-upgrade
+                    // nudge "Switch" tap (deferred-engineering follow-up to the
+                    // Apple Dictation A/B spike). No dictation auto-start —
+                    // just present the upgrade screen.
+                    if url.host == "upgrade-engine" {
+                        router.showUpgradeEngine = true
+                        return
+                    }
 
 // Explicit user intent — bypass the once-per-session gate.
                     autoStartConsumed = false
@@ -631,6 +663,19 @@ struct JotApp: App {
                     // place that gate lives. (`init()` also warms on cold launch;
                     // this is the scene-attach trigger. Idempotent.)
                     transcriptionService.warmIfNeeded()
+                    // Request Speech authorization early so the one-time
+                    // permission prompt appears at launch rather than
+                    // interrupting the first Apple dictation. On a real device
+                    // the Apple engine can't subscribe to a transcription asset
+                    // without this grant ("not subscribed to transcription.…").
+                    Task { _ = await AppleStreamingSession.ensureSpeechAuthorization() }
+                    // Resolve which dictation languages actually work on THIS
+                    // device (RULE #1 — never show a language or Parakeet-
+                    // download affordance that can't run here) before the
+                    // language pickers first render. Cheap + cached; a picker
+                    // opened before this completes just awaits its own
+                    // `.task` copy of `resolve()` (idempotent).
+                    Task { await DictationLanguageAvailability.resolve() }
                     TranscriptHistoryMirror.refresh(
                         from: ModelContext(JotModelContainer.shared)
                     )
@@ -1058,26 +1103,7 @@ struct JotApp: App {
                 await DictationActivityCoordinator.shared.start(startedAt: startedAt)
                 do {
                     lifecycleLog.notice("RECORDING START FROM: triggerAutoStart reason=\(reason, privacy: .public)")
-                    do {
-                        try await recordingService.start()
-                    } catch RecordingService.RecordingError.micUnavailable {
-                        // Cold-launch race: when the keyboard's URL bounce
-                        // wakes a terminated main app, iOS's audio HAL isn't
-                        // fully booted on the first run of the runloop —
-                        // `inputNode.outputFormat(forBus: 0)` reports 0
-                        // channels and our `.micUnavailable` guard throws.
-                        // A single short retry after ~700 ms is enough for
-                        // the HAL to be ready; this also covers transient
-                        // contention where another app held the mic for a
-                        // brief moment and released it. If the second attempt
-                        // also throws, the error propagates out and surfaces
-                        // the alert as a real "mic busy" condition.
-                        lifecycleLog.notice(
-                            "Recording start hit micUnavailable on first attempt (cold-launch HAL race?); retrying once after 700ms"
-                        )
-                        try await Task.sleep(nanoseconds: 700_000_000)
-                        try await recordingService.start()
-                    }
+                    try await startRecordingRetryingColdLaunchMicRace(reason: reason)
                     AppGroup.lastDictationStatusMessage = nil
                     lifecycleLog.info("Auto-started recording after \(reason, privacy: .public) session=\(sid, privacy: .public)")
                 } catch {
@@ -1111,6 +1137,64 @@ struct JotApp: App {
             }
         }
     }
+
+    /// Cold-launch HAL race: when the keyboard's `jot://dictate` URL bounce
+    /// wakes a terminated main app, iOS's audio HAL isn't always booted on
+    /// the first run of the runloop — `recordingService.start()`'s own
+    /// mic-availability preflight (`inputNode.outputFormat(forBus: 0)`
+    /// reporting 0 channels / 0 Hz) throws `.micUnavailable`. The old fix was
+    /// a single fixed 700ms sleep then one retry — a blind guess that could
+    /// still lose the race, and gave up after exactly one more try.
+    ///
+    /// Instead, poll on the REAL signal: `start()` re-runs that same
+    /// preflight against the input node fresh on every call, so retrying
+    /// `start()` itself IS checking whether the HAL has come up — there's no
+    /// separate "is the mic ready" probe to key off, this is the actual
+    /// value. Loop at `coldLaunchMicRetryInterval` up to
+    /// `coldLaunchMicRetryCeiling` total, succeeding the instant an attempt
+    /// gets past the preflight. The happy path (mic ready immediately) is
+    /// unaffected — first attempt returns with zero added delay.
+    ///
+    /// If the ceiling is hit, `.micUnavailable` propagates out unchanged so
+    /// the existing "mic busy" banner still fires for a genuinely
+    /// unavailable mic (e.g. another app holding it for a call) — this only
+    /// shrinks the false-positive window caused by the cold-launch race.
+    private func startRecordingRetryingColdLaunchMicRace(reason: String) async throws {
+        let deadline = Date().addingTimeInterval(Self.coldLaunchMicRetryCeiling)
+        var attempt = 0
+        while true {
+            do {
+                try await recordingService.start()
+                if attempt > 0 {
+                    lifecycleLog.notice(
+                        "Recording start recovered from micUnavailable after \(attempt) retries (cold-launch HAL race) for \(reason, privacy: .public)"
+                    )
+                }
+                return
+            } catch RecordingService.RecordingError.micUnavailable {
+                guard Date() < deadline else {
+                    lifecycleLog.error(
+                        "Recording start still micUnavailable after \(Self.coldLaunchMicRetryCeiling, privacy: .public)s ceiling (\(attempt) retries) for \(reason, privacy: .public); giving up"
+                    )
+                    throw RecordingService.RecordingError.micUnavailable
+                }
+                attempt += 1
+                try await Task.sleep(nanoseconds: Self.coldLaunchMicRetryIntervalNanos)
+            }
+        }
+    }
+
+    /// Poll cadence for `startRecordingRetryingColdLaunchMicRace`. Short
+    /// enough that a HAL boot landing between polls doesn't add perceptible
+    /// latency once ready, coarse enough not to spin the run loop on a
+    /// prolonged real mic-busy condition.
+    private static let coldLaunchMicRetryIntervalNanos: UInt64 = 75_000_000
+
+    /// Ceiling for the same retry loop. Generous beyond any HAL-boot delay
+    /// observed on device for a cold-launched app — a genuinely unavailable
+    /// mic (call in progress, another app capturing) exhausts this and falls
+    /// through to the real "mic busy" error rather than retrying forever.
+    private static let coldLaunchMicRetryCeiling: TimeInterval = 2.0
 }
 
 @MainActor

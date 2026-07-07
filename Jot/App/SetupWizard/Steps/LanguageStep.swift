@@ -53,8 +53,33 @@ struct LanguageStep: View {
     /// Drives the searchable language-list sheet (mockup state 2).
     @State private var pickerPresented = false
 
+    /// Live per-device language capability (`DictationLanguageAvailability`). `nil`
+    /// until the first `.task` resolve completes — the picker sheet shows
+    /// every language while unresolved (never an empty picker) and the
+    /// Parakeet-download gate falls back to the old `!isEnglish` assumption
+    /// for that same brief window. RULE #1: never show a language, or a
+    /// "download Parakeet" affordance, that can't actually run on this device.
+    @State private var appleLangCodes: Set<String>?
+
     private var language: LanguageChoice {
         LanguageChoice(rawValue: languageRaw) ?? .english
+    }
+
+    /// Languages that actually work on this device. English is always kept
+    /// regardless (belt and suspenders — it's always available anyway).
+    private var availableLanguages: [LanguageChoice] {
+        guard let appleLangCodes else { return LanguageChoice.presentationOrder }
+        return LanguageChoice.presentationOrder.filter {
+            $0.isEnglish || DictationLanguageAvailability.isAvailable($0, appleCodes: appleLangCodes)
+        }
+    }
+
+    /// Whether picking `lang` would show our Parakeet-download UI on this
+    /// device. Falls back to the pre-capability-check assumption
+    /// (`!isEnglish`) while `appleLangCodes` hasn't resolved yet.
+    private func showsParakeetDownload(_ lang: LanguageChoice) -> Bool {
+        guard let appleLangCodes else { return !lang.isEnglish }
+        return DictationLanguageAvailability.usesParakeetDownload(lang, appleCodes: appleLangCodes)
     }
 
     var body: some View {
@@ -107,9 +132,15 @@ struct LanguageStep: View {
             WizardSecondaryTextButton(title: "Skip", action: onAdvance)
         }
         .sheet(isPresented: $pickerPresented) {
-            LanguagePickerSheet(selectedRaw: languageRaw) { picked in
+            LanguagePickerSheet(selectedRaw: languageRaw, availableLanguages: availableLanguages) { picked in
                 select(picked)
             }
+        }
+        .task {
+            // `resolve()` is idempotent — cheap to re-await if the app
+            // already resolved it at launch (`JotApp`'s scene `.task`).
+            await DictationLanguageAvailability.resolve()
+            appleLangCodes = DictationLanguageAvailability.appleCodes
         }
     }
 
@@ -174,6 +205,13 @@ struct LanguageStep: View {
         if language.isEnglish {
             return ("Built in — ready to use, no download.", Color.green, true)
         }
+        guard showsParakeetDownload(language) else {
+            // Apple's on-device speech recognition handles this language on
+            // this device (or it's one of the 4 Apple-only CJK languages) —
+            // Apple manages its own speech-asset install silently, so there's
+            // no Parakeet download UI to show.
+            return ("Runs on this iPhone — no download needed.", Color.green, true)
+        }
         switch transcriptionService.modelState {
         case .downloading(let f):
             return ("Downloading — keep Jot open. \(Int(f * 100))%", Color.jotPageInkSecondary, false)
@@ -193,12 +231,14 @@ struct LanguageStep: View {
 
     // MARK: - Download control
 
-    /// For a non-English language whose model isn't on disk and isn't already
-    /// fetching, show a Download button + (while fetching) a progress bar. The
-    /// bundled English path shows nothing here.
+    /// For a language whose model isn't on disk and isn't already fetching,
+    /// show a Download button + (while fetching) a progress bar. Shows
+    /// nothing for English (bundled) or for any language Apple's on-device
+    /// engine already handles on this device — Apple's own asset install is
+    /// silent, so there's nothing of ours to show progress for.
     @ViewBuilder
     private var downloadControl: some View {
-        if !language.isEnglish {
+        if showsParakeetDownload(language) {
             switch transcriptionService.modelState {
             case .downloading(let f):
                 HStack(spacing: 10) {
@@ -247,16 +287,19 @@ struct LanguageStep: View {
 
     // MARK: - State
 
-    /// True when the resolved model for the active language is on disk. English
-    /// is always satisfied (bundled in the IPA). A European language is
-    /// satisfied once its v3 download has completed.
+    /// True when the resolved model for the active language is on disk.
+    /// English is always satisfied (bundled in the IPA), as is any language
+    /// Apple's on-device engine handles on this device (no Parakeet fetch to
+    /// wait on). A language that DOES route to Parakeet is satisfied once its
+    /// v3 download has completed.
     private var modelOnDisk: Bool {
-        language.isEnglish || TranscriptionService.modelsExistOnDiskForSelectedVariant()
+        guard showsParakeetDownload(language) else { return true }
+        return TranscriptionService.modelsExistOnDiskForSelectedVariant()
     }
 
     /// Continue gate (design §5.2): enabled when the resolved model is ready.
     private var canContinue: Bool {
-        if language.isEnglish { return true }
+        guard showsParakeetDownload(language) else { return true }
         if case .ready = transcriptionService.modelState { return true }
         return modelOnDisk
     }
@@ -292,6 +335,9 @@ struct LanguageStep: View {
 /// both. English carries a "Built in" badge; the active row carries a check.
 private struct LanguagePickerSheet: View {
     let selectedRaw: String
+    /// Languages that actually work on this device (`LanguageStep.availableLanguages`) —
+    /// already filtered by `DictationLanguageAvailability`; English is always included.
+    let availableLanguages: [LanguageChoice]
     let onPick: (LanguageChoice) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -300,7 +346,7 @@ private struct LanguagePickerSheet: View {
     /// English pinned to the top (the instant, no-download path), then the rest
     /// alphabetically by English name.
     private var ordered: [LanguageChoice] {
-        let rest = LanguageChoice.presentationOrder.filter { !$0.isEnglish }
+        let rest = availableLanguages.filter { !$0.isEnglish }
         return [.english] + rest
     }
 
@@ -317,6 +363,14 @@ private struct LanguagePickerSheet: View {
         !query.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// `LanguageChoice.recentLanguages`, filtered to what's available on this
+    /// device (Rule #1 applies to the Recent quick-switch too). Reuses
+    /// `availableLanguages` so the same unresolved/English-always behavior
+    /// applies without re-deriving it.
+    private var availableRecents: [LanguageChoice] {
+        LanguageChoice.recentLanguages.filter { availableLanguages.contains($0) }
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -326,7 +380,7 @@ private struct LanguagePickerSheet: View {
                     // Recent languages up top for quick switching — the active
                     // one first, then previously-used, up to five.
                     Section("Recent") {
-                        ForEach(LanguageChoice.recentLanguages) { languageRow($0) }
+                        ForEach(availableRecents) { languageRow($0) }
                     }
                     Section("All languages") {
                         ForEach(ordered) { languageRow($0) }

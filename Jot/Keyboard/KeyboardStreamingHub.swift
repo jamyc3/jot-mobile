@@ -111,13 +111,9 @@ final class KeyboardRecordingState {
         // `warmIdle` (post-stop warm window, mic warm but NOT capturing) renders
         // as idle/home. The in-flight tail + idle/failed are listed explicitly so
         // a real future state addition is a compile prompt to decide its UI, not a
-        // silent fall-through. `default` keeps the switch total so an unhandled
-        // app-written state can never crash the reader.
+        // silent fall-through — the switch is already exhaustive over `Phase`, so
+        // there is no `default` (it would be provably dead code).
         case .idle, .warmIdle, .transcribing, .processing, .cleaning, .rewriting, .publishing, .failed:
-            isPaused = false
-            pausedElapsedSeconds = nil
-            update(isRecording: false, startedAt: nil)
-        default:
             isPaused = false
             pausedElapsedSeconds = nil
             update(isRecording: false, startedAt: nil)
@@ -218,6 +214,14 @@ final class KeyboardStreamingHub {
     /// terminal actions back (via the controller's handlers, which clear this).
     private(set) var showWarmHoldNudge = false
 
+    /// Whether the Parakeet-upgrade nudge should render (deferred-engineering
+    /// follow-up to the Apple Dictation A/B spike). Mirrors
+    /// `AppGroup.showParakeetUpgradeNudge && !parakeetNudgeDeclined`. The app
+    /// owns the dictation-count math; the keyboard renders off this boolean
+    /// and writes the two terminal actions back (via the controller's
+    /// handlers, which clear this).
+    private(set) var showParakeetUpgradeNudge = false
+
     /// Whether the post-paste correction quick-review strip should render. Set
     /// when the app publishes asks for the just-pasted session (the
     /// `correctionAsksReady` feed, or the controller's paste-time trigger);
@@ -278,6 +282,7 @@ final class KeyboardStreamingHub {
     private var streamingLoadingObserver: CrossProcessNotification.Observer?
     private var pipelinePhaseObserver: CrossProcessNotification.Observer?
     private var warmHoldNudgeObserver: CrossProcessNotification.Observer?
+    private var parakeetUpgradeNudgeObserver: CrossProcessNotification.Observer?
     private var historyMirrorUpdatedObserver: CrossProcessNotification.Observer?
     private var correctionAsksReadyObserver: CrossProcessNotification.Observer?
 
@@ -314,6 +319,11 @@ final class KeyboardStreamingHub {
         ) { [weak self] in
             self?.refreshWarmHoldNudgeFromProjection()
         }
+        parakeetUpgradeNudgeObserver = CrossProcessNotification.addObserver(
+            name: CrossProcessNotification.parakeetUpgradeNudgeChanged
+        ) { [weak self] in
+            self?.refreshParakeetUpgradeNudgeFromProjection()
+        }
         historyMirrorUpdatedObserver = CrossProcessNotification.addObserver(
             name: CrossProcessNotification.historyMirrorUpdated
         ) { [weak self] in
@@ -334,6 +344,7 @@ final class KeyboardStreamingHub {
         refreshStreamingPartialFromProjection()
         refreshStreamingLoadingFromProjection()
         refreshWarmHoldNudgeFromProjection()
+        refreshParakeetUpgradeNudgeFromProjection()
         refreshHistory()
     }
 
@@ -419,6 +430,29 @@ final class KeyboardStreamingHub {
     /// terminal nudge actions, which also write the App-Group flags + post).
     func clearWarmHoldNudge() {
         showWarmHoldNudge = false
+        onShouldRender?()
+    }
+
+    // MARK: - Parakeet-upgrade nudge (deferred-engineering follow-up)
+
+    private func refreshParakeetUpgradeNudgeFromProjection() {
+        // Mirror the app's predicate (`shouldShow && !declined`) so the two
+        // renderers can't diverge — same shape as `refreshWarmHoldNudgeFromProjection`.
+        let shouldShow = hasFullAccess
+            && AppGroup.showParakeetUpgradeNudge
+            && !AppGroup.parakeetNudgeDeclined
+        guard shouldShow != showParakeetUpgradeNudge else { return }
+        showParakeetUpgradeNudge = shouldShow
+        // Snapshot-backed surface: ask the active controller to re-render so
+        // the nudge appears/hides live while the keyboard is presented.
+        onShouldRender?()
+    }
+
+    /// Clear the Parakeet-upgrade nudge render flag (driven by the
+    /// controller's two terminal actions, which also write the App-Group
+    /// flags + post).
+    func clearParakeetUpgradeNudge() {
+        showParakeetUpgradeNudge = false
         onShouldRender?()
     }
 

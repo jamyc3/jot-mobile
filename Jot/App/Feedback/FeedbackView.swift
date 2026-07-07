@@ -190,6 +190,10 @@ struct FeedbackView: View {
 
     @ViewBuilder
     private var attachmentsRow: some View {
+        // Captured as a local so the PhotosPicker label closure below reads
+        // a plain Bool rather than reaching back into the MainActor-isolated
+        // `processedImages` property from its own (non-isolated) context.
+        let hasProcessedImages = !processedImages.isEmpty
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
                 PhotosPicker(
@@ -201,7 +205,7 @@ struct FeedbackView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "paperclip")
                             .font(.system(size: 14, weight: .semibold))
-                        Text(processedImages.isEmpty ? "Add screenshots" : "Change screenshots")
+                        Text(hasProcessedImages ? "Change screenshots" : "Add screenshots")
                             .font(.system(size: 14, weight: .medium))
                     }
                     .foregroundStyle(Color.jotBlueBottom)

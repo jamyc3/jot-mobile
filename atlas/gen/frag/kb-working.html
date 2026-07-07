@@ -14,13 +14,36 @@
 
 <div style="background:var(--jot-card-bot);border-radius:24px 24px 0 0;padding:14px 12px 18px;margin:0 -6px">
 
-  <div class="jot-card" style="margin:0 0 14px;min-height:118px;display:flex;flex-direction:column;padding:14px 16px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-      <span style="width:8px;height:8px;border-radius:50%;border:1.5px solid var(--jot-accent);box-sizing:border-box;flex:none"></span>
-      <span style="color:var(--jot-ink-2);font-size:13px;flex:1">Finishing up your dictation…</span>
+  <!-- RECENT list card — the Working state does NOT show a "finishing up"
+       status card; per KeyboardView.swift's topStripContent, the strip only
+       branches on isRecording (→ StreamingStrip) vs full-access (→
+       fullAccessInstructions), so during Working it falls through to the
+       same RecentsStrip shown when idle. -->
+  <div class="jot-card" style="margin:0 0 14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px 6px">
+      <span class="jot-section" style="margin:0">Recent</span>
+      <span style="color:var(--jot-accent);font-size:14px;font-weight:600">See all ›</span>
     </div>
-    <div style="flex:1;display:flex;align-items:center">
-      <span class="jot-title" style="font-size:17px;letter-spacing:-0.4px;color:var(--jot-ink-2)">My name is Vineet.</span>
+    <div class="jot-row" style="padding:10px 14px">
+      <span class="jot-row-sub" style="font-variant-numeric:tabular-nums;letter-spacing:0.3px;color:var(--jot-ink-cap);flex:none;width:58px">9:23 PM</span>
+      <span class="grow" style="color:var(--jot-accent);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Hello, can you hear me? I think you can…</span>
+      <span style="width:22px;height:22px;border-radius:6px;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));display:flex;align-items:center;justify-content:center;flex:none">
+        <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:none;stroke:#fff;stroke-width:2.4"><path d="M8 16L16 8M9 8h7v7"/></svg>
+      </span>
+    </div>
+    <div class="jot-row" style="padding:10px 14px">
+      <span class="jot-row-sub" style="font-variant-numeric:tabular-nums;letter-spacing:0.3px;color:var(--jot-ink-cap);flex:none;width:58px">9:22 PM</span>
+      <span class="grow" style="color:var(--jot-accent);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">That's great. Cause from Thursday to…</span>
+      <span style="width:22px;height:22px;border-radius:6px;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));display:flex;align-items:center;justify-content:center;flex:none">
+        <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:none;stroke:#fff;stroke-width:2.4"><path d="M8 16L16 8M9 8h7v7"/></svg>
+      </span>
+    </div>
+    <div class="jot-row" style="padding:10px 14px">
+      <span class="jot-row-sub" style="font-variant-numeric:tabular-nums;letter-spacing:0.3px;color:var(--jot-ink-cap);flex:none;width:58px">9:21 PM</span>
+      <span class="grow" style="color:var(--jot-accent);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Where will he be staying in San Francis…</span>
+      <span style="width:22px;height:22px;border-radius:6px;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));display:flex;align-items:center;justify-content:center;flex:none">
+        <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:none;stroke:#fff;stroke-width:2.4"><path d="M8 16L16 8M9 8h7v7"/></svg>
+      </span>
     </div>
   </div>
 
@@ -31,7 +54,7 @@
     <div style="flex:1;height:54px;border-radius:13px;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));display:flex;align-items:center;justify-content:center;gap:10px;opacity:0.85">
       <!-- spinner ring -->
       <svg viewBox="0 0 24 24" style="width:20px;height:20px"><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="3"/><path d="M12 3a9 9 0 019 9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>
-      <span style="color:#fff;font-size:18px;font-weight:600">Working…</span>
+      <span style="color:#fff;font-size:18px;font-weight:600">Working</span>
     </div>
     <span style="width:72px;height:54px;border-radius:11px;background:rgba(120,120,128,0.28);display:flex;align-items:center;justify-content:center;flex:none">
       <svg viewBox="0 0 24 24" style="width:24px;height:24px;fill:none;stroke:var(--jot-ink);stroke-width:2"><path d="M20 7v4a3 3 0 01-3 3H6m0 0l4-4m-4 4l4 4"/></svg>

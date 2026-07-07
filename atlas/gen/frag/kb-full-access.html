@@ -1,4 +1,5 @@
-<!-- Full Access required (§5.11): Jot down → Enable Full Access CTA, recents rows blank. -->
+<!-- Full Access required (§5.11): Jot down → Enable Full Access CTA; Recent strip replaced
+     entirely by an instructional card (no "Recent"/"See all" chrome — the strip isn't shown). -->
 <div style="height:300px"></div>
 
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
@@ -14,16 +15,16 @@
 
 <div style="background:var(--jot-card-bot);border-radius:24px 24px 0 0;padding:14px 12px 18px;margin:0 -6px">
 
-  <!-- RECENT card: header renders, row area silently blank (§5.11) -->
-  <div class="jot-card" style="margin:0 0 14px;min-height:118px">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px 6px">
-      <span class="jot-section" style="margin:0">Recent</span>
-      <span style="color:var(--jot-accent);font-size:14px;font-weight:600">See all ›</span>
+  <!-- Full Access instructional card ENTIRELY REPLACES the Recent strip (no header/See-all
+       chrome — §5.11: "there is no 'See all' link to tap in this state, since the strip
+       itself isn't shown"). Mirrors Keyboard/KeyboardView.swift `fullAccessInstructions`. -->
+  <div class="jot-card" style="margin:0 0 14px;min-height:118px;padding:12px 14px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <svg viewBox="0 0 24 24" style="width:15px;height:15px;flex:none;fill:none;stroke:var(--jot-ink-cap);stroke-width:1.8"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10 11V9.5a2 2 0 014 0V11"/></svg>
+      <span style="color:var(--jot-ink-cap);font-size:11px;font-weight:600;letter-spacing:1.2px">ENABLE FULL ACCESS TO DICTATE</span>
     </div>
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:18px 24px 22px">
-      <svg viewBox="0 0 24 24" style="width:26px;height:26px;fill:none;stroke:var(--jot-ink-cap);stroke-width:1.8;opacity:0.7"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10 11V9.5a2 2 0 014 0V11"/></svg>
-      <span class="jot-row-sub" style="color:var(--jot-ink-cap);text-align:center">Enable Full Access to see your recent dictations here.</span>
-    </div>
+    <div style="color:var(--jot-ink);font-size:13px;margin-bottom:3px">iPhone Settings &nbsp;→&nbsp; General &nbsp;→&nbsp; Keyboard</div>
+    <div style="color:var(--jot-ink);font-size:13px">Keyboards &nbsp;→&nbsp; Jot Keyboard &nbsp;→&nbsp; Allow Full Access</div>
   </div>
 
   <!-- control row: ••• / Enable Full Access CTA / return / backspace -->

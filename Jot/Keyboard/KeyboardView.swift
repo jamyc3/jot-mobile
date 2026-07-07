@@ -54,6 +54,15 @@ struct KeyboardView: View {
     /// off this boolean and writes the two terminal actions back).
     let showWarmHoldNudge: Bool
 
+    /// Parakeet-upgrade nudge (deferred-engineering follow-up to the Apple
+    /// Dictation A/B spike) — when true, the keyboard renders the one-time
+    /// "switch to Jot's own engine" strip over the strip area. The app
+    /// computes the dictation-count math and sets the
+    /// `showParakeetUpgradeNudge` App-Group projection; the keyboard renders
+    /// off this boolean and writes the two terminal actions back. Yields to
+    /// `showWarmHoldNudge` — see `topStrip`'s branch order.
+    let showParakeetUpgradeNudge: Bool
+
     /// v2 retheme (2026-05-11) — host's `keyboardAppearance` hint
     /// (`UIKeyboardAppearance.default` / `.light` / `.dark`). Some
     /// hosts force `.dark` even when the system is in light mode; this
@@ -134,6 +143,14 @@ struct KeyboardView: View {
     /// WS-F / §4 — warm-hold nudge "Don't show this again" (dismiss). One tap,
     /// no confirm: permanent suppression.
     let onWarmHoldNudgeDismiss: () -> Void
+
+    /// Parakeet-upgrade nudge "Switch" (accept). One tap, no confirm: opens
+    /// the main app's upgrade screen via a deep link.
+    let onParakeetUpgradeNudgeUpgrade: () -> Void
+
+    /// Parakeet-upgrade nudge "Not now" (dismiss). One tap, no confirm:
+    /// permanent decline.
+    let onParakeetUpgradeNudgeDismiss: () -> Void
 
     /// Correction quick-review — when true, the keyboard renders the post-paste
     /// correction-review strip over the strip area (higher priority than the
@@ -265,6 +282,8 @@ struct KeyboardView: View {
                        value: recordingState.isRecording)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2),
                        value: showWarmHoldNudge)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2),
+                       value: showParakeetUpgradeNudge)
         }
     }
 
@@ -356,6 +375,21 @@ struct KeyboardView: View {
                 reduceMotion: reduceMotion,
                 onKeepMicReady: onWarmHoldNudgeKeepMicReady,
                 onDismiss: onWarmHoldNudgeDismiss,
+                feedback: feedback
+            )
+            .transition(
+                reduceMotion
+                    ? .opacity
+                    : .opacity.combined(with: .move(edge: .top))
+            )
+        } else if showParakeetUpgradeNudge && !recordingState.isRecording {
+            // Deferred-engineering follow-up to the Apple Dictation A/B spike.
+            // Only reachable when the warm-hold nudge above is NOT showing —
+            // the two nudges never stack.
+            ParakeetUpgradeNudgeStrip(
+                reduceMotion: reduceMotion,
+                onSwitch: onParakeetUpgradeNudgeUpgrade,
+                onDismiss: onParakeetUpgradeNudgeDismiss,
                 feedback: feedback
             )
             .transition(

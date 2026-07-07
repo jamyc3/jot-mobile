@@ -7,8 +7,9 @@ import Foundation
 /// automatically. Mirrors the shipped Jot **Mac** app's `LanguageChoice`
 /// (`~/code/jot/Sources/Transcription/LanguageChoice.swift`,
 /// `docs/multilingual-dictation/design.md`), trimmed to the mobile bucket set:
-/// English + the Parakeet v3 European union. No Japanese / Qwen3 / Nemotron on
-/// mobile.
+/// English + the Parakeet v3 European union, plus four Apple-only languages
+/// FluidAudio has no model for at all (Japanese, Korean, Mandarin, Cantonese —
+/// see `isAppleOnly`). No Qwen3 / Nemotron on mobile.
 ///
 /// ## Mapping
 /// - **English → bundled Parakeet v2** (or the 110M on sub-6GB devices) — the
@@ -17,6 +18,9 @@ import Foundation
 ///   downloaded once) + the FluidAudio Latin/Cyrillic script hint where one
 ///   exists. Languages with no hint case (Danish, Dutch, Finnish, Greek,
 ///   Hungarian, Swedish) fall back to v3 auto-detect.
+/// - **Japanese / Korean / Mandarin / Cantonese → Apple's on-device
+///   `SpeechTranscriber`, always** (`isAppleOnly`) — FluidAudio ships no model
+///   for these, so there is no fallback engine and no vocabulary rescore.
 ///
 /// ## FIRST PASS scope
 /// European resolves to **int8 v3 (`AsrModelVersion.v3`) on every device** — no
@@ -33,6 +37,10 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
     case russian, ukrainian, belarusian, bulgarian, serbian
     // v3-supported but no FluidAudio hint case (auto-detect):
     case danish, dutch, finnish, greek, hungarian, swedish
+    // Apple-only — FluidAudio has NO model for these at all (not even
+    // auto-detect); they route exclusively through Apple's on-device
+    // `SpeechTranscriber` (see `isAppleOnly`/`appleLocaleIdentifier` below).
+    case japanese, korean, chineseMandarin, cantonese
 
     var id: String { rawValue }
 
@@ -43,6 +51,50 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
     }
 
     var isEnglish: Bool { self == .english }
+
+    /// `true` for languages FluidAudio has no model for at all (not bundled,
+    /// not v3, not even auto-detect) — these MUST route through Apple's
+    /// on-device `SpeechTranscriber` for every pass (streaming + stop-pass),
+    /// and MUST NOT fall back to FluidAudio on an Apple failure the way
+    /// English's Apple-engine toggle does, because there is no FluidAudio
+    /// model to fall back to. `fluidAudioLanguage` is irrelevant/unused for
+    /// these.
+    var isAppleOnly: Bool {
+        switch self {
+        case .japanese, .korean, .chineseMandarin, .cantonese: return true
+        default: return false
+        }
+    }
+
+    /// BCP-47 locale identifier for Apple's `SpeechTranscriber`, threaded into
+    /// `AppleStreamingSession`/`AppleDictationEngine`. Non-nil for EVERY
+    /// language Apple's modern engine actually supports (device-verified:
+    /// de/en/es/fr/it/pt/ja/ko/zh/yue) — Apple is the DEFAULT engine for all
+    /// of them. `nil` for the European languages Apple can't do (Polish,
+    /// Czech, Ukrainian, …), which stay FluidAudio-only.
+    var appleLocaleIdentifier: String? {
+        switch self {
+        case .english:         return "en-US"
+        case .spanish:         return "es-ES"
+        case .french:          return "fr-FR"
+        case .german:          return "de-DE"
+        case .italian:         return "it-IT"
+        case .portuguese:      return "pt-BR"
+        case .japanese:        return "ja-JP"
+        case .korean:          return "ko-KR"
+        case .chineseMandarin: return "zh-CN"
+        case .cantonese:       return "yue-CN"
+        default:               return nil
+        }
+    }
+
+    /// Whether Apple's modern `SpeechTranscriber` supports this language at
+    /// all — i.e. Apple is a usable engine for it. The 10 languages with an
+    /// `appleLocaleIdentifier`. Apple is the DEFAULT engine for these;
+    /// FluidAudio/Parakeet is the optional upgrade where it also exists
+    /// (English + the 5 European overlaps) and the ONLY engine for the
+    /// European languages Apple lacks.
+    var isAppleSupported: Bool { appleLocaleIdentifier != nil }
 
     /// (English name, native endonym). Native == English where there is no
     /// distinct endonym (English).
@@ -72,6 +124,10 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         case .greek:      return ("Greek", "Ελληνικά")
         case .hungarian:  return ("Hungarian", "Magyar")
         case .swedish:    return ("Swedish", "Svenska")
+        case .japanese:        return ("Japanese", "日本語")
+        case .korean:          return ("Korean", "한국어")
+        case .chineseMandarin: return ("Chinese (Mandarin)", "中文（简体）")
+        case .cantonese:       return ("Cantonese", "粵語")
         }
     }
 
@@ -114,6 +170,10 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         // v3-supported but no FluidAudio hint case → auto-detect.
         case .danish, .dutch, .finnish, .greek, .hungarian, .swedish:
             return nil
+        // Apple-only — FluidAudio has no model at all, so there is no
+        // script hint to give it; these never reach a FluidAudio call.
+        case .japanese, .korean, .chineseMandarin, .cantonese:
+            return nil
         }
     }
 
@@ -147,6 +207,10 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         case .greek:      return "el"
         case .hungarian:  return "hu"
         case .swedish:    return "sv"
+        case .japanese:        return "ja"
+        case .korean:          return "ko"
+        case .chineseMandarin: return "zh"
+        case .cantonese:       return "yue"
         }
     }
 
@@ -243,6 +307,10 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         case "el": return .greek
         case "hu": return .hungarian
         case "sv": return .swedish
+        case "ja": return .japanese
+        case "ko": return .korean
+        case "zh": return .chineseMandarin
+        case "yue": return .cantonese
         default:   return nil
         }
     }

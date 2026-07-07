@@ -114,6 +114,16 @@ enum CrossProcessNotification {
         rawValue: "com.vineetu.jot.mobile.warm-hold-nudge-changed"
     )
 
+    /// Posted by the main app when the Parakeet-upgrade nudge state flips
+    /// (deferred-engineering follow-up to the Apple Dictation A/B spike). The
+    /// keyboard can't run the dictation-count math, so the app writes the
+    /// `AppGroup.showParakeetUpgradeNudge` boolean projection and posts this
+    /// so the keyboard re-reads and renders (or hides) the nudge. Mirrors the
+    /// `warmHoldNudgeChanged` projection + notification pattern.
+    static let parakeetUpgradeNudgeChanged = Name(
+        rawValue: "com.vineetu.jot.mobile.parakeet-upgrade-nudge-changed"
+    )
+
     /// Posted by the app AFTER it writes the keyboard correction "asks" to the
     /// App Group (which happens a beat after the clipboard publish + paste). The
     /// keyboard shows its quick-review nudge on THIS signal, not at paste time —

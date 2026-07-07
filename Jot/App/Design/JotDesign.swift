@@ -791,6 +791,12 @@ extension JotDesign {
 
         /// `#D14158` — Settings/Wizard Acknowledgements row icon shaded bottom color.
         static let acknowledgementsShaded = Color(red: 0xD1 / 255, green: 0x41 / 255, blue: 0x58 / 255)
+
+        /// `#1A8CFF` — Settings "Jot for Mac" row icon top color (brand blue).
+        static let macApp = Color(red: 0x1A / 255, green: 0x8C / 255, blue: 0xFF / 255)
+
+        /// `#1573D1` — Settings "Jot for Mac" row icon shaded bottom color.
+        static let macAppShaded = Color(red: 0x15 / 255, green: 0x73 / 255, blue: 0xD1 / 255)
     }
 }
 

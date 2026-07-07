@@ -288,6 +288,13 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// actions write the App-Group flags back and clear via `hub.clearWarmHoldNudge`.
     private var showWarmHoldNudge: Bool { hub.showWarmHoldNudge }
 
+    /// Whether the Parakeet-upgrade nudge should render on the strip
+    /// (deferred-engineering follow-up to the Apple Dictation A/B spike).
+    /// Owned by `KeyboardStreamingHub` (mirrored on `parakeetUpgradeNudgeChanged`);
+    /// read through here. The two terminal actions write the App-Group flags
+    /// back and clear via `hub.clearParakeetUpgradeNudge`.
+    private var showParakeetUpgradeNudge: Bool { hub.showParakeetUpgradeNudge }
+
     /// Whether the post-paste correction quick-review strip should render. Owned
     /// by `KeyboardStreamingHub` — set by `hub.maybeShowCorrectionNudge` (paste-
     /// time) or the `correctionAsksReady` feed; cleared on finish/dismiss.
@@ -674,6 +681,8 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             onResumeRecording: { [weak self] in self?.handleResumeRecording() },
             onWarmHoldNudgeKeepMicReady: { [weak self] in self?.handleWarmHoldNudgeAccept() },
             onWarmHoldNudgeDismiss: { [weak self] in self?.handleWarmHoldNudgeDismiss() },
+            onParakeetUpgradeNudgeUpgrade: { [weak self] in self?.handleParakeetNudgeUpgrade() },
+            onParakeetUpgradeNudgeDismiss: { [weak self] in self?.handleParakeetNudgeDismiss() },
             onCorrectionVerdict: { [weak self] key, verdict in
                 guard let self, let a = self.correctionAsks else { return }
                 CorrectionBridge.enqueueVerdict(
@@ -725,6 +734,7 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         keyboardInputs.isStopRequestPending = stopRequestPosted
         keyboardInputs.statusBanner = statusBanner
         keyboardInputs.showWarmHoldNudge = showWarmHoldNudge
+        keyboardInputs.showParakeetUpgradeNudge = showParakeetUpgradeNudge
         // v2 retheme (2026-05-11): host's `keyboardAppearance` hint.
         // Some hosts (dark Mail, dark Notes, Spotlight) force `.dark`
         // even when the system itself is in light mode. We pass the
@@ -808,6 +818,36 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         // re-renders this controller — no separate `renderRootView()` needed.
         hub.clearWarmHoldNudge()
         CrossProcessNotification.post(name: CrossProcessNotification.warmHoldNudgeChanged)
+    }
+
+    /// Accept the Parakeet-upgrade nudge (deferred-engineering follow-up to
+    /// the Apple Dictation A/B spike). Opens the main app's upgrade screen via
+    /// a deep link — the actual engine switch happens there, not here; this
+    /// controller only navigates and resolves its own nudge render state.
+    private func handleParakeetNudgeUpgrade() {
+        keyboardLog.info("Parakeet-upgrade nudge: opening upgrade screen")
+        if let url = URL(string: "jot://upgrade-engine") {
+            extensionContext?.open(url)
+        }
+        resolveParakeetUpgradeNudge()
+    }
+
+    /// Dismiss the Parakeet-upgrade nudge. One tap, no confirm: set the
+    /// permanent decline flag so it never shows again, then clear + post.
+    private func handleParakeetNudgeDismiss() {
+        AppGroup.parakeetNudgeDeclined = true
+        resolveParakeetUpgradeNudge()
+    }
+
+    /// Shared terminal for both Parakeet-upgrade nudge actions: clear the
+    /// App-Group show flag, drop the hub render flag, post the cross-process
+    /// change, and re-render. Mirrors `resolveWarmHoldNudge`.
+    private func resolveParakeetUpgradeNudge() {
+        AppGroup.showParakeetUpgradeNudge = false
+        // `hub.clearParakeetUpgradeNudge()` fires the `onShouldRender` hook,
+        // which re-renders this controller — no separate `renderRootView()`.
+        hub.clearParakeetUpgradeNudge()
+        CrossProcessNotification.post(name: CrossProcessNotification.parakeetUpgradeNudgeChanged)
     }
 
     /// After a successful auto-paste, surface the correction quick-review strip

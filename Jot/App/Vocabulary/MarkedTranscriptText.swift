@@ -73,7 +73,10 @@ struct MarkedTranscriptText: UIViewRepresentable {
         // the proposed one, else the screen width less the body gutter.
         let width: CGFloat = {
             if let w = proposal.width, w > 0, w < .greatestFiniteMagnitude { return w }
-            return max(1, UIScreen.main.bounds.width - 36)
+            // No usable proposal: fall back to this view's own screen (not
+            // UIScreen.main, deprecated iOS 26) — 390pt if not yet in a window.
+            let screenWidth = uiView.window?.windowScene?.screen.bounds.width ?? 390
+            return max(1, screenWidth - 36)
         }()
         let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         return CGSize(width: width, height: ceil(fit.height))

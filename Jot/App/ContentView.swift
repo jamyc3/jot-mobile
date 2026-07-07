@@ -172,6 +172,20 @@ struct ContentView: View {
             // fresh session. Only the mic is released on close (AskView.onDisappear).
             AskView(controller: askController, navPath: $navPath)
         }
+        .sheet(isPresented: Bindable(router).showUpgradeEngine) {
+            // Parakeet-upgrade nudge deep-link destination (deferred-
+            // engineering follow-up to the Apple Dictation A/B spike).
+            UpgradeEngineView()
+        }
+        .sheet(isPresented: Bindable(router).showJotForMac) {
+            // Home popup's "Get Jot for Mac" destination (see
+            // `Router.showJotForMac`). Wrapped in a NavigationStack the same
+            // way the Help sheet is, so JotForMacView's back chevron has a
+            // stack to resolve `dismiss()` against.
+            NavigationStack {
+                JotForMacView()
+            }
+        }
         .onAppear {
             // External-keyboard hero — FIRST-APPEAR re-check (cold process). The
             // keyboard's `jot://dictate` bounce set `pendingExternalKeyboardHero`

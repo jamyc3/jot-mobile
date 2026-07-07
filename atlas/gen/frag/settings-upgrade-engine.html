@@ -1,0 +1,38 @@
+<!-- Upgrade-engine sheet (§5.2b): the destination of the keyboard's Parakeet
+     upgrade nudge (jot://upgrade-engine deep link). Medium detent bottom
+     sheet. "Use Jot's engine" flips English dictation from Apple to Jot's own
+     (Parakeet) — instant today (Parakeet is bundled; a download step attaches
+     once the bundle is stripped). "Keep Apple" is a permanent decline. Same
+     no-pressure tone as the donation card. -->
+
+<!-- dimmed home behind the sheet -->
+<div style="position:absolute;inset:0;background:rgba(0,0,0,0.28)"></div>
+
+<!-- medium-detent sheet pinned to the bottom -->
+<div style="position:absolute;left:0;right:0;bottom:0;height:52%;background:var(--jot-page-base);border-radius:22px 22px 0 0;box-shadow:0 -12px 40px rgba(0,0,0,0.25);display:flex;flex-direction:column">
+
+  <!-- grabber + Close -->
+  <div style="position:relative;height:44px;flex:none">
+    <div style="position:absolute;left:50%;top:9px;transform:translateX(-50%);width:36px;height:5px;border-radius:3px;background:rgba(120,120,128,0.4)"></div>
+    <span style="position:absolute;left:16px;top:11px;color:var(--jot-accent);font-size:17px">Close</span>
+  </div>
+
+  <div style="flex:1;display:flex;flex-direction:column;padding:6px 24px 24px">
+    <div style="font-size:24px;font-weight:600;letter-spacing:-0.4px;color:var(--jot-ink);margin-bottom:14px">More accurate dictation</div>
+
+    <div style="font-size:16px;line-height:1.5;color:var(--jot-ink-2)">Jot's own on-device engine is more precise for English. Switch to it — it runs fully on-device, and Apple's engine stays as a fallback.</div>
+
+    <div style="flex:1"></div>
+
+    <!-- primary: switch -->
+    <div style="height:52px;border-radius:999px;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));display:flex;align-items:center;justify-content:center;box-shadow:0 0 22px rgba(26,140,255,0.4);margin-bottom:6px">
+      <span style="color:#fff;font-size:17px;font-weight:600">Use Jot's engine</span>
+    </div>
+
+    <!-- secondary: keep apple -->
+    <div style="height:48px;display:flex;align-items:center;justify-content:center">
+      <span style="color:var(--jot-ink-2);font-size:17px">Keep Apple</span>
+    </div>
+  </div>
+
+</div>

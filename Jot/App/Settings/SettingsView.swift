@@ -31,6 +31,14 @@ struct SettingsView: View {
     /// re-prepares the transcription model (downloading if needed).
     @State private var dictationLanguage: String = AppGroup.transcriptionLanguage
 
+    /// Live per-device language capability (`DictationLanguageAvailability`). `nil`
+    /// until the first `.task` resolve completes — the language picker shows
+    /// every language while unresolved (never an empty picker) and the
+    /// Parakeet-download gate falls back to the old `!isEnglish` assumption
+    /// for that same brief window. RULE #1: never show a language, or a
+    /// "download Parakeet" affordance, that can't actually run on this device.
+    @State private var appleLangCodes: Set<String>?
+
     // Feature flag — HIDDEN for release (owner 2026-06-29). Flip to `true`
     // to re-expose; all underlying code is intact. (The TTS Playground is
     // instead revealed by tapping the Version row 5× — see `ttsLabRevealed`.)
@@ -76,6 +84,10 @@ struct SettingsView: View {
     @State private var ttsLabVersionTapCount: Int = 0
     @State private var ttsLabEnabled: Bool = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled)
     @State private var ttsService = TTSService.shared
+    /// EXPERIMENTAL A/B spike (2026-07-04, temporary): Apple SpeechTranscriber
+    /// vs FluidAudio Parakeet for English dictation, same CTC vocab boost on
+    /// top either way. See `AppleDictationEngine.swift`.
+    @State private var useAppleDictationForEnglish: Bool = AppGroup.useAppleDictationForEnglish
     /// Presents `VoiceCloneRecorderView` from the Lab's "Clone my voice" row.
     @State private var showVoiceCloneSheet: Bool = false
 
@@ -144,6 +156,12 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showVoiceCloneSheet) {
                 VoiceCloneRecorderView()
+            }
+            .task {
+                // `resolve()` is idempotent — cheap to re-await if the app
+                // already resolved it at launch (`JotApp`'s scene `.task`).
+                await DictationLanguageAvailability.resolve()
+                appleLangCodes = DictationLanguageAvailability.appleCodes
             }
         }
         // Soften every card's drop shadow throughout Settings by 50% (light mode
@@ -351,6 +369,35 @@ struct SettingsView: View {
         }
     }
 
+    /// Languages that actually work on this device (`DictationLanguageAvailability`).
+    /// Shows the full list while `appleLangCodes` hasn't resolved yet so the
+    /// picker is never empty; English is always kept regardless (it's always
+    /// available anyway — belt and suspenders against a resolve edge case).
+    private var availableLanguages: [LanguageChoice] {
+        guard let appleLangCodes else { return LanguageChoice.presentationOrder }
+        return LanguageChoice.presentationOrder.filter {
+            $0.isEnglish || DictationLanguageAvailability.isAvailable($0, appleCodes: appleLangCodes)
+        }
+    }
+
+    /// `LanguageChoice.recentLanguages`, filtered to what's available on this
+    /// device — Rule #1 applies to the Recent quick-switch too: a recent
+    /// language that no longer works here (e.g. a Parakeet-only European pick
+    /// on an iPad where Parakeet can't run) must not appear. Reuses
+    /// `availableLanguages` so the same unresolved/English-always behavior
+    /// applies without re-deriving it.
+    private var availableRecentLanguages: [LanguageChoice] {
+        LanguageChoice.recentLanguages.filter { availableLanguages.contains($0) }
+    }
+
+    /// Whether picking `lang` would show OUR Parakeet-download UI on this
+    /// device. Falls back to the pre-capability-check assumption
+    /// (`!isEnglish`) while `appleLangCodes` hasn't resolved yet.
+    private func showsParakeetDownload(_ lang: LanguageChoice) -> Bool {
+        guard let appleLangCodes else { return !lang.isEnglish }
+        return DictationLanguageAvailability.usesParakeetDownload(lang, appleCodes: appleLangCodes)
+    }
+
     /// Binding that persists the chosen language and re-prepares the model
     /// (downloading a European v3 model if it isn't on disk yet).
     private var languageBinding: Binding<String> {
@@ -377,6 +424,13 @@ struct SettingsView: View {
         let (text, tint): (String, Color) = {
             if lang.isEnglish {
                 return ("Built in — ready to use, no download.", Color.jotPageInkSecondary)
+            }
+            guard showsParakeetDownload(lang) else {
+                // Apple's on-device speech recognition handles this language
+                // on this device (or it's one of the 4 Apple-only CJK
+                // languages) — Apple manages its own speech-asset install
+                // silently, so there's no Parakeet download UI to show.
+                return ("Runs on this iPhone — no download needed.", Color.green)
             }
             switch TranscriptionService.shared.modelState {
             case .downloading(let f):
@@ -422,7 +476,7 @@ struct SettingsView: View {
             Menu {
                 // Quick-switch: the active language + recently used, up top.
                 Section("Recent") {
-                    ForEach(LanguageChoice.recentLanguages) { lang in
+                    ForEach(availableRecentLanguages) { lang in
                         Button {
                             languageBinding.wrappedValue = lang.rawValue
                         } label: {
@@ -436,7 +490,7 @@ struct SettingsView: View {
                 }
                 Section("All languages") {
                     Picker("Language", selection: languageBinding) {
-                        ForEach(LanguageChoice.presentationOrder) { lang in
+                        ForEach(availableLanguages) { lang in
                             Text(lang.displayName).tag(lang.rawValue)
                         }
                     }
@@ -938,6 +992,42 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Diarization Lab")
                         .accessibilityHint("Experimental speaker diarization for recordings.")
+
+                        cardDivider
+
+                        settingsIconRow(
+                            systemImage: "waveform",
+                            tint: JotDesign.JotSemanticIcon.version,
+                            shaded: JotDesign.JotSemanticIcon.versionShaded,
+                            title: "Use Apple speech engine",
+                            trailing: {
+                                Toggle("", isOn: Binding(
+                                    get: {
+                                        // Locked ON where Jot's own engine can't run
+                                        // (sub-14-Pro / non-M1) — Apple is the only option.
+                                        TranscriptionService.parakeetUsable ? useAppleDictationForEnglish : true
+                                    },
+                                    set: { useAppleDictationForEnglish = $0 }
+                                ))
+                                .labelsHidden()
+                                .tint(Color(red: 0x34 / 255, green: 0xC7 / 255, blue: 0x59 / 255))
+                                .disabled(!TranscriptionService.parakeetUsable)
+                                .onChange(of: useAppleDictationForEnglish) { _, newValue in
+                                    AppGroup.useAppleDictationForEnglish = newValue
+                                    if newValue {
+                                        Task { await TranscriptionService.shared.preinstallAppleAssets() }
+                                    } else {
+                                        // Turning Apple OFF == taking the Parakeet upgrade;
+                                        // clear the nudge + reset the count so it matches the
+                                        // nudge's own switch path.
+                                        AppGroup.showParakeetUpgradeNudge = false
+                                        DictationStats.resetAppleDictationCount()
+                                        CrossProcessNotification.post(name: CrossProcessNotification.parakeetUpgradeNudgeChanged)
+                                    }
+                                }
+                                .accessibilityLabel("Use Apple speech engine")
+                            }
+                        )
                     }
 
                     cardDivider
@@ -976,6 +1066,24 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Donations")
                     .accessibilityHint("Opens Donations")
+
+                    cardDivider
+
+                    NavigationLink {
+                        JotForMacView()
+                    } label: {
+                        settingsIconRow(
+                            systemImage: "laptopcomputer",
+                            tint: JotDesign.JotSemanticIcon.macApp,
+                            shaded: JotDesign.JotSemanticIcon.macAppShaded,
+                            title: "Jot for Mac",
+                            subline: "Dictate on your Mac too",
+                            trailing: { RowChevron() }
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Jot for Mac")
+                    .accessibilityHint("Opens the Jot for Mac screen")
 
                     cardDivider
 

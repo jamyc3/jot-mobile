@@ -30,6 +30,8 @@ enum DictationStats {
     private static let didMigrateMilestoneKey = "jot.stats.didMigrateDonationMilestone"
     private static let perDaySecondsKey = "jot.stats.perDaySeconds"
     private static let perDayCountKey = "jot.stats.perDayCount"
+    private static let appleDictationCountKey = "jot.stats.appleDictationCount"
+    private static let macAppPromoSeenKey = "jot.stats.macAppPromoSeen"
 
     // MARK: - Tuning constants
 
@@ -186,6 +188,63 @@ enum DictationStats {
         countsByDay = countsByDay.filter { keysToKeep.contains($0.key) }
         defaults.set(secondsByDay, forKey: perDaySecondsKey)
         defaults.set(countsByDay, forKey: perDayCountKey)
+    }
+
+    // MARK: - Parakeet-upgrade nudge
+
+    /// Count of completed, non-transient, English dictations that ran on
+    /// Apple's on-device engine (vs Jot's own Parakeet). Drives the
+    /// Parakeet-upgrade nudge (deferred-engineering follow-up to the Apple
+    /// Dictation A/B spike) — once this crosses threshold on an eligible
+    /// device, the keyboard's one-time "switch to Jot's own engine" strip
+    /// arms. See `DictationPipeline.completeEndOfRecording`.
+    static var appleDictationCount: Int {
+        AppGroup.defaults.integer(forKey: appleDictationCountKey)
+    }
+
+    /// Increment the Apple-engine dictation counter. Called once per
+    /// completed, non-transient, English-on-Apple dictation.
+    static func incrementAppleDictationCount() {
+        AppGroup.defaults.set(appleDictationCount + 1, forKey: appleDictationCountKey)
+    }
+
+    /// Reset the Apple-engine dictation counter to zero. Called whenever the
+    /// user switches OFF Apple (to Parakeet) — via the nudge or the Settings
+    /// toggle — so that if they later re-enable Apple the upgrade nudge
+    /// doesn't re-arm on the very next dictation (Opus nudge review E2).
+    static func resetAppleDictationCount() {
+        AppGroup.defaults.set(0, forKey: appleDictationCountKey)
+    }
+
+    // MARK: - Jot for Mac promo
+
+    /// Cumulative recorded dictation time (seconds) at which the one-time
+    /// "Jot is on your Mac too" home prompt is allowed to fire. Unlike the
+    /// donation card's repeating milestones, this crosses exactly once —
+    /// there's only one Mac app to point at, so there's nothing to re-ask.
+    static let macAppPromoThresholdSeconds: TimeInterval = 60 * 60
+
+    /// True once the user has seen the Mac-app prompt and acted on it
+    /// (either "Take me there" or "Not now" — both terminal). Persisted in
+    /// the App Group so a keyboard-only user's dictations still count
+    /// toward the threshold even if they never open the app before it
+    /// crosses (see the file-level doc on why stats live in the App Group).
+    static var macAppPromoSeen: Bool {
+        get { AppGroup.defaults.bool(forKey: macAppPromoSeenKey) }
+        set { AppGroup.defaults.set(newValue, forKey: macAppPromoSeenKey) }
+    }
+
+    /// True when the one-time Mac-app home prompt should appear: cumulative
+    /// recorded dictation time has crossed the threshold and it hasn't been
+    /// shown yet.
+    static var shouldShowMacAppPromo: Bool {
+        !macAppPromoSeen && totalSeconds >= macAppPromoThresholdSeconds
+    }
+
+    /// Record that the user has seen + acted on the Mac-app prompt so it
+    /// never fires again.
+    static func acknowledgeMacAppPromo() {
+        macAppPromoSeen = true
     }
 
     // MARK: - Donation prompt gating (incremental milestones)

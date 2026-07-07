@@ -231,13 +231,26 @@ final class RecordingService {
     // `stop()`/`internalStop()`/`forceStop()` via `tearDownStreamingSession()`.
     private var streamingQueue: StreamingBufferQueue?
 
-    // Batch-only-streaming preview (docs/plans/batch-only-streaming.md).
-    // Consumes the `streamingQueue` the tap pushes into. When
-    // `AppGroup.liveTextSetting` resolves OFF, the scheduler doesn't start and
-    // the queue is closed immediately (pushes drop; zero inference during
-    // dictation capture).
-    private var previewScheduler: PreviewScheduler?
+    // Live-preview streaming session (docs/dictation-engine-rework/design.md).
+    // Consumes the `streamingQueue` the tap pushes into. Concrete type is
+    // either FluidAudio's `PreviewScheduler` (batch pseudo-streaming) or
+    // `AppleStreamingSession` (native SpeechAnalyzer streaming), chosen by
+    // `TranscriptionService.makeStreamingSession` — RecordingService only
+    // ever talks to it through the `StreamingSession` protocol. When
+    // `AppGroup.liveTextSetting` resolves OFF, no session starts and the
+    // queue is closed immediately (pushes drop; zero inference during
+    // dictation capture). Name kept as `previewScheduler` (historical) to
+    // avoid an unnecessary rename across every teardown call site.
+    private var previewScheduler: (any StreamingSession)?
     private var previewDrainTask: Task<Void, Never>?
+    /// Monotonic generation for streaming sessions. Every teardown site bumps it
+    /// (tearDownStreamingSession covers stop/cancel/pause; forceStop and
+    /// internalStop bump inline where they snapshot-and-nil the refs).
+    /// `kickOffStreamingSession` snapshots it before the async factory and
+    /// discards the built session if any teardown intervened — the discarded
+    /// session is drained+quiesced on its own detached task so the analyzer and
+    /// its startTask/resultsTask never leak (adversarial review H1).
+    private var streamingGeneration: UInt64 = 0
     /// Polls the batch model's `modelState` while a batch streaming session is
     /// active so the keyboard's "Loading …" affordance can be cleared the
     /// moment the model is ready. See `beginBatchLoadLabelMirror()`.
@@ -388,6 +401,9 @@ final class RecordingService {
     // recording. Mirrors prototype `DualRecorder.swift:151-167` (kickoff)
     // and `:271-291` (teardown).
 
+    /// Outcome of a `kickOffStreamingSession` call (adversarial review H1).
+    enum StreamingKickoffOutcome { case installed, skipped, stale }
+
     /// Spins up the batch `PreviewScheduler` draining the caller-supplied
     /// queue, registers it, and spawns the drain task. Best-effort — returns
     /// silently if the caller has no presenter (headless paths) or live-text
@@ -396,18 +412,24 @@ final class RecordingService {
     /// Caller MUST allocate `streamingQueue` BEFORE `installTap` so the
     /// tap closure has a queue to push into; this method consumes that
     /// pre-allocated queue.
-    private func kickOffStreamingSession() async {
+    ///
+    /// - Parameter resumePrefix: the committed pre-pause prefix (§10.5),
+    ///   seeded onto the presenter BEFORE the factory await so the strip
+    ///   never blanks while a (possibly slow, Apple asset-install) factory
+    ///   runs. Nil for a cold/warm start.
+    @discardableResult
+    private func kickOffStreamingSession(resumePrefix: String? = nil) async -> StreamingKickoffOutcome {
         guard let presenter = streamingPresenter else {
             // Close the queue so tap pushes drop instead of accumulating
             // unconsumed samples for the whole recording (~3.8 MB/min) —
             // pre-existing leak surfaced by review minor #4.
             streamingQueue?.endOfStream()
             log.notice("kickOffStreamingSession skipped — no streaming presenter (headless caller)")
-            return
+            return .skipped
         }
         guard let queue = streamingQueue else {
             log.notice("kickOffStreamingSession skipped — queue not pre-allocated")
-            return
+            return .skipped
         }
         // "Live text while dictating" OFF: start neither consumer and close
         // the queue so tap pushes drop (StreamingBufferQueue.push guards on
@@ -426,14 +448,40 @@ final class RecordingService {
         guard DeviceCapability.liveTextEnabled || ownsActiveRecording else {
             queue.endOfStream()
             log.notice("Live-text preview disabled — queue closed, no preview consumer")
-            return
+            return .skipped
         }
         let sessionID = presenter.beginSession()
-        let scheduler = PreviewScheduler(
+        // Resume (§10.5): show the committed prefix IMMEDIATELY — before the
+        // factory await — so the strip never blanks while the (possibly slow,
+        // Apple asset-install) factory runs. `beginSession()` just cleared
+        // any prior resume prefix, so this ordering is the load-bearing one
+        // (review M1).
+        if let resumePrefix, !resumePrefix.isEmpty {
+            presenter.seedResumePrefix(resumePrefix)
+        }
+        // H1 guard: snapshot the generation; any teardown during the await
+        // bumps it, and we must NOT install a session onto a terminated
+        // recording.
+        let generation = streamingGeneration
+        let scheduler = await TranscriptionService.shared.makeStreamingSession(
             queue: queue,
             presenter: presenter,
             sessionID: sessionID
         )
+        guard generation == streamingGeneration else {
+            // A teardown ran mid-factory. It already EOS'd the queue and
+            // cleared the presenter token, so: dispose of the just-built
+            // session through its NORMAL lifecycle (drain returns after
+            // flushing any pre-EOS samples into the engine, then quiesce
+            // finalizes and joins startTask/resultsTask) and walk away.
+            // Detached: disposal must not block, and must not touch self.
+            log.notice("kickOffStreamingSession stale — recording torn down during engine construction; disposing session")
+            Task.detached {
+                await scheduler.drain()
+                await scheduler.quiesce()
+            }
+            return .stale
+        }
         self.previewScheduler = scheduler
         self.previewDrainTask = Task.detached(priority: .userInitiated) {
             await scheduler.drain()
@@ -443,22 +491,17 @@ final class RecordingService {
         // a cold 600M load shows an empty "Listening…" on the strip with no
         // progress (the live preview can't produce text until the model is
         // ready). `warmUp()` is idempotent; the hero reads modelState
-        // directly so it needs no mirror.
-        TranscriptionService.shared.warmUp()
-        beginBatchLoadLabelMirror()
-        // [PREVIEW-DIAG] In-app log — correlate the session token + model
-        // state with the scheduler's drain/tick + StreamingPartial's
-        // PUBLISH/DROP entries (sid match proves the token lines up across a
-        // stretch of dictations). Remove once diagnosed.
-        DiagnosticsLog.record(
-            source: "main-app", category: .streamingPartialReceived,
-            message: "preview session start",
-            metadata: [
-                "sid": String(sessionID.uuidString.prefix(8)),
-                "modelState": String(describing: TranscriptionService.shared.modelState),
-                "liveText": "\(DeviceCapability.liveTextEnabled)",
-            ]
-        )
+        // directly so it needs no mirror. Gated on `usesBatchModel` (Step 5g)
+        // so an Apple session — which has no 600M load — never warms or
+        // mirrors one.
+        if scheduler.usesBatchModel {
+            TranscriptionService.shared.warmUp()
+            beginBatchLoadLabelMirror()
+        } else {
+            // Apple session active: no 600M load to warm or mirror.
+            endBatchLoadLabelMirror()
+        }
+        return .installed
     }
 
     // MARK: - Batch model-load affordance for the keyboard
@@ -545,6 +588,12 @@ final class RecordingService {
     /// Always nils `streamingQueue` last so a no-engine, queue-only state
     /// (kickoff failed mid-recording) still cleans up properly.
     private func tearDownStreamingSession() async {
+        // H1 guard: bump first so a `kickOffStreamingSession` suspended in
+        // its factory await (racing this teardown) observes a stale
+        // generation and disposes its just-built session instead of
+        // installing onto a torn-down recording.
+        streamingGeneration &+= 1
+
         // Always signal the queue (covers the kickoff-failed orphan case
         // where `streamingEngine == nil` but `streamingQueue != nil` —
         // tap closures may have pushed samples that nothing consumes).
@@ -565,6 +614,14 @@ final class RecordingService {
             // disables rescheduling so no zombie inference starts while
             // the saving stop-pass runs.
             await scheduler.quiesce()
+            // D2 promote (Step 6): hand the session's save-quality artifact
+            // (if it can vouch for full coverage) to the stop-pass.
+            // PreviewScheduler always returns nil; a partial (pause-slice)
+            // artifact is harmless — its sample count can never match the
+            // full capture, so the stop-pass ignores it and the FINAL
+            // slice's deposit (or nil) overwrites it anyway.
+            let artifact = await scheduler.stopArtifact()
+            TranscriptionService.shared.depositStreamingArtifact(artifact)
             if let presenter = streamingPresenter {
                 presenter.clearSession()
                 let assembled = await scheduler.assembledText()
@@ -578,6 +635,15 @@ final class RecordingService {
         }
 
         // Kickoff never completed (no scheduler) — just release the queue.
+        // Clear the presenter token too: no-op/idempotent when nothing was
+        // ever seeded, but required in the headless / live-text-off cases
+        // that also reach this branch (H1 stale-update half).
+        streamingPresenter?.clearSession()
+        // D2 amendment (Opus review MEDIUM-2): disarm here too, so "every
+        // teardown either arms or disarms the artifact" is literally true —
+        // a stale artifact from a prior toggle-flipped recording can never
+        // survive into this no-scheduler branch.
+        TranscriptionService.shared.depositStreamingArtifact(nil)
         self.streamingQueue = nil
     }
 
@@ -1094,19 +1160,14 @@ final class RecordingService {
 
         log.info("Recording resumed; committed prefix chars=\(self.committedStreamingPrefix.count, privacy: .public)")
 
-        // Spin up the fresh streaming session against the new queue, THEN
-        // seed the committed prefix. Ordering is load-bearing:
-        // `kickOffStreamingSession()` calls `presenter.beginSession()`, which
-        // clears `resumePrefix`; seeding afterward means the first post-resume
-        // partial renders as `prefix + newPartial` rather than restarting from
-        // empty.
+        // Spin up the fresh streaming session against the new queue, seeding
+        // the committed prefix INSIDE the kickoff — before the factory await
+        // (Step 1d) rather than after it, so the strip never blanks while a
+        // slow factory runs and the `.stale` path can never re-seed text onto
+        // a since-stopped recording (H1/M1).
         let prefix = committedStreamingPrefix
         Task { [weak self] in
-            guard let self else { return }
-            await self.kickOffStreamingSession()
-            if !prefix.isEmpty {
-                self.streamingPresenter?.seedResumePrefix(prefix)
-            }
+            await self?.kickOffStreamingSession(resumePrefix: prefix)
         }
     }
 
@@ -1173,8 +1234,7 @@ final class RecordingService {
 
     /// Installs the audio tap on `engine.inputNode` with the canonical Jot
     /// tap block (RMS amplitude → ~30Hz MainActor publication + 100ms
-    /// AppGroup amplitude projection + first-buffer diagnostic log gated by
-    /// `TapOnceGate`).
+    /// AppGroup amplitude projection).
     ///
     /// The `@Sendable` annotation on `tapBlock` is load-bearing — see the
     /// pre-factor history of this file at HEAD~ for the full diagnostic
@@ -1186,15 +1246,10 @@ final class RecordingService {
         hardwareFormat: AVAudioFormat
     ) {
         let input = engine.inputNode
-        let tapOnce = TapOnceGate()
         let amplitudeGate = AmplitudeGate(intervalMS: 33)
         let appGroupAmplitudeGate = AmplitudeGate(intervalMS: 100)
-        let tapLog = log
         let router = tapRouter
-        let tapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { [router, tapOnce, amplitudeGate, appGroupAmplitudeGate, tapLog, weak self] pcm, _ in
-            if tapOnce.fireOnce() {
-                tapLog.debug("[recording] first tap callback on \(Thread.current.description, privacy: .public)")
-            }
+        let tapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { [router, amplitudeGate, appGroupAmplitudeGate, weak self] pcm, _ in
             // Single converter pass when a slice is active: the router sends
             // the buffer to the current `CaptureContext` and streaming queue.
             // While warm-held and idle, it drops the buffer before conversion,
@@ -1366,7 +1421,6 @@ final class RecordingService {
     }
 
     private func enterWarmHold(duration: TimeInterval) {
-        log.notice("[WARM-HOLD-DEBUG] enterWarmHold called, isPipelineInFlight=\(self.isPipelineInFlight, privacy: .public)")
 
         guard let engine else {
             log.error("Warm-hold entry requested without an engine; fully tearing down.")
@@ -1393,7 +1447,6 @@ final class RecordingService {
                 return
             }
             guard let self, self.isWarm, !self.isCapturingSlice else { return }
-            self.log.notice("[WARM-HOLD-DEBUG] cooldown timer fired")
             self.exitWarmHold()
         }
 
@@ -1409,7 +1462,6 @@ final class RecordingService {
 
         if isPipelineInFlight {
             pendingWarmHoldPublish = true
-            log.notice("[WARM-HOLD-DEBUG] publication deferred until pipeline finishes")
             return
         }
 
@@ -1440,8 +1492,6 @@ final class RecordingService {
         )
         CrossProcessNotification.post(name: CrossProcessNotification.pipelinePhaseChanged)
         startLivenessStampingIfNeeded()
-
-        log.notice("[WARM-HOLD-DEBUG] warm state published, expiresAt=\(warmExpiresAt.timeIntervalSince1970, privacy: .public)")
     }
 
     // MARK: - Warm-hold mic yielding
@@ -1532,7 +1582,6 @@ final class RecordingService {
         fullyTeardownEngine()
 
         if wasWarm {
-            log.notice("[WARM-HOLD-DEBUG] warm hold exited / cooled")
             log.info("Warm hold exited; audio session restored.")
         }
     }
@@ -1767,6 +1816,10 @@ final class RecordingService {
         // a follow-up `start()` that might mutate the streaming fields
         // while the dispatched teardown is mid-flight. `self` mutation has
         // already happened above; the Task is operating on its own snapshots.
+        // H1 guard: bump before snapshotting so a kickoff mid-factory-await
+        // observes a stale generation and disposes its session instead of
+        // installing onto this now-terminated recording.
+        streamingGeneration &+= 1
         let streamingQueueRef = self.streamingQueue
         let streamingPresenterRef = self.streamingPresenter
         let previewSchedulerRef = self.previewScheduler
@@ -1778,6 +1831,10 @@ final class RecordingService {
         // so a force-stop / interruption during a cold load doesn't leave a
         // stale loading label for the next (possibly warm) session.
         endBatchLoadLabelMirror()
+        // Clear the presenter token synchronously too (H1 stale-update half) —
+        // idempotent alongside the detached Task's own clearSession() below,
+        // which still runs for the has-scheduler case.
+        streamingPresenterRef?.clearSession()
         if streamingQueueRef != nil || previewSchedulerRef != nil {
             Task.detached { [streamingQueueRef, streamingPresenterRef, previewSchedulerRef, previewDrainTaskRef] in
                 streamingQueueRef?.endOfStream()
@@ -1822,7 +1879,6 @@ final class RecordingService {
     }
 
     func markPipelineFinished() {
-        log.notice("[WARM-HOLD-DEBUG] markPipelineFinished, pendingWarmHoldPublish=\(self.pendingWarmHoldPublish, privacy: .public)")
         isPipelineInFlight = false
         // Robustness backstop (warm-resume "won't stop" regression): clear inline
         // ownership at every pipeline terminal so no LATER capture inherits a
@@ -2644,6 +2700,10 @@ final class RecordingService {
         // abruptly on interruption;
         // batch path is unaffected (the dispatch phase below still runs
         // through `RecordingPipelineDispatch`).
+        // H1 guard: bump before snapshotting so a kickoff mid-factory-await
+        // observes a stale generation and disposes its session instead of
+        // installing onto this now-terminated recording.
+        streamingGeneration &+= 1
         let streamingQueueRef = self.streamingQueue
         let streamingPresenterRef = self.streamingPresenter
         let previewSchedulerRef = self.previewScheduler
@@ -2655,6 +2715,10 @@ final class RecordingService {
         // so a force-stop / interruption during a cold load doesn't leave a
         // stale loading label for the next (possibly warm) session.
         endBatchLoadLabelMirror()
+        // Clear the presenter token synchronously too (H1 stale-update half) —
+        // idempotent alongside the detached Task's own clearSession() below,
+        // which still runs for the has-scheduler case.
+        streamingPresenterRef?.clearSession()
         if streamingQueueRef != nil || previewSchedulerRef != nil {
             Task.detached { [streamingQueueRef, streamingPresenterRef, previewSchedulerRef, previewDrainTaskRef] in
                 streamingQueueRef?.endOfStream()
@@ -2915,24 +2979,6 @@ private final class AudioTapRouter: @unchecked Sendable {
 /// the `@unchecked` escape hatch being required for correctness.
 ///
 /// This exists purely to bound the diagnostic `log.debug` at the top of the
-/// tap closure to a single invocation — we want the queue identity confirmed
-/// on-device once, without emitting per-buffer (~12/sec at 4096@48kHz) log
-/// traffic on the audio-render thread for the lifetime of the recording.
-/// Remove alongside the diagnostic once the fix is verified on-device.
-private final class TapOnceGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fired = false
-
-    /// Returns `true` exactly once; every subsequent call returns `false`.
-    func fireOnce() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !fired else { return false }
-        fired = true
-        return true
-    }
-}
-
 /// Single-resume guard for the warm-resume first-buffer race (Bug 1). The
 /// router fires the first-buffer signal from the audio thread while a watchdog
 /// `Task.sleep` may simultaneously time out; both call `complete(_:)` but only
