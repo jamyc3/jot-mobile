@@ -1,6 +1,6 @@
 # Model externalization — sub-50 MB app
 
-**Status: PLANNED — adversarially reviewed 2026-07-06; all must-fixes folded in below (marked ⚠️REVIEW). Awaiting owner approval.**
+**Status: SHIPPED to TestFlight & owner-validated. Build A (carry-forward-all) = 256/257, submitted to App Store review 2026-07-07. Build B (strip-all) = 258, cut with `scripts/strip-models.sh`, uploaded to TestFlight, and owner-verified on a FRESH install 2026-07-07: 44 MB app, instant Apple dictation, vocab-enable CTC download works, Ask/EmbeddingGemma on-demand download works. Committed at `a9c4b6c`. Build B must NOT reach the App Store until 256/257 ships and soaks ≥1 update cycle (memory: `v2-strip-release-sequencing`). Original plan (adversarially reviewed 2026-07-06) preserved below.**
 
 Review verdict: mechanism sound; one BLOCKER (B1, silently-inert vocab for
 skip-A/restore users — fixed via the launch auto-trigger below), the overnight
@@ -333,8 +333,9 @@ submission. Two options:
   presence (Gemma3BundleDownloader.swift:410-424) — carry-forward, the
   background fetch, and `resolvedModelDirectory()` all converge on that path
   as the plan assumes.
-- **V3 — CTC downloadAndLoad end-to-end** on a sim/device with the bundle
-  moved aside (the `/tmp/jot-vocab-probe` harness can be revived).
+- ~~V3~~ ✅ **VERIFIED 2026-07-07 (owner device, Build B / 258).** CTC
+  downloadAndLoad end-to-end on a fresh stripped install: enabling vocabulary
+  triggers the download and boosting works. The last unverified gate is closed.
 - ~~V4~~ ⚠️REVIEW: re-scoped — the app-delegate adaptor does NOT exist and is
   a build item (work item 4), not a verification.
 - ~~V5~~ ⚠️REVIEW: re-scoped — verified absent; the model-arrival backfill
@@ -393,12 +394,17 @@ Adversarially reviewed post-implementation: **no blockers; ship-ready for the
   unprompted fetch. Now gated on a one-shot unmetered-path check
   (`JotApp.currentPathIsUnmetered()`); metered ⇒ park + retry next launch;
   the vocab-Settings row stays the user-initiated any-network path.
-- **MEDIUM (OPEN — harden before/with Build B)**: the Ask foreground-promote
-  and the overnight fetcher can theoretically race the same install dir in a
-  narrow window (fresh Build B installs only; self-healing — one failed
-  foreground attempt, retry succeeds). Preferred fix: a fetcher
-  "suspend-install" flag set by the promote, or await the cancel before the
-  foreground download starts.
+- **MEDIUM (OPEN — theoretical, deprioritized)**: the Ask foreground-promote
+  and the overnight fetcher can race the same install dir in a narrow window
+  (fresh Build B installs only; self-healing — one failed foreground attempt,
+  retry succeeds). **Shipped behavior (owner-confirmed 2026-07-07):** when Ask
+  has un-indexed notes and EmbeddingGemma is absent, Ask surfaces a choice —
+  download the model now *with the user's permission*, or defer to the
+  overnight/later fetch. That permission gate is the foreground-promote path;
+  the race is between it and the discretionary fetcher, only in the sliver
+  where both fire at once, and it self-heals on retry. Owner is fine leaving it
+  as-is for now; preferred hardening if ever needed: a fetcher "suspend-install"
+  flag set by the promote, or await the cancel before the foreground download.
 
 ## Risks
 
