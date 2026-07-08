@@ -282,6 +282,7 @@ struct DiagnosticsView: View {
         case .modelLoad: return ("MODEL", Color.jotAccent)
         case .appleDictation: return ("APPLE", Color.jotAccent)
         case .vocabularySaveFailed: return ("VOCAB/SAVE", Color.jotWarning)
+        case .diarization: return ("DIARIZE", Color.jotAccent)
         }
     }
 

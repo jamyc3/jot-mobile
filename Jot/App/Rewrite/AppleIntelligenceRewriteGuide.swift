@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Shown when Jot's on-device rewrite model (Qwen) is NOT downloaded but the device
-/// HAS Apple Intelligence (features.md §7.10). Instead of pushing the 2.5 GB download,
-/// we teach the free **system Writing Tools** path: the transcript text is already
-/// selectable (§3.3), so the user can select it → tap the Writing Tools item → choose
-/// Rewrite / Make Concise / Proofread → Copy (or Edit here first to save the result).
+/// Shown when the user's rewrite engine is Apple Intelligence (features.md §7.10).
+/// Instead of running the rewrite for them, Jot enters a read-only **selection
+/// mode** that pre-selects the whole transcript, then this sheet teaches the free
+/// **system Writing Tools** path: tap the selection → Writing Tools → choose Key
+/// Points / Summary / Rewrite → Copy. The full-transcript selection is applied on
+/// this sheet's DISMISS (see `TranscriptDetailView.applyFullRangeSelection`).
 ///
 /// Pure guidance — no engine, no model, no network. The download remains available as
 /// a secondary link for users who want one-tap rewrites with their own saved prompts.
@@ -45,10 +46,10 @@ struct AppleIntelligenceRewriteGuide: View {
                 .padding(.top, 4)
                 .padding(.bottom, 22)
 
-            step(1, "**Select** the transcript text.")
-            step(2, "Tap the **Writing Tools** item in the popup menu.")
-            step(3, "Choose **Rewrite**, **Make Concise**, **Proofread**, and more.")
-            step(4, "**Copy** the result to use it — or tap **Edit** here first to **save** it to this transcript.")
+            step(1, "We've **selected the whole transcript** for you.")
+            step(2, "**Tap the selection** to bring up the menu.")
+            step(3, "Tap **Writing Tools** and choose **Key Points**, **Summary**, **Rewrite**, and more.")
+            step(4, "**Copy** the result to use it anywhere.")
 
             Spacer(minLength: 16)
 

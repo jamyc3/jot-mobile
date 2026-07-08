@@ -61,6 +61,15 @@ enum RetainedAudioStore {
                 try? FileManager.default.removeItem(at: url)
             }
             try FileManager.default.copyItem(at: src, to: url)
+            // `copyItem` preserves the SOURCE file's modification date, but the
+            // whole store keys expiry off mtime (`isExpired`) — so an imported
+            // file recorded more than `retentionDays` ago would be retained
+            // already-expired: no Re-transcribe/Detect-speakers affordance,
+            // purged at next launch. The retention window must start when the
+            // audio ENTERS Jot, not when it was recorded — stamp mtime to now.
+            try? FileManager.default.setAttributes(
+                [.modificationDate: Date()], ofItemAtPath: url.path
+            )
             excludeFromBackup(url)
         } catch {
             log.error("retain copy failed: \(error.localizedDescription, privacy: .public)")

@@ -147,6 +147,12 @@ enum DiagnosticsCategory: String, Codable {
     /// a "my term disappeared" report is diagnosable from Help →
     /// Diagnostics instead of guessed at.
     case vocabularySaveFailed
+    /// Speaker-diarization trace for the share-import auto-diarize path: a
+    /// skip (transcriber/recorder busy — enhancement, not a gate), a persisted
+    /// multi-speaker result, a single-speaker no-op, or a failure. Lets a
+    /// "shared a call recording but got no Speakers tab" report be diagnosed
+    /// from Help → Diagnostics.
+    case diarization
 }
 
 struct DiagnosticsEntry: Codable, Identifiable, Equatable {

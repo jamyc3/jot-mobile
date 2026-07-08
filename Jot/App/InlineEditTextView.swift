@@ -57,9 +57,15 @@ struct InlineEditTextView: UIViewRepresentable {
         if tv.isEditable != isEditable { tv.isEditable = isEditable }
 
         // Drive first-responder off the `isFocused` binding (async so it doesn't
-        // mutate responder state mid view-update). Gated on editability so we
-        // never raise the keyboard on a disabled (mid-dictation) field.
-        if isFocused, !tv.isFirstResponder, isEditable {
+        // mutate responder state mid view-update). NOT gated on editability:
+        // UIKit only raises the keyboard for EDITABLE text views, so focusing a
+        // selectable read-only host is keyboard-safe — and required, because a
+        // UITextView renders its selection highlight (and offers the edit menu
+        // with Writing Tools) only while it is first responder. Without this,
+        // selection mode's pre-selected full transcript would be invisible
+        // (adversarial code review HIGH). The mid-dictation disabled-field case
+        // this gate used to protect can't raise a keyboard while non-editable.
+        if isFocused, !tv.isFirstResponder {
             DispatchQueue.main.async { _ = tv.becomeFirstResponder() }
         } else if !isFocused, tv.isFirstResponder {
             DispatchQueue.main.async { tv.resignFirstResponder() }
@@ -82,6 +88,13 @@ struct InlineEditTextView: UIViewRepresentable {
         if tv.text != text {
             coord.ingest(newText: text as NSString, in: tv, fromUser: false)
         }
+
+        // INBOUND selection apply (selection mode): when the host sets the
+        // `selection` binding — e.g. pre-selecting the whole transcript so the
+        // user's next gesture is tap-selection → Writing Tools — mirror it onto
+        // the text view's UTF-16 `selectedRange`. The outbound direction
+        // (`syncSelection`) has always existed; this is the missing inbound half.
+        coord.applyInboundSelection(to: tv)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -276,6 +289,42 @@ struct InlineEditTextView: UIViewRepresentable {
         }
 
         // MARK: Selection bridge
+
+        /// Apply an INBOUND `selection` binding onto the text view — the missing
+        /// half that lets the host DRIVE the selection (selection mode's
+        /// select-the-whole-transcript for Writing Tools), not just read it.
+        /// Converts the SwiftUI `TextSelection` to a UTF-16 `NSRange` and sets
+        /// `selectedRange` under the `isApplying` latch so the resulting
+        /// `textViewDidChangeSelection` doesn't echo it straight back into the
+        /// binding. Applies only when it actually differs from the current
+        /// selection, so it never fights a user's own drag.
+        func applyInboundSelection(to tv: UITextView) {
+            guard !isApplying, let selection = parent.selection else { return }
+            let str = tv.text ?? ""
+            guard let ns = Self.nsRange(from: selection, in: str) else { return }
+            let len = (str as NSString).length
+            guard ns.location != NSNotFound, ns.location + ns.length <= len else { return }
+            guard tv.selectedRange != ns else { return }
+            isApplying = true
+            tv.selectedRange = ns
+            isApplying = false
+        }
+
+        /// Convert a `TextSelection` to a UTF-16 `NSRange` in `text`. A
+        /// multi-selection (never produced by our full-range apply) collapses to
+        /// its enclosing span.
+        private static func nsRange(from selection: TextSelection, in text: String) -> NSRange? {
+            switch selection.indices {
+            case .selection(let range):
+                return NSRange(range, in: text)
+            case .multiSelection(let rangeSet):
+                guard let lower = rangeSet.ranges.first?.lowerBound,
+                      let upper = rangeSet.ranges.last?.upperBound else { return nil }
+                return NSRange(lower..<upper, in: text)
+            @unknown default:
+                return nil
+            }
+        }
 
         /// Mirror the UTF-16 `selectedRange` into the SwiftUI `TextSelection?`
         /// binding so the host can read the live caret/selection. A zero-length

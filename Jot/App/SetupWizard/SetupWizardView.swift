@@ -203,17 +203,28 @@ struct SetupWizardView: View {
     /// silent recording-start would confuse the user.
     private func handleKeyboardDictateTapped() {
         guard step == .tryKeyboard else { return }
-        // `start()` is async-throwing; wrap in a Task. If a recording
-        // is already in flight (e.g. rapid double-tap of the keyboard
-        // pill), `RecordingService.start()`'s internal guard throws —
-        // log and ignore so we don't crash on the contention case.
+        // `start()` is async-throwing; wrap in a Task. Guard BOTH busy signals
+        // up front — parity with the HomeScreen twin observer
+        // (HomeScreen.updateDictateTapObserver): `start()`'s own guard only
+        // covers `isRecording`, so a tap landing in a prior capture's
+        // pipeline/teardown tail would slip through into a cold start that
+        // fails first-buffer (`cold-no-input`) and dead-ends the keyboard
+        // strip (W6 bug trace, LINK B hardening).
         Task { @MainActor in
+            guard !recordingService.isRecording, !recordingService.isPipelineInFlight else {
+                wizardLog.notice("keyboardDictateTapped (W5) while recorder busy; ignoring")
+                DiagnosticsLog.record(
+                    source: "main-app", category: .recordingOutcome,
+                    message: "Wizard dictate tap ignored — recorder busy (in-flight tail)"
+                )
+                return
+            }
             do {
                 wizardLog.notice("RECORDING START FROM: SetupWizardView.handleKeyboardDictateTapped (W5 keyboard mic)")
                 try await recordingService.start()
             } catch {
-                // Expected on already-recording / pipeline-in-flight
-                // contention; non-fatal — the existing in-flight
+                // Expected on already-recording contention races that slip
+                // past the guard; non-fatal — the existing in-flight
                 // recording covers the user's intent.
             }
         }

@@ -697,6 +697,19 @@ final class RecordingService {
                     // full cold start so the user still gets a working recording.
                     log.error("Warm-resume produced no audio (dead engine) — cold-starting instead")
                     exitWarmHold()
+                } catch RecordingError.notRunning {
+                    // The engine died BETWEEN the outer `engine.isRunning` check
+                    // and `startFromWarmHold`'s entry guard — e.g. an async
+                    // teardown (wizard-close gentle cancel) completing in that
+                    // window. The guard already ran `fullyTeardownEngine()`.
+                    // This is the third sibling of the two cases above and
+                    // deserves the SAME remedy: fall through to a cold start.
+                    // Propagating `.notRunning` instead surfaced the nonsense
+                    // "Dictation failed: No recording is in progress." on a
+                    // START tap (owner repro: close wizard → immediately
+                    // dictate).
+                    log.error("Warm engine died between check and resume — cold-starting instead")
+                    exitWarmHold()
                 }
             } else {
                 log.error("Warm-hold state had no running tapped engine; falling back to cold start.")
@@ -1624,6 +1637,17 @@ final class RecordingService {
             // input. `.record` keeps the no-DSP `.measurement` mode while
             // avoiding the output leg that was implicated in the `what` trace.
             log.info("configureSession — calling setCategory(.record, .measurement, [.mixWithOthers])")
+            // Mark BEFORE the swap so its async config-change echo is treated
+            // as ours (see `handleEngineConfigChange`) — the SAME stamp both
+            // warm-path swaps carry (`startFromWarmHold`,
+            // `makeWarmIdleSessionMixable`). The cold path was the one swap
+            // site MISSING it: when this cold start changes the category for
+            // real (e.g. mixable warm-idle `.playAndRecord` → `.record`, the
+            // wizard-W6 fingerprint), the echo arrived outside any grace and
+            // `handleEngineConfigChange` `internalStop`'d the recording we had
+            // just started — the W6 "starts, then dies" bug
+            // (docs/plans/bug-wizard-w6-first-dictate-stops.md).
+            lastDeliberateSessionSwapAt = Date()
             try session.setCategory(
                 .record,
                 mode: .measurement,
@@ -2455,6 +2479,14 @@ final class RecordingService {
             exitWarmHold()
         } else {
             log.notice("Engine configuration changed — stopping recording")
+            // In-app-visible breadcrumb (Diagnostics, not just Console): this
+            // self-stop silently ends a live recording, and it's the LINK-A
+            // suspect in the W6 wizard bug — if a user ever reports "recording
+            // just stopped", this line names the killer without a Mac.
+            DiagnosticsLog.record(
+                source: "main-app", category: .recordingOutcome,
+                message: "Recording stopped — external audio config change (outside deliberate-swap grace)"
+            )
             internalStop(reason: "engine config change")
         }
     }

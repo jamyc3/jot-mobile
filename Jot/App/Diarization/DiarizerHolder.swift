@@ -36,6 +36,16 @@ actor DiarizerHolder {
         return false
     }
 
+    /// Whether the offline diarizer weights are already on disk — a best-effort
+    /// existence check of the default models directory. `nonisolated` (touches
+    /// no actor state) so the launch prefetch can consult it synchronously to
+    /// skip a needless network monitor when nothing needs downloading.
+    nonisolated static var modelsAreDownloaded: Bool {
+        let dir = OfflineDiarizerModels.defaultModelsDirectory()
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return !contents.isEmpty
+    }
+
     /// Downloads (first run only — cached after) and loads the offline
     /// diarizer models. Safe to call repeatedly; a second caller mid-flight
     /// just no-ops until the first completes.

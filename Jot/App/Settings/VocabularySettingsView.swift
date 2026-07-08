@@ -223,17 +223,15 @@ struct VocabularySettingsView: View {
         case .ready:
             return "Parakeet CTC 110M on this iPhone. Boosting runs on the Neural Engine; no audio leaves the device."
         case .downloading:
-            // Unreachable on a healthy bundled install — the CTC aux model
-            // ships in the IPA. Kept defensively in case the bundle is
-            // stripped and the cache surfaces a transient loading state.
-            return "Loading the bundled vocabulary boost model…"
+            return "Downloading the vocabulary boost model (~99 MB). Keep Jot open; boosting starts as soon as it lands."
         case .notDownloaded:
-            // Unreachable on a healthy bundled install — same as above. If
-            // hit, the only recovery is a reinstall (no HF download path
-            // exists for the bundled variant).
-            return "Bundled vocabulary boost model is missing. Reinstall Jot from the App Store."
+            // On a stripped build (or after an iCloud restore, which excludes
+            // the model from backup) the scorer downloads once, on demand — it
+            // is NOT bundled anymore. Everything else in Jot works meanwhile;
+            // only vocabulary boosting waits on this ~99 MB download.
+            return "Vocabulary boosting needs a one-time ~99 MB model download. The rest of Jot works without it."
         case .failed:
-            return "The rest of Jot keeps working — only vocabulary boosting needs this bundle. Retry below; if it still fails, check your internet."
+            return "The rest of Jot keeps working — only vocabulary boosting needs this model. Retry below; if it still fails, check your internet."
         }
     }
 
@@ -267,7 +265,11 @@ struct VocabularySettingsView: View {
     private func downloadBoostModel() async {
         boostModelStatus = .downloading
         do {
-            _ = try await CtcModelCache.shared.ensureLoaded()
+            // Download-if-absent THEN load. On a healthy bundled install the
+            // files are already on disk so this is a pure load; on a stripped
+            // build it pulls the ~99 MB scorer first (coalesced with the B1
+            // launch auto-trigger via the shared download gate).
+            _ = try await CtcModelCache.shared.downloadAndLoad()
             boostModelStatus = .ready
             if store.isEnabled {
                 await prepareRescorerIfPossible()

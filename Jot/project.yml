@@ -24,7 +24,7 @@ settings:
     # is minimal — scripts can already do anything they want during a
     # build; the sandbox is defense-in-depth, not a security boundary.
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CURRENT_PROJECT_VERSION: "254"
+    CURRENT_PROJECT_VERSION: "258"
     MARKETING_VERSION: "2.0"
     # Vineet's team — same one used for Mac Jot. Pinned so xcodegen
     # regeneration doesn't wipe the signing team out of Xcode every time.
@@ -170,11 +170,12 @@ targets:
       # See App/Ask/HelpCorpus.swift + docs/ask-product-help/design.md.
       - path: Resources/help-corpus.json
         buildPhase: resources
-      # TTS Lab — Supertonic-3 voice-style presets (F1-F5, M1-M5; ~2.9 MB
-      # total). 10 bundled voices; only the ~398 MB Supertonic model downloads
-      # at runtime on opt-in. Loaded via `Supertonic3VoiceStyle.load(from:)`.
-      - path: Resources/SupertonicVoices
-        buildPhase: resources
+      # TTS Lab voice presets REMOVED from the bundle (owner, 2026-07-06):
+      # the Supertonic-3 voice-style JSONs (F1-F5, M1-M5, ~2.9 MB) were cut
+      # along with the paused TTS feature (`ttsFeatureEnabled = false`).
+      # `TTSService.loadVoiceStyle` fails guarded (no eager load), so the
+      # paused code is safe without them. Restore from git history
+      # (Resources/SupertonicVoices/) if TTS is ever revived.
       # Fraunces editorial typeface (SIL OFL). Phase 1 of the UX overhaul
       # bundles the 72pt opsz-keyed statics; UIAppFonts in
       # Resources/Info.plist registers them at runtime.
@@ -541,6 +542,7 @@ targets:
       - path: Shared/Schema/JotSchemaV6.swift
       - path: Shared/Schema/JotSchemaV7.swift
       - path: Shared/Schema/JotSchemaV8.swift
+      - path: Shared/Schema/JotSchemaV9.swift
       - path: Shared/Schema/JotMigrationPlan.swift
       - path: Shared/Transcript.swift
       - path: Shared/JotDesignWatchSafe.swift

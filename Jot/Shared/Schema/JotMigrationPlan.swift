@@ -45,8 +45,8 @@ import SwiftData
 ///     the migration needs investigation before merge.
 enum JotMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [JotSchemaV1.self, JotSchemaV2.self, JotSchemaV3.self, JotSchemaV4.self, JotSchemaV5.self, JotSchemaV6.self, JotSchemaV7.self, JotSchemaV8.self]
-        // Future: append V9.self, ... in chronological order.
+        [JotSchemaV1.self, JotSchemaV2.self, JotSchemaV3.self, JotSchemaV4.self, JotSchemaV5.self, JotSchemaV6.self, JotSchemaV7.self, JotSchemaV8.self, JotSchemaV9.self]
+        // Future: append V10.self, ... in chronological order.
     }
 
     static var stages: [MigrationStage] {
@@ -112,6 +112,17 @@ enum JotMigrationPlan: SchemaMigrationPlan {
             .lightweight(
                 fromVersion: JotSchemaV7.self,
                 toVersion: JotSchemaV8.self
+            ),
+            // V8 → V9: ONE additive optional field on `Transcript` —
+            // `diarizationJSON: String?` (a JSON-encoded `[PersistedSpeakerRow]`
+            // holding the resolved speaker turns, or `nil` when the transcript
+            // was never diarized / was single-speaker). `nil` for every
+            // pre-existing V8 row on first V9 read. Lightweight inference, same
+            // shape as the V7→V8 `language` add. Drives the Speaker Notes
+            // detail tab (`docs/plans/speaker-notes-productization.md`).
+            .lightweight(
+                fromVersion: JotSchemaV8.self,
+                toVersion: JotSchemaV9.self
             )
         ]
     }

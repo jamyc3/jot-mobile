@@ -36,10 +36,30 @@ SwiftData's auto-migration ("lightweight" inference) is empirically fragile acro
   - `Transcript`: V2 fields + `rewriteUpvoted: Bool?` (explicit 👍/👎 rating on the current Rewrite — captures pure rating signal independent of the edit/correction signal).
   - Models: `[Transcript]`.
   - V2 → V3 migration: `.lightweight` (pure additive optional field).
-- **V4** (`JotSchemaV4.swift`, current as of Jot 1.0.2 build 12+, 2026-05-25).
+- **V4** (`JotSchemaV4.swift`, frozen 2026-05-25, baseline as of Jot 1.0.2 build 12+).
   - `Transcript`: V3 fields + `category: String?` (background classifier's tag: `email | message | note | code | general`, or nil if unclassified).
   - Models: `[Transcript]`.
   - V3 → V4 migration: `.lightweight` (pure additive optional field).
+- **V5** (`JotSchemaV5.swift`, frozen 2026-06-08).
+  - `Transcript`: V4 fields + `source: String?` (capture-surface tag — `app | keyboard | shortcut | file | watch`; nil is treated as "app") and `watchOriginUUID: String?` (de-dup key for Apple Watch retransmits).
+  - Models: `[Transcript]`.
+  - V4 → V5 migration: `.lightweight` (two additive optional fields).
+- **V6** (`JotSchemaV6.swift`, frozen 2026-06-08).
+  - `Transcript` shape unchanged (the legacy `category` field is preserved as dead-data). Adds TWO new entities: `TranscriptEmbedding` (transcript-level embedding vector for semantic search) and `TranscriptCategory` (classifier substrate — no writers yet).
+  - Models: `[Transcript, TranscriptEmbedding, TranscriptCategory]`.
+  - V5 → V6 migration: `.lightweight` (new entity types alongside the existing one).
+- **V7** (`JotSchemaV7.swift`, frozen 2026-06-08).
+  - `Transcript` shape unchanged. Adds ONE new entity: `TranscriptChunk` (chunk-level embeddings + denormalized filter metadata for the Ask RAG pipeline). `TranscriptEmbedding` is retained but deprecated.
+  - Models: `[Transcript, TranscriptEmbedding, TranscriptCategory, TranscriptChunk]`.
+  - V6 → V7 migration: `.lightweight` (new entity type).
+- **V8** (`JotSchemaV8.swift`, frozen 2026-06-27, TestFlight 211+).
+  - `Transcript`: V7 fields + `language: String?` (the `LanguageChoice` the recording was dictated in; nil is treated as English). Drives the Detail language badge, the Translate source language, and the re-transcribe target.
+  - Models: unchanged from V7.
+  - V7 → V8 migration: `.lightweight` (additive optional field, same shape as V4→V5's `source`).
+- **V9** (`JotSchemaV9.swift`, current as of build 256, frozen 2026-07-06).
+  - `Transcript`: V8 fields + `diarizationJSON: String?` (JSON-encoded resolved speaker turns for the Speaker Notes detail tab — `label`, `start`, `end`, `text`; nil when the transcript was never diarized or was single-speaker). Read only in the main app; the keyboard mirror and watch never carry it.
+  - Models: unchanged from V8.
+  - V8 → V9 migration: `.lightweight` (additive optional field, same shape as V7→V8's `language`). Plan: `docs/plans/speaker-notes-productization.md`.
 
 > Future versions append here. **Every PR that ships a new VN must update this list.**
 

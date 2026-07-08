@@ -1,4 +1,5 @@
 #if JOT_APP_HOST
+import CoreMLLLM
 import FoundationModels
 import OSLog
 import SwiftData
@@ -221,6 +222,89 @@ final class AskController {
             self?.indexTask = nil
             self?.refreshIndexStatus(force: true)
         }
+    }
+
+    // MARK: - EmbeddingGemma foreground promote (search-model download)
+
+    /// True when the EmbeddingGemma search model is absent from disk — a
+    /// stripped Build B before the overnight fetch lands, or an iCloud restore
+    /// (the model is backup-excluded, so it doesn't come back with the store).
+    /// Ask still WORKS lexically without it (retrieval degrades to BM25), so
+    /// this is an inline *offer* to finish setup, never a hard block or error
+    /// dialog. See docs/plans/model-externalization-sub-50mb.md §A4.
+    var embeddingModelMissing: Bool = false
+    var isDownloadingEmbeddingModel: Bool = false
+    var embeddingDownloadFraction: Double = 0
+    var embeddingDownloadFailed: String?
+    private var embeddingDownloadTask: Task<Void, Never>?
+
+    /// Cheap synchronous disk check for the search model. Called on sheet
+    /// appear. Doesn't disturb an in-flight foreground download.
+    func refreshEmbeddingModelAvailability() {
+        guard !isDownloadingEmbeddingModel else { return }
+        embeddingModelMissing = (EmbeddingGemmaService.resolvedModelDirectory() == nil)
+    }
+
+    /// Foreground PROMOTE: the user is in Ask and wants the search model NOW.
+    /// Cancel the discretionary overnight fetch (so the two don't fight over the
+    /// same files) and pull it on WHATEVER network they're on — user-initiated,
+    /// consistent with the European-v3 consent stance — behind a visible
+    /// progress banner. On success: backup-exclude the freshly-downloaded tree
+    /// (the library excludes nothing — ⚠️REVIEW-2) and fire the arrival hooks
+    /// (prewarm + backfill catch-up).
+    func downloadEmbeddingModel() {
+        guard !isDownloadingEmbeddingModel else { return }
+        isDownloadingEmbeddingModel = true
+        embeddingDownloadFraction = 0
+        embeddingDownloadFailed = nil
+        EmbeddingModelFetcher.shared.cancelDiscretionaryFetch()
+        // Bridge the downloader's non-Sendable `onProgress` closure to the
+        // MainActor via an AsyncStream. The actual download runs in a
+        // `nonisolated` helper where the `onProgress` closure is FORMED — so it
+        // captures only the (Sendable) continuation and never crosses an
+        // isolation boundary. A MainActor consumer applies each fraction to
+        // state; this outer Task is MainActor-isolated so it can touch `self`.
+        let (fractions, continuation) = AsyncStream<Double>.makeStream()
+        embeddingDownloadTask = Task { @MainActor [weak self] in
+            let sink = Task { @MainActor [weak self] in
+                for await f in fractions { self?.embeddingDownloadFraction = f }
+            }
+            defer { sink.cancel(); self?.embeddingDownloadTask = nil }
+            do {
+                let parent = EmbeddingGemmaService.applicationSupportBundleParent
+                try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+                let installed = try await Self.performEmbeddingDownload(into: parent, progress: continuation)
+                continuation.finish()
+                BackupExclusion.setExcludedFromBackupRecursively(at: installed)
+                self?.isDownloadingEmbeddingModel = false
+                self?.embeddingModelMissing = false
+                EmbeddingModelArrival.handleModelInstalled(reason: "ask-foreground-promote")
+            } catch {
+                continuation.finish()
+                self?.isDownloadingEmbeddingModel = false
+                self?.embeddingDownloadFailed = error.localizedDescription
+            }
+        }
+    }
+
+    /// Runs the foreground EmbeddingGemma download OFF the MainActor. Declared
+    /// `nonisolated` so the `onProgress` closure is formed outside any actor
+    /// region — it captures only the Sendable `progress` continuation, so
+    /// passing it into the nonisolated downloader never "sends" a non-Sendable
+    /// value across an isolation boundary.
+    private nonisolated static func performEmbeddingDownload(
+        into parent: URL,
+        progress: AsyncStream<Double>.Continuation
+    ) async throws -> URL {
+        try await Gemma3BundleDownloader.download(
+            .embeddingGemma300m,
+            into: parent,
+            onProgress: { snap in
+                let f = snap.bytesTotal > 0
+                    ? Double(snap.bytesReceived) / Double(snap.bytesTotal) : 0
+                progress.yield(max(0, min(1, f)))
+            }
+        )
     }
 
     func ask() {

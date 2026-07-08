@@ -83,14 +83,84 @@ enum PendingShareDrainer {
                 // Retain the shared audio (copied before the staged file is
                 // removed below) so the user can re-transcribe it — the import
                 // path is the main case where the language was a guess.
-                _ = try TranscriptStore.append(raw: text, cleaned: cleaned, source: "share", retainAudioFileURL: url)
+                let saved = try TranscriptStore.append(raw: text, cleaned: cleaned, source: "share", retainAudioFileURL: url)
                 log.info("saved shared transcript from \(url.lastPathComponent, privacy: .public) (\(trimmed.count) chars, cleaned=\(cleaned != nil))")
+                // Auto-diarize shared audio (headline case: a call recording
+                // shared from Notes → Speakers tab). Runs on the just-staged
+                // file while it's still present (removed below); an enhancement,
+                // NEVER a gate — any skip/error leaves the transcript untouched.
+                if let saved {
+                    await autoDiarize(saved, audioFileURL: url)
+                }
             }
             try? FileManager.default.removeItem(at: url)
         } catch {
             // Leave the file staged — it retries on the next foreground.
             log.error("transcribe of shared audio \(url.lastPathComponent, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Diarize a freshly-imported shared transcript and persist a multi-speaker
+    /// result on it (`diarizationJSON`, schema V9 → Speakers tab). Tolerant by
+    /// contract: a busy transcriber/recorder or any diarize error is logged +
+    /// breadcrumbed and leaves the transcript untouched — diarization is an
+    /// ENHANCEMENT of the import, never a gate on it. The user can always run
+    /// Detect speakers manually. See
+    /// `docs/plans/speaker-notes-productization.md`.
+    @MainActor
+    private static func autoDiarize(_ transcript: Transcript, audioFileURL url: URL) async {
+        // Snapshot before any await — the @Model is bound to `append`'s
+        // short-lived context; don't read it across suspension points.
+        let id = transcript.id
+        let displayText = transcript.displayText
+
+        // Load the diarizer (downloads the ~22 MB models on first use if the
+        // launch prefetch hasn't landed). Resident + cheap thereafter.
+        await DiarizerHolder.shared.prepareIfNeeded()
+
+        // Re-check RIGHT before diarizing. The drainer's entry guard is sampled
+        // once, but a dictation can start mid-drain, and FluidAudio's shared
+        // CoreML/BNNS state is unsafe under two concurrent inference graphs. If
+        // the transcriber or recorder is busy now, SKIP this file (never wait,
+        // never fail the import).
+        guard !TranscriptionService.shared.isBusy, !RecordingService.shared.isRecording else {
+            log.info("auto-diarize skipped for \(id, privacy: .public): transcriber/recorder busy")
+            DiagnosticsLog.record(source: "main-app", category: .diarization, message: "Auto-diarize skipped: busy")
+            return
+        }
+
+        do {
+            let result = try await DiarizerHolder.shared.diarize(audioFileURL: url)
+            if DiarizationLabeling.isMultiSpeaker(result) {
+                // Use the owner-voiceprint centroid ONLY if it already exists
+                // (nil → all speakers anonymous — designed degradation, never a
+                // blocking build here). The kicked build below earns "You" on
+                // future imports.
+                let rows = DiarizationLabeling.persistedRows(
+                    for: result,
+                    transcriptText: displayText,
+                    ownerCentroid: OwnerVoiceprintStore.centroid
+                )
+                if let json = PersistedSpeakerRow.encode(rows) {
+                    try TranscriptStore.updateDiarization(id: id, json: json)
+                    log.info("auto-diarize persisted \(rows.count) turn(s) for \(id, privacy: .public)")
+                    DiagnosticsLog.record(source: "main-app", category: .diarization, message: "Auto-diarize: \(rows.count) turns persisted")
+                }
+            } else {
+                log.info("auto-diarize: single speaker for \(id, privacy: .public) — storing nothing")
+                DiagnosticsLog.record(source: "main-app", category: .diarization, message: "Auto-diarize: single speaker")
+            }
+        } catch {
+            log.error("auto-diarize failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            DiagnosticsLog.record(source: "main-app", category: .diarization, message: "Auto-diarize failed: \(error.localizedDescription)")
+        }
+
+        // Kick a detached, low-priority owner-voiceprint build AFTER the import
+        // diarize completes so FUTURE imports can label the owner "You". OFF the
+        // critical path by design (§5 blocker fix): `build()` runs up to 40 full
+        // diarization passes — minutes, not "cheap" — so it must never block the
+        // import. Presence-checked no-op once a voiceprint exists.
+        OwnerVoiceprintStore.kickBuildIfNeeded()
     }
 
     private static func modDate(_ url: URL) -> Date {

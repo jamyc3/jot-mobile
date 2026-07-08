@@ -1,16 +1,18 @@
 <!-- SHIPPED (AppleIntelligenceRewriteGuide.swift, features.md §7.10). Shown when the Apple
-     Intelligence rewrite engine is active (features.md §6.3) and the user taps Rewrite: this
-     GUIDE opens instead of pushing the 2.5 GB Qwen download. Teaches the free system Writing
-     Tools path (the transcript text is already selectable). -->
+     Intelligence rewrite engine is active (features.md §6.3) and the user taps Rewrite: instead
+     of running the rewrite, Jot enters a read-only SELECTION MODE with the whole transcript
+     already selected, and this GUIDE teaches the free system Writing Tools path. Jot never runs
+     the rewrite for the user — they pick the tool. The download stays a secondary link. -->
 
-<!-- dimmed transcript + action bar behind -->
-<div style="opacity:.38">
+<!-- dimmed transcript + action bar behind — the whole transcript is PRE-SELECTED -->
+<div style="opacity:.42">
   <div class="jot-donebtn" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0;font-size:18px;font-weight:700;margin-top:8px">‹</div>
   <div style="display:flex;align-items:center;gap:10px;margin:18px 2px 12px;font-size:13px;color:var(--jot-ink-cap)">
     <span>4 minutes ago</span><span>·</span><span>38 words</span><span>·</span><span>0:27</span>
   </div>
-  <div class="jot-card" style="padding:16px;font-size:15px;line-height:1.5;color:var(--jot-ink)">
-    Has anyone set up open-source LoRA weights I can use with Apple Intelligence just for writing tasks?
+  <!-- selection highlight shows the whole-transcript pre-selection Jot applies for the user -->
+  <div class="jot-card" style="padding:16px">
+    <span style="font-size:15px;line-height:1.6;color:var(--jot-ink);background:rgba(26,140,255,0.28);box-shadow:0 0 0 1px rgba(26,140,255,0.35);border-radius:3px;padding:1px 2px">Has anyone set up open-source LoRA weights I can use with Apple Intelligence just for writing tasks?</span>
   </div>
 </div>
 
@@ -34,27 +36,26 @@
   <!-- steps -->
   <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px">
     <span style="width:26px;height:26px;border-radius:50%;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">1</span>
-    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px"><b>Select</b> the transcript text.</div>
+    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px">We've <b>selected the whole transcript</b> for you.</div>
   </div>
   <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px">
     <span style="width:26px;height:26px;border-radius:50%;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">2</span>
-    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px">Tap <b>✦ Writing Tools</b> in the popup menu.</div>
+    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px"><b>Tap the selection</b> to bring up the menu.</div>
   </div>
   <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px">
     <span style="width:26px;height:26px;border-radius:50%;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">3</span>
-    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px">Choose <b>Rewrite</b>, <b>Make Concise</b>, <b>Proofread</b>, and more.</div>
+    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px">Tap <b>✦ Writing Tools</b> and choose <b>Key Points</b>, <b>Summary</b>, <b>Rewrite</b>, and more.</div>
   </div>
   <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:18px">
     <span style="width:26px;height:26px;border-radius:50%;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">4</span>
-    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px"><b>Copy</b> the result to use it — or tap <b>Edit</b> here first to <b>save</b> it to this transcript.</div>
+    <div style="font-size:15px;line-height:1.4;color:var(--jot-ink);padding-top:3px"><b>Copy</b> the result to use it anywhere.</div>
   </div>
 
-  <!-- visual hint: the real selection menu -->
+  <!-- visual hint: the real selection menu (read-only text → Writing Tools cannot overwrite the original) -->
   <div style="display:flex;align-items:center;justify-content:center;gap:0;background:var(--jot-card-top);border:0.5px solid var(--jot-card-border);border-radius:12px;padding:9px 4px;margin-bottom:20px;box-shadow:0 4px 14px rgba(0,0,0,0.12)">
-    <span style="padding:0 14px;font-size:14px;color:var(--jot-ink);border-right:0.5px solid var(--jot-sep)">Copy</span>
-    <span style="padding:0 14px;border-right:0.5px solid var(--jot-sep);display:flex;align-items:center"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:none;stroke:var(--jot-ink);stroke-width:1.6"><path d="M12 3l1.4 4L17 8.4 13.4 10 12 14l-1.4-4L7 8.4 10.6 7zM18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8z"/></svg></span>
-    <span style="padding:0 14px;font-size:14px;color:var(--jot-ink);border-right:0.5px solid var(--jot-sep)">Translate</span>
-    <span style="padding:0 14px;font-size:14px;color:var(--jot-ink)">Share</span>
+    <span style="padding:0 12px;font-size:14px;color:var(--jot-ink);border-right:0.5px solid var(--jot-sep)">Copy</span>
+    <span style="padding:0 12px;font-size:14px;color:var(--jot-ink);border-right:0.5px solid var(--jot-sep);display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:var(--jot-ink);stroke-width:1.6"><path d="M12 3l1.4 4L17 8.4 13.4 10 12 14l-1.4-4L7 8.4 10.6 7zM18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8z"/></svg>Writing Tools</span>
+    <span style="padding:0 12px;font-size:14px;color:var(--jot-ink)">Share</span>
   </div>
 
   <!-- secondary: download Jot's own AI -->

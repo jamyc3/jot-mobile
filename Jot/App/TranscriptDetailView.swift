@@ -63,13 +63,37 @@ struct TranscriptDetailView: View {
     enum DetailTab: String, CaseIterable {
         case original
         case rewrite
+        case speakers
 
         var label: String {
             switch self {
             case .original: return "Original"
             case .rewrite:  return "Rewrite"
+            case .speakers: return "Speakers"
             }
         }
+    }
+
+    /// The tabs currently offered, in fixed display order. `.original` is always
+    /// present; `.rewrite` appears once a cleanup/rewrite exists; `.speakers`
+    /// appears once a diarization result is persisted (`diarizationJSON != nil`).
+    ///
+    /// The tab bar's visibility keys off THIS (`visibleTabs.count > 1`), NOT off
+    /// `hasRewrite` — a shared call recording with cleanup off has no rewrite but
+    /// still gains a Speakers tab, and that tab must be reachable (the headline
+    /// case: iOS call recordings shared into Jot). See
+    /// `docs/plans/speaker-notes-productization.md`.
+    private var visibleTabs: [DetailTab] {
+        var tabs: [DetailTab] = [.original]
+        if hasRewrite { tabs.append(.rewrite) }
+        if transcript.diarizationJSON != nil { tabs.append(.speakers) }
+        return tabs
+    }
+
+    /// Decoded persisted speaker turns for the Speakers tab, or `nil` when the
+    /// transcript was never diarized / was single-speaker / the blob is stale.
+    private var speakerRows: [PersistedSpeakerRow]? {
+        PersistedSpeakerRow.decode(transcript.diarizationJSON)
     }
 
     @State private var selectedTab: DetailTab = .original
@@ -192,19 +216,32 @@ struct TranscriptDetailView: View {
     @State private var isRetranscribing: Bool = false
     @State private var retranscribeError: String? = nil
 
-    /// Diarization Lab (experimental, `AppGroup.Keys.diarizationLabEnabled`):
-    /// "Detect speakers" runs entirely on-demand against the retained source
-    /// audio and shows an ephemeral result sheet — nothing is persisted to the
-    /// transcript (no schema change for this lab prototype).
-    @State private var diarizationLabOn: Bool = AppGroup.defaults.bool(forKey: AppGroup.Keys.diarizationLabEnabled)
+    /// Speaker Notes: "Detect speakers" runs the offline diarizer against the
+    /// retained source audio. A multi-speaker result is PERSISTED on the
+    /// transcript (`diarizationJSON`, schema V9) and surfaces as the Speakers
+    /// tab; a single-speaker result stores nothing and shows a transient notice.
+    /// Available on any transcript with retained audio — no lab flag.
     @State private var isDiarizing: Bool = false
     @State private var diarizeError: String? = nil
-    @State private var diarizationSheet: DiarizationSheetData?
+    /// Brief, auto-dismissing message (e.g. "Sounds like a single speaker") for
+    /// results that store nothing but still warrant acknowledgement.
+    @State private var transientNotice: String? = nil
+    @State private var transientNoticeTask: Task<Void, Never>?
 
     @State private var showAIGuide: Bool = false
     /// Set by the guide's "Download Jot's AI" link; consumed in the guide's
     /// `onDismiss` to open AI settings without a sheet-over-sheet race.
     @State private var pendingAIDownload: Bool = false
+
+    /// Writing Tools **selection mode** (Apple Intelligence engine only). Tapping
+    /// the rewrite action swaps the read-mode text for a NON-editable
+    /// `InlineEditTextView` and pre-selects the whole transcript, so the user's
+    /// next gesture is tap-selection → Writing Tools → whatever THEY choose. It
+    /// is NOT edit mode: nothing is editable, there's no dirty state and no Save,
+    /// so the pristine Original is structurally protected (Writing Tools on a
+    /// read-only text view can only Copy its result, never replace in place).
+    /// See `docs/plans/speaker-notes-productization.md` Part 2.
+    @State private var selectionMode: Bool = false
     /// `nil` until `.onAppear` resolves the factory's client. Used to mirror
     /// `LLMClientStatus` synchronously so the Rewrite button can branch
     /// without a `await`.
@@ -258,7 +295,7 @@ struct TranscriptDetailView: View {
 
                 sublineRow
 
-                if hasRewrite && !isEditing {
+                if visibleTabs.count > 1 && !isEditing && !selectionMode {
                     tabSelector
                 }
 
@@ -273,7 +310,7 @@ struct TranscriptDetailView: View {
                 transcriptCard
                     .frame(maxHeight: .infinity)
 
-                if selectedTab == .rewrite, hasRewrite, !isEditing {
+                if selectedTab == .rewrite, hasRewrite, !isEditing, !selectionMode {
                     attributionLine
                         .padding(.horizontal, 4)
                 }
@@ -287,6 +324,8 @@ struct TranscriptDetailView: View {
                         if showFindReplace { findReplaceBar }
                         editBar
                     }
+                } else if selectionMode {
+                    selectionDoneBar
                 } else {
                     actionBar
                 }
@@ -299,6 +338,15 @@ struct TranscriptDetailView: View {
                 replaceVocabOfferCard(offer)
                     .padding(.horizontal, JotDesign.Spacing.pageMargin)
                     .padding(.bottom, 84) // floats just above the ActionBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            // Transient acknowledgement for a store-nothing diarize result
+            // (single speaker). Floats above the ActionBar and self-dismisses.
+            if let notice = transientNotice, !isEditing {
+                transientNoticeCard(notice)
+                    .padding(.horizontal, JotDesign.Spacing.pageMargin)
+                    .padding(.bottom, 84)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -322,6 +370,13 @@ struct TranscriptDetailView: View {
             // own 1.3s timer (handoff §word-bubble).
             if !correctionBubbleResolving { correctionBubble = nil }
             Task { await correctionModel?.reload() }
+        }
+        .onChange(of: transcript.diarizationJSON) {
+            // The diarization result was persisted (Detect speakers) or
+            // invalidated (retranscribe / Original edit changed the text). If the
+            // Speakers tab just vanished out from under the selection, fall back
+            // to Original so the card never renders a tab that no longer exists.
+            if !visibleTabs.contains(selectedTab) { selectedTab = .original }
         }
         // Re-apply AFTER the chrome-hiding modifiers above — iOS disables
         // the interactive pop gesture when the back button is hidden, and
@@ -430,9 +485,6 @@ struct TranscriptDetailView: View {
                 }
             )
         }
-        .sheet(item: $diarizationSheet) { data in
-            DiarizationResultSheet(data: data)
-        }
         .sheet(isPresented: $showTranslateSheet) {
             // Ephemeral translate sheet (features.md §3.9) — Apple on-device
             // Translation via TranslationGateway; reads the active tab's text.
@@ -447,11 +499,16 @@ struct TranscriptDetailView: View {
             )
         }
         .sheet(isPresented: $showAIGuide, onDismiss: {
-            // "Download Jot's AI" inside the guide → open settings after the guide
-            // dismisses (chained so two sheets don't race).
+            // "Download Jot's AI" inside the guide → leave selection mode and open
+            // settings after the guide dismisses (chained so two sheets don't
+            // race). Otherwise the user is staying in selection mode, so apply the
+            // full-transcript selection now that they can see the highlight.
             if pendingAIDownload {
                 pendingAIDownload = false
+                exitSelectionMode()
                 showAISettings = true
+            } else if selectionMode {
+                applyFullRangeSelection()
             }
         }) {
             // features.md §7.10 — when Qwen isn't downloaded but the device has Apple
@@ -591,68 +648,41 @@ struct TranscriptDetailView: View {
             Spacer(minLength: 0)
 
             if canRetranscribe {
-                if diarizationLabOn {
-                    // Diarization Lab on: Re-transcribe + Detect speakers share
-                    // one overflow menu instead of two separate trailing
-                    // controls — two full-width actions on one line clipped
-                    // silently off-screen (a real bug found in-session).
-                    Menu {
-                        Button {
-                            diarizeSpeakers()
-                        } label: {
-                            Label(diarizeError != nil ? "Retry detect speakers" : "Detect speakers",
-                                  systemImage: "person.wave.2")
-                        }
-                        Divider()
-                        Text("Re-transcribe this audio in…")
-                        ForEach(LanguageChoice.presentationOrder) { lang in
-                            Button(lang.displayName) { retranscribe(in: lang) }
-                        }
+                // Detect speakers + Re-transcribe share ONE overflow menu (never
+                // two full-width trailing controls on one line — those clipped
+                // silently off-screen, a real bug found in-session). Standard on
+                // any transcript with retained audio — no lab flag.
+                Menu {
+                    Button {
+                        diarizeSpeakers()
                     } label: {
-                        if isRetranscribing || isDiarizing {
-                            ProgressView().controlSize(.mini)
-                        } else if retranscribeError != nil || diarizeError != nil {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.red)
-                        } else {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.jotAccent)
-                        }
+                        Label(diarizeError != nil ? "Retry detect speakers" : "Detect speakers",
+                              systemImage: "person.wave.2")
                     }
-                    .disabled(isRetranscribing || isDiarizing)
-                    .accessibilityLabel("More actions: re-transcribe or detect speakers")
-                } else {
-                    Menu {
-                        Text("Re-transcribe this audio in…")
-                        ForEach(LanguageChoice.presentationOrder) { lang in
-                            Button(lang.displayName) { retranscribe(in: lang) }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            if isRetranscribing {
-                                ProgressView().controlSize(.mini)
-                            } else {
-                                Image(systemName: retranscribeError != nil
-                                      ? "exclamationmark.arrow.triangle.2.circlepath"
-                                      : "arrow.triangle.2.circlepath")
-                                    .font(.system(size: 10, weight: .semibold))
-                            }
-                            Text(isRetranscribing ? "Re-transcribing…"
-                                 : (retranscribeError != nil ? "Retry re-transcribe" : "Re-transcribe"))
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(retranscribeError != nil ? Color.red : Color.jotAccent)
+                    Divider()
+                    Text("Re-transcribe this audio in…")
+                    ForEach(LanguageChoice.presentationOrder) { lang in
+                        Button(lang.displayName) { retranscribe(in: lang) }
                     }
-                    .disabled(isRetranscribing)
-                    .accessibilityLabel("Re-transcribe this recording in another language")
+                } label: {
+                    if isRetranscribing || isDiarizing {
+                        ProgressView().controlSize(.mini)
+                    } else if retranscribeError != nil || diarizeError != nil {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.red)
+                    } else {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.jotAccent)
+                    }
                 }
+                .disabled(isRetranscribing || isDiarizing)
+                .accessibilityLabel("More actions: re-transcribe or detect speakers")
             }
         }
         .onAppear {
             canRetranscribe = RetainedAudioStore.hasAudio(for: transcript.id)
-            diarizationLabOn = AppGroup.defaults.bool(forKey: AppGroup.Keys.diarizationLabEnabled)
         }
     }
 
@@ -673,6 +703,11 @@ struct TranscriptDetailView: View {
             do {
                 let text = try await TranscriptionService.shared.transcribe(audioFileURL: url)
                 try TranscriptStore.update(id: transcript.id, text: text, language: lang.rawValue)
+                // The text (and language) just changed, so any stored diarization
+                // result — whose turns distribute the OLD text across segments —
+                // no longer matches. Invalidate it; the user can re-run Detect
+                // speakers while the audio is still retained.
+                try? TranscriptStore.updateDiarization(id: transcript.id, json: nil)
                 await MainActor.run {
                     isRetranscribing = false
                     canRetranscribe = RetainedAudioStore.hasAudio(for: transcript.id)
@@ -687,9 +722,10 @@ struct TranscriptDetailView: View {
     }
 
     /// Runs the offline VBx diarization pipeline against this transcript's
-    /// retained source audio and shows the result in an ephemeral sheet —
-    /// nothing is persisted (Diarization Lab prototype; see
-    /// `docs/speaker-diarization-lab/design.md`). Backs off if a live
+    /// retained source audio. A multi-speaker result is PERSISTED
+    /// (`diarizationJSON`, schema V9) and the view switches to the Speakers tab;
+    /// a single-speaker result stores nothing and shows a transient notice
+    /// (`docs/plans/speaker-notes-productization.md`). Backs off if a live
     /// transcription is in flight rather than risking FluidAudio's shared
     /// CoreML/BNNS state under two concurrent graphs.
     private func diarizeSpeakers() {
@@ -697,7 +733,11 @@ struct TranscriptDetailView: View {
         isDiarizing = true
         diarizeError = nil
         Task {
-            if TranscriptionService.shared.isBusy {
+            // Same two-signal guard as the auto-import path: `isBusy` covers a
+            // transcription mid-inference, `isRecording` covers a capture that
+            // hasn't reached the transcriber yet but is about to (FluidAudio's
+            // shared CoreML/BNNS state is unsafe under two concurrent graphs).
+            if TranscriptionService.shared.isBusy || RecordingService.shared.isRecording {
                 await MainActor.run {
                     isDiarizing = false
                     diarizeError = "Busy transcribing — try again in a moment."
@@ -706,27 +746,32 @@ struct TranscriptDetailView: View {
             }
             do {
                 let result = try await DiarizerHolder.shared.diarize(audioFileURL: url)
+                // Snapshot the display text on the main actor before building rows
+                // (Transcript is @MainActor-bound SwiftData state).
+                let displayText = await MainActor.run { transcript.displayText }
                 await MainActor.run {
                     isDiarizing = false
-                    if !DiarizationLabeling.isMultiSpeaker(result) {
-                        diarizationSheet = DiarizationSheetData(isSingleSpeaker: true, rows: [])
-                    } else {
-                        let order = DiarizationLabeling.firstAppearanceOrder(result.segments)
-                        let labels = DiarizationLabeling.assignOwnerLabel(
-                            orderedIDs: order,
-                            speakerDatabase: result.speakerDatabase ?? [:],
-                            ownerCentroid: OwnerVoiceprintStore.centroid
-                        )
-                        let distributed = DiarizationLabeling.distributeText(transcript.displayText, segments: result.segments)
-                        let rows = distributed.map { seg, text -> DiarizationRow in
-                            DiarizationRow(
-                                label: displayName(for: labels[seg.speakerId]),
-                                start: seg.startTimeSeconds,
-                                end: seg.endTimeSeconds,
-                                text: text
-                            )
-                        }
-                        diarizationSheet = DiarizationSheetData(isSingleSpeaker: false, rows: rows)
+                    guard DiarizationLabeling.isMultiSpeaker(result) else {
+                        showTransientNotice("Sounds like a single speaker.")
+                        return
+                    }
+                    let rows = DiarizationLabeling.persistedRows(
+                        for: result,
+                        transcriptText: displayText,
+                        ownerCentroid: OwnerVoiceprintStore.centroid
+                    )
+                    guard let json = PersistedSpeakerRow.encode(rows) else {
+                        showTransientNotice("Sounds like a single speaker.")
+                        return
+                    }
+                    do {
+                        try TranscriptStore.updateDiarization(id: transcript.id, json: json)
+                        // The Speakers tab appears once `diarizationJSON` merges
+                        // back onto the observed transcript; jump to it now — the
+                        // tab bar + card follow when the merge lands.
+                        selectedTab = .speakers
+                    } catch {
+                        diarizeError = error.localizedDescription
                     }
                 }
             } catch {
@@ -735,14 +780,24 @@ struct TranscriptDetailView: View {
                     diarizeError = error.localizedDescription
                 }
             }
+            // The user just RAN diarization — that's the shared "first
+            // diarization run" voiceprint trigger, same as the auto-import
+            // path kicks after its attempt (adversarial code review MEDIUM:
+            // a manual-only user must also graduate from "Speaker N" to
+            // "You" on later runs). Presence-checked no-op once built.
+            await OwnerVoiceprintStore.kickBuildIfNeeded()
         }
     }
 
-    private func displayName(for label: SpeakerLabel?) -> String {
-        switch label {
-        case .owner: return "You"
-        case .anonymous(let n): return "Speaker \(n)"
-        case nil: return "Speaker"
+    /// Show a brief, self-dismissing notice (e.g. a single-speaker result that
+    /// stores nothing). Replaces any in-flight notice and clears after 2.5s.
+    private func showTransientNotice(_ message: String) {
+        transientNoticeTask?.cancel()
+        withAnimation { transientNotice = message }
+        transientNoticeTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            withAnimation { transientNotice = nil }
         }
     }
 
@@ -750,7 +805,7 @@ struct TranscriptDetailView: View {
 
     private var tabSelector: some View {
         HStack(spacing: 0) {
-            ForEach(DetailTab.allCases, id: \.self) { tab in
+            ForEach(visibleTabs, id: \.self) { tab in
                 Button {
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
                         selectedTab = tab
@@ -832,6 +887,8 @@ struct TranscriptDetailView: View {
             Group {
                 if isEditing {
                     transcriptEditor
+                } else if selectionMode {
+                    selectionModeEditor
                 } else {
                     switch selectedTab {
                     case .original:
@@ -861,11 +918,89 @@ struct TranscriptDetailView: View {
                             rewriteEmptyState
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
+                    case .speakers:
+                        // Persisted diarization turns. `speakerRows` is nil only
+                        // for the brief window between a Detect-speakers save and
+                        // the merge landing on the observed transcript, or right
+                        // after an invalidation (the `.onChange` handler bounces
+                        // the selection back to Original) — render empty, never
+                        // crash, in that gap.
+                        if let rows = speakerRows {
+                            speakersTabContent(rows: rows)
+                        } else {
+                            Color.clear
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    // MARK: - Speakers tab
+
+    /// The Speakers tab body — one block per diarized turn (label + timestamp +
+    /// text), ported from the retired `DiarizationResultSheet`. Text is
+    /// selectable; "You" (owner-labeled turns) is accented. Labels are the
+    /// RESOLVED display names frozen at diarization time, so this is a pure
+    /// render — no voiceprint lookup here.
+    @ViewBuilder
+    private func speakersTabContent(rows: [PersistedSpeakerRow]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(row.label)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(row.label == "You" ? Color.jotAccent : Color.jotPageInk)
+                            Text(speakerTimeRange(row.start, row.end))
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.jotPageInkSecondary)
+                        }
+                        if !row.text.isEmpty {
+                            Text(row.text)
+                                .font(.system(size: 17, weight: .regular))
+                                .lineSpacing(4)
+                                .foregroundStyle(Color.jotPageInk)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .id(selectedTab)
+    }
+
+    /// `m:ss–m:ss` label for a turn's start/end (mirrors the retired sheet).
+    private func speakerTimeRange(_ start: Float, _ end: Float) -> String {
+        func format(_ seconds: Float) -> String {
+            let s = Int(seconds)
+            return String(format: "%d:%02d", s / 60, s % 60)
+        }
+        return "\(format(start))\u{2013}\(format(end))"
+    }
+
+    /// Transient single-speaker (store-nothing) acknowledgement card. Same
+    /// house chrome as the learn-it offer; content is a single line.
+    private func transientNoticeCard(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.jotPageInkSecondary)
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.jotInk)
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity)
+        .modifier(JotDesign.Surface.heavy.modifier(cornerRadius: JotDesign.Spacing.sheetRadius))
     }
 
     /// What the Rewrite tab renders. User's manual edit takes priority over
@@ -904,6 +1039,27 @@ struct TranscriptDetailView: View {
                 ? "Edit original transcript"
                 : "Edit rewrite"
         )
+    }
+
+    /// Read-only selection host for Writing Tools (Apple Intelligence). The SAME
+    /// `InlineEditTextView` as edit mode but `isEditable: false` — selectable, no
+    /// keyboard, no dirty state. The full-transcript selection is applied on the
+    /// guide sheet's DISMISS via the `editorSelection` binding (see
+    /// `applyFullRangeSelection`); Writing Tools on a non-editable text view can
+    /// only Copy its result, so the pristine Original can't be overwritten.
+    @ViewBuilder
+    private var selectionModeEditor: some View {
+        InlineEditTextView(
+            text: $editorText,
+            selection: $editorSelection,
+            sessionToken: editSessionToken,
+            isEditable: false,
+            baseFont: .systemFont(ofSize: 17, weight: .regular),
+            textColor: UIColor(Color.jotPageInk),
+            isFocused: $editorFocused
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityLabel("Select text for Writing Tools")
     }
 
     /// Scrollable body text styled to match Recents row typography (system
@@ -1355,6 +1511,8 @@ struct TranscriptDetailView: View {
         switch selectedTab {
         case .original: return !transcript.text.isEmpty
         case .rewrite:  return displayedRewriteText != nil
+        // Speakers is a read-only view of persisted turns — never editable.
+        case .speakers: return false
         }
     }
 
@@ -1362,6 +1520,7 @@ struct TranscriptDetailView: View {
         switch selectedTab {
         case .original: return "Edit original transcript"
         case .rewrite:  return "Edit rewrite"
+        case .speakers: return "Edit"
         }
     }
 
@@ -1443,6 +1602,83 @@ struct TranscriptDetailView: View {
     /// Center label of the EditBar.
     private var editBarCenterLabel: String {
         editTargetTab == .original ? "Editing Original" : "Editing Rewrite"
+    }
+
+    // MARK: - Selection-mode bar
+
+    /// Bottom bar shown in Writing Tools selection mode: a hint + a Done chip
+    /// that returns to read mode. Same house chrome as the EditBar so the two
+    /// read as siblings.
+    private var selectionDoneBar: some View {
+        HStack(spacing: 12) {
+            Text("Tap the selection, then Writing Tools")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.jotMute)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .truncationMode(.tail)
+            Spacer(minLength: 6)
+            Button(action: exitSelectionMode) {
+                Text("Done")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 40)
+                    .background(Capsule(style: .continuous).fill(Color.jotBlueTop))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Done selecting")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(minHeight: 60)
+        .frame(maxWidth: .infinity)
+        .modifier(
+            JotDesign.Surface.heavy.modifier(
+                cornerRadius: JotDesign.Spacing.sheetRadius
+            )
+        )
+    }
+
+    // MARK: - Selection-mode lifecycle
+
+    /// Enter Writing Tools selection mode: load the Original text into the
+    /// read-only host and present the guide. The full-range selection is applied
+    /// on the guide's DISMISS (not now) — presenting races the text view's
+    /// first-responder hop, and the highlight isn't visible under the sheet
+    /// anyway (see the design's Part 2 review notes).
+    private func enterSelectionMode() {
+        selectedTab = .original
+        editorText = transcript.text
+        editorSelection = nil
+        // Fresh session so the read-only host re-baselines cleanly (no stale
+        // italic runs from a prior edit session).
+        editSessionToken += 1
+        selectionMode = true
+        showAIGuide = true
+    }
+
+    /// Apply a full-transcript selection via the `editorSelection` binding —
+    /// `InlineEditTextView`'s inbound apply mirrors it onto the text view. Called
+    /// on the guide's dismiss so the highlight lands when the user can see it.
+    ///
+    /// Focus is raised HERE, not in `enterSelectionMode`: a UITextView renders
+    /// its selection highlight (and offers the Writing Tools edit menu) only
+    /// while first responder, and becoming first responder under the guide
+    /// sheet would be wasted anyway. Non-editable ⇒ no keyboard raises.
+    private func applyFullRangeSelection() {
+        let text = editorText
+        guard !text.isEmpty else { return }
+        editorFocused = true
+        editorSelection = TextSelection(range: text.startIndex..<text.endIndex)
+    }
+
+    /// Leave selection mode back to the normal read-mode ActionBar.
+    private func exitSelectionMode() {
+        selectionMode = false
+        editorFocused = false
+        editorSelection = nil
+        editorText = ""
     }
 
     // MARK: - Find & Replace bar
@@ -1752,11 +1988,12 @@ struct TranscriptDetailView: View {
     ///     downloading the weights to seeding prompts.
     private func presentRewritePicker() {
         guard isMagicEnabled else { return }
-        // Engine = Apple Intelligence → teach the free system Writing Tools path
-        // (the guide) instead of Jot's prompt picker / model download. Works
-        // regardless of Qwen status or saved prompts.
+        // Engine = Apple Intelligence → pre-select the whole transcript and teach
+        // the free system Writing Tools path (the guide) instead of Jot's prompt
+        // picker / model download. Works regardless of Qwen status or saved
+        // prompts. The guide sheet presents over the read-only selection host.
         if RewriteMode.current == .appleIntelligence {
-            showAIGuide = true
+            enterSelectionMode()
             return
         }
         if savedPrompts.isEmpty {
@@ -1832,6 +2069,13 @@ struct TranscriptDetailView: View {
             return transcript.rewriteUserEdit
                 ?? transcript.cleanedText
                 ?? transcript.text
+        case .speakers:
+            // Copy/Share on the Speakers tab yields the labeled turns; falls
+            // back to the raw text if the rows somehow can't be decoded.
+            guard let rows = speakerRows else { return transcript.text }
+            return rows
+                .map { "\($0.label): \($0.text)" }
+                .joined(separator: "\n\n")
         }
     }
 
@@ -1868,6 +2112,10 @@ struct TranscriptDetailView: View {
             editorText = transcript.rewriteUserEdit
                 ?? transcript.cleanedText
                 ?? ""
+        // Unreachable — `isEditEnabled` is false on Speakers so `beginEdit`
+        // returns above — but the switch must stay exhaustive.
+        case .speakers:
+            editorText = transcript.text
         }
         editError = nil
         // Fresh edit session: dismiss any prior learn-it card and reset find state.
@@ -1910,6 +2158,12 @@ struct TranscriptDetailView: View {
         var newRewriteUserEdit: String?? = nil
 
         switch editTargetTab {
+        // `editTargetTab` is captured from `selectedTab` at edit-start, and edit
+        // mode is unreachable on Speakers (`isEditEnabled` is false there) — but
+        // keep the switch exhaustive: bail cleanly if it's ever hit.
+        case .speakers:
+            exitEditMode()
+            return
         case .original:
             guard !trimmed.isEmpty else {
                 editError = "Original text can't be empty."
@@ -1955,6 +2209,13 @@ struct TranscriptDetailView: View {
 
         do {
             try TranscriptStore.update(id: transcript.id, text: newText, rewriteUserEdit: newRewriteUserEdit)
+            // An Original-tab edit that actually changed the text invalidates any
+            // stored diarization result (its turns distribute the OLD text across
+            // segments). Rewrite saves never touch Original, so they don't
+            // invalidate — `newText != nil` is exactly the changed-Original case.
+            if newText != nil {
+                try? TranscriptStore.updateDiarization(id: transcript.id, json: nil)
+            }
             detailLog.info(
                 "Transcript edit SAVED tab=\(editTargetTab.rawValue, privacy: .public) chars=\(trimmed.count)"
             )

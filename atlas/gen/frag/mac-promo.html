@@ -1,0 +1,26 @@
+<!-- One-time "Jot is on your Mac too" home popup (§6.9, §6.7 popup style) —
+     a centered quiet-reminder card shown once cumulative dictation crosses
+     ~1 hour. Same card treatment as the donation prompt; unlike it, this
+     never re-fires (one crossing, one prompt, forever). Mirrors
+     MacAppPromoCard. -->
+
+<!-- dimmed home behind the card -->
+<div style="position:absolute;inset:0;background:rgba(0,0,0,0.28)"></div>
+
+<!-- centered reminder card -->
+<div style="position:absolute;left:20px;right:20px;top:50%;transform:translateY(-50%)">
+  <div style="border-radius:16px;background:var(--jot-page-base);border:0.5px solid var(--jot-card-border);box-shadow:0 18px 50px rgba(0,0,0,0.22);padding:16px">
+    <div style="font-size:20px;font-weight:600;letter-spacing:-0.3px;color:var(--jot-ink);margin-bottom:12px">Jot is on your Mac too.</div>
+
+    <div style="font-size:15px;line-height:1.5;color:var(--jot-ink-cap);margin-bottom:16px">Same on-device dictation, on a bigger screen. Send yourself the download link to try it there.</div>
+
+    <div style="display:flex;align-items:center;gap:16px">
+      <!-- soft tinted-blue capsule CTA -->
+      <span style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:999px;background:rgba(26,140,255,0.15);color:var(--jot-accent-deep);font-size:15px;font-weight:600">
+        Get Jot for Mac
+        <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round"><path d="M7 17L17 7M9 7h8v8"/></svg>
+      </span>
+      <span style="color:var(--jot-ink-cap);font-size:15px">Not now</span>
+    </div>
+  </div>
+</div>

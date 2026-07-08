@@ -69,12 +69,6 @@ enum AppGroup {
         /// transcript playback; default off, and turning it on is what triggers
         /// the model download. See `docs/tts-lab/design.md`.
         static let ttsLabEnabled = "jot.tts.labEnabled"
-        /// Hidden "Speaker Diarization (Lab)" opt-in toggle. Revealed by the
-        /// same 5-tap-on-Version gesture as the TTS Lab (Settings → About).
-        /// Gates the experimental offline speaker-diarization feature; default
-        /// off. Turning it on kicks off building an owner voice profile from
-        /// recently retained recordings. See `docs/speaker-diarization-lab/design.md`.
-        static let diarizationLabEnabled = "jot.diarization.labEnabled"
         /// Prefer Apple's on-device `SpeechTranscriber` over FluidAudio Parakeet
         /// for English dictation, while keeping the existing CTC vocabulary
         /// boost unchanged on top. English only. Default ON — Apple is the

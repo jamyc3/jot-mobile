@@ -1,6 +1,7 @@
 @preconcurrency import AVFAudio
 import BackgroundTasks
 import Combine
+import Network
 import SwiftUI
 import SwiftData
 import UIKit
@@ -8,9 +9,35 @@ import os.log
 
 private let lifecycleLog = Logger(subsystem: "com.vineetu.jot.mobile.Jot", category: "app-lifecycle")
 
+/// Minimal `UIApplicationDelegate` — exists ONLY to receive the background
+/// URLSession relaunch handoff for the overnight EmbeddingGemma fetch
+/// (⚠️REVIEW H1). SwiftUI's `App` lifecycle has no equivalent hook. It forwards
+/// the completion handler to `EmbeddingModelFetcher` and implements nothing
+/// else, so all scene/lifecycle behaviour continues to flow through `JotApp`.
+final class JotAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        EmbeddingModelFetcher.shared.handleBackgroundSessionEvents(
+            identifier: identifier,
+            completionHandler: completionHandler
+        )
+    }
+}
+
 @main
 struct JotApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    /// App-delegate adaptor whose sole job is the background-URLSession relaunch
+    /// handoff (⚠️REVIEW H1, docs/plans/model-externalization-sub-50mb.md §A3).
+    /// When the system relaunches Jot in the background to finish the discretionary
+    /// EmbeddingGemma download, it hands us the session's completion handler via
+    /// `application(_:handleEventsForBackgroundURLSession:completionHandler:)` —
+    /// there is no SwiftUI-native hook for this, so a minimal `UIApplicationDelegate`
+    /// is required. It implements nothing else, so scene handling is untouched.
+    @UIApplicationDelegateAdaptor(JotAppDelegate.self) private var appDelegate
     private let stopRequestObserver: CrossProcessNotification.Observer
     private let cancelRequestObserver: CrossProcessNotification.Observer
     private let warmResumeObserver: CrossProcessNotification.Observer
@@ -235,7 +262,75 @@ struct JotApp: App {
                 // transcription is in flight — so it never delays or contends
                 // with the model the user's next dictation actually needs.
                 await TranscriptionService.shared.warmNonSelectedDictationModelsWhenIdle()
+
+                // TAIL of the serial warm chain: opportunistically prefetch the
+                // ~22 MB offline diarizer models so Speaker Notes is ready the
+                // moment it's announced. Positioned dead-last so it never
+                // contends with the dictation model loads above; gated to an
+                // unmetered (Wi-Fi) path and skipped while a recording/
+                // transcription is in flight (prepareIfNeeded downloads AND loads
+                // a CoreML graph, same caveat as the non-selected warm). See
+                // docs/plans/speaker-notes-productization.md "Model availability".
+                DiarizerModelPrefetch.prefetchWhenOnUnmeteredWiFi()
+
+                // TAIL (order-free): enqueue the overnight EmbeddingGemma fetch
+                // if the model is absent (stripped Build B / iCloud restore /
+                // fresh install). This is an OUT-OF-PROCESS background URLSession
+                // — no ANE contention with the chain above, so its position is
+                // immaterial; it sits here only to keep the documented 256
+                // warm-chain tail order (⚠️REVIEW-2). No-op while the model is
+                // bundled (Build A) or already carried-forward. Presence-checked
+                // + idempotent, so it also recovers a force-quit-cancelled fetch.
+                EmbeddingModelFetcher.shared.enqueueIfNeeded()
             }
+        }
+
+        // B1 launch auto-trigger (⚠️REVIEW B1, docs/plans/model-externalization-
+        // sub-50mb.md §A3): an EXISTING vocab user whose CTC scorer isn't on
+        // disk — because they skipped Build A, restored from iCloud (models are
+        // backup-excluded), or landed on the stripped Build B with
+        // `isEnabled` persisted true — would otherwise have vocab boosting
+        // silently no-op forever (the warm chain above skips `prepare` on
+        // `!isCached`, and `rescore()` returns nil with no spotter). They
+        // already CONSENTED to vocab boosting; re-fetching its model completes
+        // that choice rather than being a new download decision. Download it
+        // unprompted. This is NETWORK work (not ANE), so it runs on its OWN
+        // detached task PARALLEL to the serial cold-load chain — it must never
+        // serialize behind minutes of model loads. Only the LOAD/prepare AFTER
+        // the download respects the chain (we `awaitWarmSettled()` first). In
+        // Build A the bundle satisfies `isCached`, so this is a no-op.
+        Task.detached(priority: .utility) {
+            guard await VocabularyStore.shared.isEnabled,
+                  !CtcModelCache.shared.isCached else { return }
+            // Wi-Fi-only gate (adversarial review of Build A, HIGH): this is an
+            // UNPROMPTED ~99 MB fetch — FluidAudio's DownloadUtils session
+            // allows cellular by default, and the plan's invariant #4 ("no
+            // silent cellular spend") exempts only user-INITIATED downloads.
+            // On an expensive/constrained path, park and retry next launch;
+            // the vocab-Settings download row remains the user-initiated
+            // any-network escape hatch.
+            guard await JotApp.currentPathIsUnmetered() else {
+                DiagnosticsLog.record(
+                    source: "main-app", category: .modelLoad,
+                    message: "vocab CTC auto-download deferred — metered network"
+                )
+                return
+            }
+            do {
+                _ = try await CtcModelCache.shared.ensureDownloaded()
+            } catch {
+                // Best-effort — a failed/again-offline fetch retries next launch
+                // (presence-checked, no stuck flag). The user can also force it
+                // by opening vocab Settings, which shows the same download row.
+                return
+            }
+            // Serialize the ANE load/prepare behind the warm chain so the CTC
+            // scorer's CoreML specialization never contends with dictation.
+            await TranscriptionService.shared.awaitWarmSettled()
+            guard await VocabularyStore.shared.isEnabled,
+                  CtcModelCache.shared.isCached,
+                  let vocabURL = await VocabularyStore.shared.fileURL else { return }
+            try? await VocabularyRescorerHolder.shared.prepare(vocabularyFileURL: vocabURL)
         }
 
         // Per-launch defensive: exclude FluidAudio's downloaded speech-model
@@ -257,6 +352,17 @@ struct JotApp: App {
         // accumulates ~1.9 MB/min for 3 days) gets the identical per-launch
         // re-assert. No-op when nothing has been retained yet. Idempotent.
         BackupExclusion.excludeRetainedAudio()
+
+        // Per-launch defensive: third sweep for the CoreML-LLM tree
+        // (`Application Support/CoreMLLLM/`) — EmbeddingGemma's on-disk home
+        // once the model externalization lands (carry-forward + download,
+        // docs/plans/model-externalization-sub-50mb.md). It sits OUTSIDE the
+        // FluidAudio tree the first sweep covers and the package flags
+        // nothing itself, so without this a ~330 MB model would silently
+        // enter iCloud Device Backup (the 1.0.2 failure mode). No-op until
+        // the directory first exists, so it's safe to ship ahead of the
+        // externalization build.
+        BackupExclusion.excludeCoreMLLLM()
 
         // One-shot cleanup: drop any stale `classify-transcripts`
         // `BGProcessingTaskRequest` iOS may still hold from a pre-build-47
@@ -302,16 +408,17 @@ struct JotApp: App {
         // stop). Gated by a `UserDefaults` flag — runs at most once.
         TranscriptionService.sweepNemotronAppSupportWeights()
 
-        // §A carry-forward (docs/dictation-engine-rework/
-        // v2-carry-forward-migration-design.md): copy the bundled Parakeet 600M
-        // v2 into FluidAudio's Application-Support cache — the exact directory a
-        // future stripped build's English loader falls through to — so the
-        // eventual bundle strip (Release S) is a zero-download data move. Only
-        // on Parakeet-capable devices, only while v2 is still bundled (this
-        // build STILL bundles it — NOT the strip). Idempotent presence+verify
-        // check every launch, off the main thread, atomic temp→verify→rename;
-        // a no-op once complete.
-        V2CarryForwardMigration.runIfNeeded()
+        // §A carry-forward (docs/plans/model-externalization-sub-50mb.md §A1):
+        // copy the THREE bundled models — Parakeet 600M v2, the CTC 110M
+        // vocabulary scorer, and EmbeddingGemma-300M — into the exact private
+        // directories a future stripped build's loaders fall through to, so the
+        // eventual bundle strip (Build B) is a zero-download data move. v2 is
+        // gated on Parakeet-capable devices; CTC + EmbeddingGemma copy on every
+        // device (vocab + Ask work on all hardware). Each is gated on its bundle
+        // still shipping (this build STILL bundles all three — NOT the strip).
+        // Idempotent presence+verify check every launch, serial + off the main
+        // thread, atomic temp→verify→rename; a no-op once complete.
+        ModelCarryForward.runAllIfNeeded()
 
         // One-shot migration: reclaim ~2.4 GB of HuggingFace cache from
         // upgrading users who downloaded Phi-4 mini under prior builds.
@@ -1195,6 +1302,34 @@ struct JotApp: App {
     /// mic (call in progress, another app capturing) exhausts this and falls
     /// through to the real "mic busy" error rather than retrying forever.
     private static let coldLaunchMicRetryCeiling: TimeInterval = 2.0
+
+    /// One-shot "is the network unmetered right now" sample for the B1 vocab
+    /// CTC auto-download gate. Same rules as `DiarizerModelPrefetch`
+    /// (`isExpensive` = cellular/hotspot, `isConstrained` = Low Data Mode),
+    /// but one-shot instead of wait-until-satisfied: B1 must not hold a
+    /// monitor open across the whole session — if the path is metered NOW it
+    /// parks and retries next launch. The monitor lives only until the first
+    /// path callback; the lock guards against NWPathMonitor's occasional
+    /// rapid double-fire resuming the continuation twice.
+    static func currentPathIsUnmetered() async -> Bool {
+        await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            let monitor = NWPathMonitor()
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+            monitor.pathUpdateHandler = { path in
+                let alreadyResumed = resumed.withLock { done -> Bool in
+                    if done { return true }
+                    done = true
+                    return false
+                }
+                guard !alreadyResumed else { return }
+                monitor.cancel()
+                cont.resume(
+                    returning: path.status == .satisfied && !path.isExpensive && !path.isConstrained
+                )
+            }
+            monitor.start(queue: DispatchQueue.global(qos: .utility))
+        }
+    }
 }
 
 @MainActor

@@ -46,6 +46,23 @@ enum OwnerVoiceprintStore {
 
     private static let log = Logger(subsystem: "com.vineetu.jot.mobile.Jot", category: "OwnerVoiceprint")
 
+    /// Kick a detached `.background` build IFF no voiceprint exists yet — the
+    /// shared "first diarization run" trigger (design §flag-removal: the old
+    /// lab-reveal trigger is gone). Called from BOTH diarization entry points
+    /// (the share-import auto path and the manual "Detect speakers" run) so a
+    /// manual-only user still graduates from "Speaker N" to "You" on later
+    /// runs (adversarial code review MEDIUM — without this, a user who never
+    /// shares audio would stay anonymous forever now that voice-clone, the
+    /// other surviving trigger, ships disabled). No-op once built; `build()`
+    /// itself backs off while a live transcription is in flight.
+    @MainActor
+    static func kickBuildIfNeeded() {
+        guard !isBuilt else { return }
+        Task.detached(priority: .background) {
+            await build()
+        }
+    }
+
     /// Scans recently-retained recordings for solo clips, diarizes each, and
     /// builds a robust (medoid-trimmed) centroid. Low-priority and
     /// cooperative — backs off for a beat whenever a live transcription is in

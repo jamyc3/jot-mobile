@@ -1,0 +1,94 @@
+<!-- SHIPPED build 256 (features.md §3.12, TranscriptDetailView.swift speakersTabContent).
+     Speaker Notes: a multi-voice recording (here a call recording shared in from another app)
+     is split into per-speaker turns. The third "Speakers" tab appears alongside Original/Rewrite
+     only when a diarization result is persisted (V9 diarizationJSON). "You" is the phone owner,
+     recognized automatically from past solo recordings; other voices are "Speaker N" in first-
+     appearance order. Read-only view — Edit is disabled here (the turns are frozen text). -->
+<div style="position:absolute;inset:0;display:flex;flex-direction:column">
+<div class="jot-donebtn" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0;font-size:18px;font-weight:700;margin-top:8px">‹</div>
+
+<!-- subline: time · duration · language badge · trailing ⋯ overflow menu (Detect speakers +
+     Re-transcribe share ONE menu — standard on any transcript with retained audio, no lab flag) -->
+<div style="display:flex;align-items:center;gap:10px;margin:18px 2px 12px;font-size:13px;color:var(--jot-ink-cap)">
+  <span>Yesterday</span>
+  <span>·</span>
+  <span>7:41</span>
+  <span>·</span>
+  <span style="display:flex;align-items:center;gap:3px">
+    <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:none;stroke:var(--jot-ink-cap);stroke-width:1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg>
+    English
+  </span>
+  <div style="flex:1"></div>
+  <!-- overflow ⋯ (accent) — Detect speakers / Re-transcribe -->
+  <svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:none;stroke:var(--jot-accent);stroke-width:1.7"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="12" r="1" fill="var(--jot-accent)" stroke="none"/><circle cx="12" cy="12" r="1" fill="var(--jot-accent)" stroke="none"/><circle cx="16" cy="12" r="1" fill="var(--jot-accent)" stroke="none"/></svg>
+</div>
+
+<!-- Original | Rewrite | Speakers segmented control (three pills — Speakers active) -->
+<div style="display:flex;gap:0;background:rgba(120,120,128,0.16);border-radius:999px;padding:4px;margin-bottom:14px">
+  <div style="flex:1;text-align:center;padding:8px 0;font-size:14px;font-weight:600;color:var(--jot-ink-2)">Original</div>
+  <div style="flex:1;text-align:center;padding:8px 0;font-size:14px;font-weight:600;color:var(--jot-ink-2)">Rewrite</div>
+  <div style="flex:1;text-align:center;padding:8px 0;font-size:14px;font-weight:600;color:var(--jot-ink);background:var(--jot-card-top);border-radius:999px;box-shadow:0 1px 3px rgba(0,0,0,0.10)">Speakers</div>
+</div>
+
+<!-- Speakers tab: one block per turn — label + m:ss–m:ss time range, then selectable text.
+     "You" is accent-tinted; other speakers use the primary ink color. -->
+<div class="jot-card" style="padding:18px 18px 20px;overflow:hidden">
+  <div style="display:flex;flex-direction:column;gap:16px">
+
+    <div>
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:4px">
+        <span style="font-size:13px;font-weight:600;color:var(--jot-accent)">You</span>
+        <span style="font-size:11px;color:var(--jot-ink-cap)">0:00–0:12</span>
+      </div>
+      <div style="font-size:16px;line-height:1.5;color:var(--jot-ink)">Hey, thanks for hopping on. I wanted to walk through the launch timeline before we lock anything in for next week.</div>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:4px">
+        <span style="font-size:13px;font-weight:600;color:var(--jot-ink)">Speaker 2</span>
+        <span style="font-size:11px;color:var(--jot-ink-cap)">0:12–0:29</span>
+      </div>
+      <div style="font-size:16px;line-height:1.5;color:var(--jot-ink)">Sounds good. My only worry is the review turnaround — if Apple takes the full week we can't promise the Thursday date to the newsletter.</div>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:4px">
+        <span style="font-size:13px;font-weight:600;color:var(--jot-accent)">You</span>
+        <span style="font-size:11px;color:var(--jot-ink-cap)">0:29–0:44</span>
+      </div>
+      <div style="font-size:16px;line-height:1.5;color:var(--jot-ink)">Right. Let's hold the announcement until it's actually approved, then send the same day. I'd rather be a day late than pull it back.</div>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:4px">
+        <span style="font-size:13px;font-weight:600;color:var(--jot-ink)">Speaker 2</span>
+        <span style="font-size:11px;color:var(--jot-ink-cap)">0:44–0:58</span>
+      </div>
+      <div style="font-size:16px;line-height:1.5;color:var(--jot-ink)">Works for me. I'll draft the note now so it's ready to go the minute we get the green light.</div>
+    </div>
+
+  </div>
+</div>
+
+<div style="flex:1"></div>
+
+<!-- Action bar: Delete · Edit (dimmed — read-only on Speakers) · ✦ Rewrite · 🌐 Translate · Copy.
+     Copy on this tab yields the labeled turns. -->
+<div class="jot-card" style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:space-around;padding:11px 22px;border-radius:999px">
+  <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center">
+    <svg viewBox="0 0 24 24" style="width:24px;height:24px"><path d="M6 7h12l-1 13a2 2 0 01-2 2H9a2 2 0 01-2-2zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M4 7h16" fill="none" stroke="var(--jot-ink)" stroke-width="1.7" stroke-linecap="round"/></svg>
+  </span>
+  <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;opacity:.32">
+    <svg viewBox="0 0 24 24" style="width:23px;height:23px"><path d="M16 3l5 5L8 21H3v-5zM13 6l5 5" fill="none" stroke="var(--jot-ink-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </span>
+  <span style="width:44px;height:44px;border-radius:50%;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));display:flex;align-items:center;justify-content:center;box-shadow:0 0 16px rgba(26,140,255,0.4)">
+    <svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:#fff"><path d="M12 2l1.6 4.4L18 8l-4.4 1.6L12 14l-1.6-4.4L6 8l4.4-1.6zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z"/></svg>
+  </span>
+  <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center">
+    <svg viewBox="0 0 24 24" style="width:25px;height:25px"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--jot-ink)" stroke-width="1.7"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18" fill="none" stroke="var(--jot-ink)" stroke-width="1.5"/></svg>
+  </span>
+  <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center">
+    <svg viewBox="0 0 24 24" style="width:23px;height:23px"><path d="M9 9h9a2 2 0 012 2v9a2 2 0 01-2 2H9a2 2 0 01-2-2v-9a2 2 0 012-2zM5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" fill="none" stroke="var(--jot-ink)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </span>
+</div>
+</div>

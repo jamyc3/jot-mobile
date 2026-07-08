@@ -84,6 +84,16 @@
           ],
           "image": "screens/ios/home-dark.png",
           "captured": true
+        },
+        {
+          "id": "mac-promo",
+          "title": "Jot for Mac prompt",
+          "sections": [
+            "6.9"
+          ],
+          "image": "",
+          "captured": false,
+          "target": "One-time centered home popup shown once cumulative dictation crosses ~1 hour — same quiet-reminder style as the donation prompt, but never re-fires. \"Get Jot for Mac\" opens the Jot for Mac screen; \"Not now\" retires it for good."
         }
       ]
     },
@@ -169,6 +179,17 @@
           ],
           "image": "screens/ios/detail-rewrite.png",
           "captured": true
+        },
+        {
+          "id": "detail-speakers",
+          "title": "Speakers Tab",
+          "sections": [
+            "3.12",
+            "3.1"
+          ],
+          "image": "screens/ios/detail-speakers.png",
+          "captured": false,
+          "behavior": "Speaker Notes (build 256). A multi-voice recording (headline case: a call recording shared in from another app) is split into per-speaker turns. A third Speakers tab joins Original/Rewrite only when a diarization result is persisted (V9 diarizationJSON). Each turn = label + m:ss–m:ss range + selectable text; 'You' (owner, auto-recognized from past solo recordings) is accent-tinted, others are 'Speaker N' in first-appearance order. Read-only tab (Edit disabled). Run manually via the ⋯ overflow (Detect speakers), or automatically on shared-in audio."
         },
         {
           "id": "detail-action-bar",
@@ -484,6 +505,16 @@
           ],
           "image": "screens/ios/settings-about.png",
           "captured": true
+        },
+        {
+          "id": "settings-mac",
+          "title": "Jot for Mac",
+          "sections": [
+            "6.9"
+          ],
+          "image": "",
+          "captured": false,
+          "target": "Reached from Settings → About → \"Jot for Mac\" (a permanent row). Pitches the Mac app and offers the easiest phone→laptop handoff: \"Send to your Mac\" shares the download link (AirDrop / Messages / Mail), \"Open jot-transcribe.com\" opens the site. No accounts, on-device dictation."
         },
         {
           "id": "settings-acknowledgements",

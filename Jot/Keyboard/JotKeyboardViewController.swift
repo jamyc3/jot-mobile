@@ -2546,6 +2546,16 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             self?.startInlineViaDarwin()
         })
         keyboardLog.info("Jot backgrounded -> URL bounce (cold start)")
+        // In-app-visible breadcrumb: the URL bounce re-enters the app through
+        // `triggerAutoStart` (forceStop + fresh start) — if a live recording
+        // dies and the strip flashes "Starting", THIS line in Diagnostics says
+        // the bounce fired (the W6 bug's LINK-B suspect). One tap should log
+        // either the inline-Darwin line OR this — never both.
+        DiagnosticsLog.record(
+            source: "keyboard",
+            category: .recordingOutcome,
+            message: "Dictate tap took the URL-bounce (cold) path"
+        )
     }
 
     private func handleMicCTATap() {

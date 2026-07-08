@@ -103,6 +103,7 @@ struct AskView: View {
         .onAppear {
             controller.refreshAvailability()
             controller.refreshIndexStatus()
+            controller.refreshEmbeddingModelAvailability()
             // Voice-first: do NOT auto-raise the keyboard. On a fresh, available
             // Ask, start listening immediately so the default action is "just
             // talk". The user taps `Type instead` to switch to typing.
@@ -222,6 +223,15 @@ struct AskView: View {
 
     private var listeningCanvas: some View {
         VStack(spacing: 0) {
+            // Search-model setup offer — shown only on a stripped build whose
+            // EmbeddingGemma hasn't landed yet (or an iCloud restore). Ask still
+            // works lexically meanwhile; this is a calm inline offer, not a
+            // block. Sits above the index banner.
+            if controller.embeddingModelMissing || controller.isDownloadingEmbeddingModel {
+                searchModelBanner
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 4)
+            }
             if controller.isIndexing || controller.unindexedCount > 0 {
                 indexBanner
                     .padding(.horizontal, 18)
@@ -620,6 +630,57 @@ struct AskView: View {
                 }
                 Spacer(minLength: 8)
                 Button("Index") { controller.indexUnindexed() }
+                    .font(.system(.callout, weight: .semibold))
+                    .foregroundStyle(Self.accentInk)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Self.accentSoft.opacity(0.5))
+        )
+    }
+
+    // MARK: - Search-model setup offer (EmbeddingGemma foreground promote)
+
+    /// Inline offer to finish downloading the ~330 MB search model on a stripped
+    /// build. NOT an error dialog — Ask keeps working lexically; this sharpens
+    /// retrieval. While downloading it shows a determinate progress bar with the
+    /// honest "keep Jot open" caveat. See docs/plans/model-externalization-sub-50mb.md.
+    private var searchModelBanner: some View {
+        HStack(spacing: 10) {
+            if controller.isDownloadingEmbeddingModel {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        ProgressView(value: controller.embeddingDownloadFraction)
+                            .frame(maxWidth: .infinity)
+                        Text("\(Int((controller.embeddingDownloadFraction * 100).rounded()))%")
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Color.jotPageInkSecondary)
+                            .frame(minWidth: 36, alignment: .trailing)
+                    }
+                    Text("Finishing setup — downloading the search model (~330 MB). Keep Jot open.")
+                        .font(.caption2)
+                        .foregroundStyle(Color.jotPageInkSecondary)
+                }
+            } else {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundStyle(Self.accentInk)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Finish search setup")
+                        .font(.system(.callout, weight: .semibold))
+                        .foregroundStyle(Color.jotPageInk)
+                    Text(
+                        controller.embeddingDownloadFailed == nil
+                            ? "Ask already works — a one-time ~330 MB download sharpens results."
+                            : "Download failed — tap to retry."
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(Color.jotPageInkSecondary)
+                }
+                Spacer(minLength: 8)
+                Button("Download") { controller.downloadEmbeddingModel() }
                     .font(.system(.callout, weight: .semibold))
                     .foregroundStyle(Self.accentInk)
             }

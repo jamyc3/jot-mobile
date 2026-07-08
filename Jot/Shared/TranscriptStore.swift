@@ -89,7 +89,7 @@ enum JotModelContainer {
         // as new `JotSchemaVN` files + new `MigrationStage`s — see
         // `JotMigrationPlan.swift` and `docs/schema-migrations.md`.
         do {
-            let versionedSchema = Schema(versionedSchema: JotSchemaV8.self)
+            let versionedSchema = Schema(versionedSchema: JotSchemaV9.self)
             let config = ModelConfiguration(
                 "JotTranscripts",
                 schema: versionedSchema,
@@ -512,6 +512,31 @@ enum TranscriptStore {
             throw error
         }
         fanOutMirror(from: context)
+    }
+
+    /// Persist (or clear) a transcript's **speaker-diarization** result (V9).
+    /// Pass the JSON-encoded `[PersistedSpeakerRow]` to store a multi-speaker
+    /// result, or `nil` to invalidate a stale one (the underlying text/language
+    /// changed, so the stored turns no longer match — see the auto-diarize hook
+    /// and the retranscribe / Original-save staleness rules in
+    /// `docs/plans/speaker-notes-productization.md`). No-op if no matching row
+    /// exists.
+    ///
+    /// **Save ONLY — no mirror/notify.** The diarization result is read solely
+    /// by the main app's Speaker Notes detail tab; neither the keyboard mirror
+    /// nor the watch carries it, so waking the keyboard would be wasted work
+    /// (same sanctioned no-mirror exception as `setRewriteRating` /
+    /// `markSuperseded`).
+    static func updateDiarization(id: UUID, json: String?) throws {
+        let context = ModelContext(JotModelContainer.shared)
+        guard let transcript = try fetch(id: id, in: context) else { return }
+        transcript.diarizationJSON = json
+        do {
+            try context.save()
+        } catch {
+            logger.error("Transcript updateDiarization save failed: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
     }
 
     /// Set the 👍/👎 rating on a transcript's rewrite. **Save ONLY — no

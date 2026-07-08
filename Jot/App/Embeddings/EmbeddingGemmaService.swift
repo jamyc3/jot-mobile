@@ -83,9 +83,19 @@ actor EmbeddingGemmaService {
         if let loaded { return loaded.model }
         if let loadTask { return try await loadTask.value.model }
 
+        // Resolve the model directory ONCE, capturing it before the load Task so
+        // the throw (if the model is neither carried-forward nor bundled) happens
+        // synchronously in the caller's context. `.notDownloaded` is a BENIGN
+        // shape: every call site reaches `encode`/`prewarm` via `try?` (Ask,
+        // semantic search, indexing all fail-soft), so an absent model degrades
+        // to lexical-only / skipped-indexing rather than surfacing an error
+        // dialog (⚠️REVIEW L2, docs/plans/model-externalization-sub-50mb.md §A2).
+        guard let dir = Self.resolvedModelDirectory() else {
+            throw EmbeddingGemmaError.notDownloaded
+        }
+
         let task = Task<LoadedModel, Error> {
-            let dir = try Self.bundledModelDirectory()
-            Self.log.info("Loading EmbeddingGemma from bundle: \(dir.path, privacy: .public)")
+            Self.log.info("Loading EmbeddingGemma from: \(dir.path, privacy: .public)")
             let started = Date()
             // computeUnits defaults to `.cpuAndNeuralEngine` in the package.
             let model = try await EmbeddingGemma.load(bundleURL: dir)
@@ -106,30 +116,71 @@ actor EmbeddingGemmaService {
         }
     }
 
-    /// Resolves the bundled model directory. The `Resources/Models` folder
-    /// reference ships as `<bundle>/Models/...`, so the EmbeddingGemma bundle
-    /// lands at `<bundle>/Models/EmbeddingGemma/`.
-    private static func bundledModelDirectory() throws -> URL {
-        guard let resourceURL = Bundle.main.resourceURL else {
-            throw EmbeddingGemmaError.modelNotBundled("Bundle.main has no resourceURL")
-        }
+    // MARK: - Model directory resolution (externalization, §A2)
+
+    /// Parent directory that holds the downloaded/carried-forward CoreML-LLM
+    /// bundles: `~/Library/Application Support/CoreMLLLM/`. This is the `under:`
+    /// argument every `Gemma3BundleDownloader` call passes, so carry-forward,
+    /// the background fetcher, the foreground promote, and `resolvedModelDirectory()`
+    /// all converge on ONE location. It's also the tree
+    /// `BackupExclusion.excludeCoreMLLLM()` sweeps per-launch.
+    static var applicationSupportBundleParent: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("CoreMLLLM", isDirectory: true)
+    }
+
+    /// The private on-disk home the model is carried-forward / downloaded to:
+    /// `~/Library/Application Support/CoreMLLLM/embeddinggemma-300m/`. Its leaf
+    /// is the DOWNLOADER's folder name (`Model.embeddingGemma300m.rawValue`),
+    /// which is why the carry-forward RENAMES the bundle leaf `EmbeddingGemma`
+    /// → `embeddinggemma-300m` (⚠️REVIEW M2 — the v2 "leaf must match bundle
+    /// name" invariant does NOT transfer; the authoritative name is the
+    /// downloader's, and the copy verify compares source-tree vs renamed-dest
+    /// signature, which is rename-agnostic).
+    static var applicationSupportModelDirectory: URL {
+        applicationSupportBundleParent
+            .appendingPathComponent(Gemma3BundleDownloader.Model.embeddingGemma300m.rawValue, isDirectory: true)
+    }
+
+    /// The bundled model directory (`<bundle>/Models/EmbeddingGemma/`), or `nil`
+    /// once the bundle is stripped (Build B). Presence is keyed off
+    /// `encoder.mlmodelc` — the required leaf the loader reads.
+    static func bundledModelDirectory() -> URL? {
+        guard let resourceURL = Bundle.main.resourceURL else { return nil }
         let dir = resourceURL.appendingPathComponent("Models/EmbeddingGemma", isDirectory: true)
         let encoder = dir.appendingPathComponent("encoder.mlmodelc")
-        guard FileManager.default.fileExists(atPath: encoder.path) else {
-            throw EmbeddingGemmaError.modelNotBundled(
-                "encoder.mlmodelc not found under \(dir.path) — is the model placed in Resources/Models/EmbeddingGemma?"
-            )
+        return FileManager.default.fileExists(atPath: encoder.path) ? dir : nil
+    }
+
+    /// Resolution order: **App-Support copy (complete) → bundled dir → nil**.
+    ///
+    /// We deliberately prefer the App-Support copy EVEN WHILE the bundle still
+    /// ships (Build A) — that's the only way Build A proves the post-strip read
+    /// path in the field before Build B removes the bundle (§A2, mirrors the v2
+    /// carry-forward). Completeness is gated on
+    /// `Gemma3BundleDownloader.localBundle` (all required files present), so a
+    /// half-finished download/carry-forward is skipped in favour of the bundle
+    /// until it lands whole. `nil` is the not-yet-downloaded state, NOT an error.
+    static func resolvedModelDirectory() -> URL? {
+        if let carried = Gemma3BundleDownloader.localBundle(
+            .embeddingGemma300m, under: applicationSupportBundleParent
+        ) {
+            return carried
         }
-        return dir
+        return bundledModelDirectory()
     }
 }
 
 enum EmbeddingGemmaError: Error, LocalizedError {
-    case modelNotBundled(String)
+    /// The model is neither carried-forward/downloaded into Application Support
+    /// nor bundled — i.e. a stripped build whose overnight/foreground fetch
+    /// hasn't landed yet. Benign: callers degrade via `try?` (§A2 / L2).
+    case notDownloaded
 
     var errorDescription: String? {
         switch self {
-        case .modelNotBundled(let detail): return "EmbeddingGemma model not bundled: \(detail)"
+        case .notDownloaded:
+            return "EmbeddingGemma model not yet downloaded"
         }
     }
 }
