@@ -1,35 +1,42 @@
-# Parakeet-upgrade nudge: "Switch" does nothing + needs background download-on-charge
+# Parakeet-upgrade nudge: "Switch" dead-tap FIXED; background download-on-charge is the remaining enhancement
 
-**Status: BACKLOG — initial design only, NOT started. NEEDS VALIDATION before build.**
+**Status: primary "nothing happens" bug FIXED 2026-07-07 (awaiting owner device-test). The background download-on-charge + auto-enable enhancement remains BACKLOG — NEEDS VALIDATION.**
 Recorded 2026-07-07 from owner report.
 
 ## The bug (as observed)
 
 After someone uses **Apple dictation** for a while, the keyboard surfaces the
 Parakeet-upgrade nudge ("More accurate dictation — switch to Jot's engine").
-When they tap **Switch / Use Jot's engine, nothing happens** — no visible
-change, no confirmation, dictation quality is unchanged.
+Tapping **Switch / Use Jot's engine** did **nothing** — the app didn't even open.
 
-## Why (code reality)
+## Root cause (FIXED) — nothing to do with 258/stripping
 
-- The keyboard nudge tap (`JotKeyboardViewController.handleParakeetNudgeUpgrade`,
-  :827) opens `jot://upgrade-engine`, routed (`Router.swift:70`,
-  `JotApp.swift:593`) to **`UpgradeEngineView`**.
-- `UpgradeEngineView.useJotsEngine()` just flips
-  `AppGroup.useAppleDictationForEnglish = false` and dismisses. It assumes
-  **Parakeet 600M is bundled and already on device**, so the switch is instant
-  with no download step. The file's own header NOTE already flags this:
-  > "When the bundle is stripped later … this screen will need a
-  > download-progress state before flipping the toggle."
-- In the **stripped build (258+) that world is now here**: on a device where the
-  Parakeet model was never carried/downloaded, flipping the flag switches to an
-  engine whose model isn't present → nothing usable happens. Even in a bundled
-  build, the flip is silent (no confirmation), which can also read as "nothing
-  happened."
-- **Also unvalidated:** whether the keyboard→`jot://upgrade-engine` deep link
-  reliably foregrounds the app at all (keyboard extensions have restricted
-  `openURL` behaviour). Part of the "nothing happens" symptom may be here —
-  **validate this first**, before designing the download flow.
+`JotKeyboardViewController.handleParakeetNudgeUpgrade` opened
+`jot://upgrade-engine` via **`extensionContext?.open(url)`**. This file's own
+`openContainingApp` documentation (JotKeyboardViewController.swift ~2740) spells
+out that on **iOS 18+ UIKit silently force-fails the deprecated open path for
+keyboard extensions** ("BUG IN CLIENT OF UIKIT … Force returning false"). The
+working `jot://dictate` launch uses the **responder-chain opener**
+`openContainingApp(url)`; the nudge was never switched over to it. So on every
+iOS 18+ device, on **every** build (not just 258), the app never opened → the
+tap was a pure no-op.
+
+**Fix:** route `handleParakeetNudgeUpgrade` through `openContainingApp(url)`, the
+same proven opener the dictate path uses. One-line change; no behavior redesign.
+
+## What happens AFTER the app opens (already handled — was over-stated before)
+
+Once `UpgradeEngineView` appears and the user taps "Use Jot's engine", it flips
+`AppGroup.useAppleDictationForEnglish = false`. On a **stripped build** where the
+Parakeet model isn't on disk, this is **not** a dead-end: the next Parakeet
+dictation hits the **download-on-first-need backstop** in
+`TranscriptionService.loadOrFail` (`!modelsOnDisk → .downloading(0)` → fetch v2
+weights with progress → load; the §C "jumped straight to the stripped build"
+path, guarded so the "reinstall" error does NOT fire when
+`bundled600mDirectory() == nil`). So the model self-heals on first use with
+progress shown in the dictation UI.
+
+Two gaps remain — the *enhancement* the owner asked for, not a correctness bug:
 
 ## Desired behavior (owner's initial ask)
 

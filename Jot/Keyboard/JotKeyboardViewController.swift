@@ -826,8 +826,12 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// controller only navigates and resolves its own nudge render state.
     private func handleParakeetNudgeUpgrade() {
         keyboardLog.info("Parakeet-upgrade nudge: opening upgrade screen")
+        // MUST use the responder-chain opener, NOT `extensionContext?.open`:
+        // on iOS 18+ UIKit silently force-fails the deprecated open path for
+        // keyboard extensions (see `openContainingApp`), so the tap did nothing.
+        // This is the same mechanism the `jot://dictate` launch relies on.
         if let url = URL(string: "jot://upgrade-engine") {
-            extensionContext?.open(url)
+            openContainingApp(url)
         }
         resolveParakeetUpgradeNudge()
     }

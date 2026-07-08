@@ -181,6 +181,28 @@ elif [[ -n "${APP_STORE_CONNECT_USERNAME:-}" || -n "${APP_STORE_CONNECT_PASSWORD
 fi
 
 archive() {
+  # Models are NOT shipped in the app bundle by default. Since build 258 the
+  # on-device models (Parakeet 600M v2, CTC 110M scorer, EmbeddingGemma) live in
+  # shared Application Support — put there by the one-time carry-forward build
+  # (256/257) for existing users, downloaded on demand for fresh installs — so
+  # bundling them in the IPA is ~900 MB of dead weight. `strip-models.sh` moves
+  # the gitignored model dirs aside for the archive and restores them after
+  # (also on failure, via the EXIT trap). The gitignored dirs stay on disk.
+  #
+  # Escape hatch: set JOT_SHIP_MODELS=1 to bundle them — ONLY for re-cutting the
+  # bundled carry-forward build. Do NOT promote a stripped build to the App Store
+  # until the bundled carry-forward build (256/257) has shipped and soaked
+  # (docs/plans/model-externalization-sub-50mb.md; memory v2-strip-release-sequencing).
+  local models_stripped=0
+  if [[ "${JOT_SHIP_MODELS:-0}" == "1" ]]; then
+    echo "JOT_SHIP_MODELS=1 — bundling on-device models into the app (large build)."
+  else
+    echo "Stripping bundled models (default; set JOT_SHIP_MODELS=1 to bundle)."
+    bash "$repo_root/scripts/strip-models.sh" stash
+    models_stripped=1
+    trap 'bash "$repo_root/scripts/strip-models.sh" restore' EXIT
+  fi
+
   bash "$repo_root/build.sh"
 
   xcodebuild \
@@ -196,6 +218,13 @@ archive() {
     MARKETING_VERSION="$marketing_version" \
     CURRENT_PROJECT_VERSION="$build_number" \
     archive
+
+  # Archive done — the .xcarchive already holds the app, so restore the working
+  # tree now (export/upload operate on the archive, not the source).
+  if [[ "$models_stripped" == "1" ]]; then
+    bash "$repo_root/scripts/strip-models.sh" restore
+    trap - EXIT
+  fi
 }
 
 write_export_options() {
