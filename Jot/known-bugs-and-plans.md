@@ -22,6 +22,15 @@ Sizes appear on the Known Bugs below and on aspirational entries that haven't sh
 
 This section tracks user-facing bugs that are reproduced but not yet fixed. Each entry is a short symptom statement + the reproducer + the current root-cause hypothesis. Entries are removed when a fix lands and ships.
 
+### Keyboard Parakeet-upgrade nudge "Switch" does nothing — and needs a background download-on-charge
+**Size: M.** **Plan: [docs/plans/parakeet-upgrade-nudge-download.md](../docs/plans/parakeet-upgrade-nudge-download.md).** Recorded 2026-07-07. **NEEDS VALIDATION before build.**
+
+**Symptom:** After using Apple dictation for a while, the keyboard shows the "More accurate dictation — switch to Jot's engine" nudge. Tapping **Switch / Use Jot's engine** does nothing observable — no confirmation, quality unchanged.
+
+**Why:** `UpgradeEngineView.useJotsEngine()` just flips `AppGroup.useAppleDictationForEnglish = false` assuming Parakeet 600M is **bundled and instant** (its own header NOTE flags this). In the **stripped build (258+)** the model may not be on device at all, so the flip switches to an engine with no model → nothing usable. Also unvalidated: whether the keyboard→`jot://upgrade-engine` deep link reliably foregrounds the app (keyboard-extension `openURL` limits) — part of "nothing happens" may be here; validate first.
+
+**Desired (owner):** On Switch, gate mainly on **device tier** (`parakeetUsable`, iPhone 14 Pro+/M1+) + free disk. Eligible → enqueue a **background, charging-gated** download, tell the user "we'll download in the background while charging and switch you over automatically," then **auto-enable** on arrival (at a safe boundary, never mid-recording). Ineligible/low-disk → say so plainly. Reuse the externalization fetchers (`EmbeddingModelFetcher`/`EmbeddingModelArrival` pattern + Parakeet's existing install path) — do NOT build a parallel download stack.
+
 ### First "Jot down" tap after app launch doesn't start recording (second tap works)
 **Size: S.** Reported 2026-06-28 (build 215).
 
@@ -262,6 +271,7 @@ Curated index of plan documents that elaborate aspirational features, deferred e
 
 ### Known bugs
 
+- **Parakeet-upgrade nudge "Switch" does nothing + needs download-on-charge** — [docs/plans/parakeet-upgrade-nudge-download.md](../docs/plans/parakeet-upgrade-nudge-download.md) — **M. NEEDS VALIDATION.** `UpgradeEngineView` assumes bundled/instant Parakeet; in the stripped build the model may be absent so the flip is a no-op. Design: on eligible devices (`parakeetUsable`) enqueue a charging-gated background download reusing the externalization fetchers, then auto-enable on arrival. Validate the keyboard `openURL` deep-link path first.
 - **Cold-start dictation race** — [docs/plans/bug-cold-start-dictation-race.md](../docs/plans/bug-cold-start-dictation-race.md) — **S.** Diagnostic instrumentation first; primary fix is a one-line `warmUp()` kick in the deferred branch of `triggerAutoStart`.
 - **Wizard W6 first Jot-down tap starts then stops (re-run wizard)** — [docs/plans/bug-wizard-w6-first-dictate-stops.md](../docs/plans/bug-wizard-w6-first-dictate-stops.md) — **🔧 ROOT-CAUSE FIX SHIPPED in 257, awaiting owner re-test.** Traced (agent-verified): the cold start's session-category swap was the ONE swap site missing the deliberate-swap grace stamp, so its own async config-change echo `internalStop`'d the live recording; the keyboard's didn't-start fallback then re-entered via the URL bounce → force-stop + re-start → "Starting" → first-buffer failure. Fixed at the root (cold path now stamps the grace like both warm paths) + wizard handler gained the busy-guard parity + Diagnostics breadcrumbs on both suspect paths in case a residual mechanism survives. Likely also fixes cold recordings dying on external route changes app-wide.
 - **Keyboard auto-switch on stop** — [docs/plans/bug-keyboard-auto-switch.md](../docs/plans/bug-keyboard-auto-switch.md) — **M.** Two hypotheses (keyboard kill vs. main-app jetsam); diagnostic plan disambiguates. Resurrection UX uses a Dictate-button overlay rather than a banner because of the §5.10 collapsed-banner bug.
