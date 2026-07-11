@@ -33,6 +33,15 @@ struct WelcomeStep: View {
                     .lineSpacing(2)
                     .padding(.top, 4)
 
+                Text("Free, private, and fully on-device — your words never leave your iPhone.")
+                    .font(.system(size: 13.5, weight: .regular))
+                    .foregroundStyle(Color.jotMute)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .padding(.top, 2)
+                    .padding(.horizontal, 24)
+                    .accessibilityLabel("Free, private, and fully on-device. Your words never leave your iPhone.")
+
                 Spacer(minLength: 40)
             }
         } footer: {
