@@ -716,6 +716,7 @@ struct SettingsView: View {
                 Text("2 min").tag(TimeInterval(120))
                 Text("3 min").tag(TimeInterval(180))
                 Text("5 min").tag(TimeInterval(300))
+                Text("30 min").tag(TimeInterval(1800))
             }
             .labelsHidden()
             .pickerStyle(.menu)

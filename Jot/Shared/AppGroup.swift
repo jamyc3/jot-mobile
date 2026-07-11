@@ -309,7 +309,7 @@ enum AppGroup {
     }
 
     /// User-configurable warm-hold duration in seconds. Default `120` (2 minutes) when
-    /// unset; values are clamped to `[60, 300]` on both read and write.
+    /// unset; values are clamped to `[60, 1800]` (1 min … 30 min) on both read and write.
     ///
     /// `RecordingService.enterWarmHold()` reads this once at warm-hold
     /// entry into a local; subsequent Settings changes do NOT resize an
@@ -321,10 +321,10 @@ enum AppGroup {
                 return 120
             }
             let raw = defaults.double(forKey: Keys.warmHoldDurationSeconds)
-            return min(max(raw, 60), 300)
+            return min(max(raw, 60), 1800)
         }
         set {
-            let clamped = min(max(newValue, 60), 300)
+            let clamped = min(max(newValue, 60), 1800)
             defaults.set(clamped, forKey: Keys.warmHoldDurationSeconds)
         }
     }

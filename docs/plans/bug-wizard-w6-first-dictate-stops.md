@@ -1,6 +1,21 @@
 # Bug: Wizard W6 "Try the keyboard" — first Jot-down tap starts, flips to "Starting", then stops
 
-**Status: ROOT-CAUSE FIX SHIPPED in 257 (2026-07-07) — awaiting owner re-test.**
+**Status: ✅ RESOLVED — owner-verified on-device 2026-07-11 (build 266), both Apple and Jot engines. The ACTUAL root cause was a THIRD mechanism found via device Diagnostics (see "Confirmed root cause 2026-07-11" below), NOT LINK-A (the 257 fix, which was a real but different latent bug).**
+
+## Confirmed root cause 2026-07-11 (device logs + Codex ultra + owner verify)
+
+The 257 LINK-A fix (config-change self-stop) was a real latent bug but was NOT what the owner was hitting. Device Diagnostics (a temporary diagnostic build, 264–265) proved:
+- The stop was NOT a self-stop (`internalStop` never fired) — it was the NORMAL finalize path.
+- The engine was Parakeet (`appleEngEnglish=false`), so it had nothing to do with Apple dictation.
+- The strip's "Starting" = `.arming` = a fresh `start()`, corroborating a double-start.
+
+**Root cause:** in the keyboard, `recordStartDecision()` (JotKeyboardViewController.swift ~:2497) mapped **`.arming` → `.stop`**. In the mirror-lag window (local keyboard mirror still reads idle → `decideMicTap()` returns `.start`, but the shared record already reads `.arming`), the inner switch hit its "record-authoritative mirror-lag" branch (~:2635) and called **`requestStop()`** on the recording that had *just* started arming. A duplicate callback in the wizard triggered this reliably → recording killed ~1–2s in, strip stuck on "Starting".
+
+**Fix (build 266):** split the decision — only `.recording`/`.paused` (a genuinely LIVE record) map to `.stop`; a fresh `.arming` or post-recording pipeline record now returns a new **`.busy`** case → the tap is IGNORED (never stop an arming recording, never cold-start over it). State-based fencing, not a timing debounce. Root cause designed by Codex (gpt-5.6, ultra) from the device trace.
+
+---
+
+**Prior status (superseded): ROOT-CAUSE FIX SHIPPED in 257 (2026-07-07) — this was LINK-A, a different latent bug.**
 
 ## Trace outcome (static analysis, agent-verified)
 

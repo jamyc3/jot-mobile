@@ -76,6 +76,19 @@ struct TryKeyboardStep: View {
     /// Wall-clock when `.rise` was entered — escalation is measured from here.
     @State private var riseEnteredAt: Date?
 
+    /// Safety net so `.rise` can NEVER be a dead-end. After a grace period stuck
+    /// in `.rise` (loop couldn't complete — keyboard trouble, or a success both
+    /// the in-field insert and the clipboard handoff missed) we reveal an escape
+    /// button. Reviewer report: "there was nothing for me to click to proceed."
+    @State private var riseEscapeShown = false
+    @State private var riseEscapeTask: Task<Void, Never>?
+
+    /// Latch: a real Jot dictation actually RAN this entry. Gates the in-field
+    /// success trigger so merely typing into the (editable) practice field with
+    /// the SYSTEM keyboard can't be mistaken for "Pasted from Jot" — success
+    /// requires that the user actually dictated via Jot.
+    @State private var didDictateThisEntry = false
+
     /// A fixed phrase nudge chosen once per entry (random from the set), so the
     /// helper line is stable while the user reads it rather than flickering.
     @State private var suggestion: String = TryKeyboardStep.suggestions.randomElement() ?? "I am awesome."
@@ -130,6 +143,10 @@ struct TryKeyboardStep: View {
                     title: phase == .done ? "Continue" : "I tried it",
                     action: onAdvance
                 )
+            } else if riseEscapeShown {
+                // Escape hatch: the loop stalled — never trap the user with no
+                // control. Proceeds just like the pre-try "I tried it".
+                WizardPrimaryButton(title: "I tried it", action: onAdvance)
             }
         }
         .task {
@@ -158,12 +175,52 @@ struct TryKeyboardStep: View {
                 }
             }
         }
+        .onChange(of: recordingService.isRecording) { _, isRec in
+            // Latch a genuine Jot dictation attempt for this entry (gates the
+            // in-field success trigger below).
+            if isRec { didDictateThisEntry = true }
+        }
+        .onChange(of: fieldText) { _, newValue in
+            // Primary fix for the W5 dead-end: in the wizard the practice field
+            // IS the focused field, so a finalized Jot dictation is inserted
+            // straight into it. `startPolling` watches `ClipboardHandoff`, which
+            // the transient-paste path DOES publish — but the keyboard inserts
+            // and then CONSUMES that short-lived payload before the 750ms poll
+            // observes it, so the poll can miss it and the step stalls in `.rise`
+            // with the advance button hidden — "nothing to click to proceed"
+            // (reviewer). `fieldText` going non-empty is the reliable signal that
+            // the insert actually landed: treat it as the same success trigger →
+            // flip to `.done` so "Continue" appears. Gated on `didDictateThisEntry`
+            // so typing with the SYSTEM keyboard can't fake success. Still no
+            // auto-advance — the user taps Continue themselves.
+            if phase == .rise, didDictateThisEntry,
+               !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                fieldFocused = false
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
+                    phase = .done
+                }
+                tryKeyboardLog.notice("W5 dictation landed in-field — success (manual Continue)")
+            }
+        }
         .onChange(of: phase) { _, newPhase in
-            // Leaving `.rise` (to `.done`) clears any escalation and the rise
-            // timestamp so a future re-entry starts the cue from stage 1.
-            if newPhase != .rise {
+            if newPhase == .rise {
+                // Arm the escape-hatch grace timer so `.rise` is never a dead-end.
+                riseEscapeTask?.cancel()
+                riseEscapeTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 25_000_000_000)
+                    guard !Task.isCancelled, phase == .rise else { return }
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
+                        riseEscapeShown = true
+                    }
+                }
+            } else {
+                // Leaving `.rise` (to `.done`) clears any escalation, the rise
+                // timestamp, and the escape hatch so a future re-entry restarts.
                 globeHintEscalated = false
                 riseEnteredAt = nil
+                riseEscapeShown = false
+                riseEscapeTask?.cancel()
+                riseEscapeTask = nil
             }
         }
         .onDisappear {
@@ -171,6 +228,8 @@ struct TryKeyboardStep: View {
             pollTask = nil
             keyboardActivePollTask?.cancel()
             keyboardActivePollTask = nil
+            riseEscapeTask?.cancel()
+            riseEscapeTask = nil
             // Clear the koan gate — leaving this step must never leak the
             // one-time line into the keyboard / hero.
             AppGroup.wizardActive = false

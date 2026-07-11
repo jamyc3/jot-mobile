@@ -2475,7 +2475,8 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// "foreground"). The shadow logger (`logShadowStartDecision`) still runs
     /// beside this for continued diagnostics (B4 cleanup deferred).
     private enum RecordStartDecision: String {
-        case stop        // a fresh in-flight record → request a stop
+        case stop        // a fresh RECORDING/PAUSED record → request a stop
+        case busy        // a fresh ARMING or post-recording pipeline record → ignore the tap (never stop an arming recording, never cold-start over it) — W6 regression fix
         case warmResume  // fresh warmIdle, window open → warm-resume in background
         case cold        // idle / nil / stale → inline (if Jot foreground) or cold URL bounce
         case noFullAccess
@@ -2494,11 +2495,19 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         guard let record = PipelinePhaseProjection.read() else { return .cold }
         let fresh = now.timeIntervalSince(record.livenessOrLegacy) < Self.livenessFresh
         switch record.phase {
-        case .recording, .paused, .arming, .transcribing, .processing,
-             .cleaning, .rewriting, .publishing:
-            // Any in-flight state, fresh → a stop request; stale → the writer is
-            // dead, so a tap should cold-start.
+        case .recording, .paused:
+            // A genuinely-LIVE recording (or paused session), fresh → a stop
+            // request; stale → the writer is dead, so a tap should cold-start.
             return fresh ? .stop : .cold
+        case .arming, .transcribing, .processing,
+             .cleaning, .rewriting, .publishing:
+            // Fresh but NOT a live recording: still ARMING (coming up) or already
+            // PAST it (post-recording pipeline). A tap here must NOT be turned into
+            // a stop — stopping a just-armed recording is the W6 regression (a
+            // duplicate callback in the mirror-lag window killed the recording that
+            // had only just started). Ignore the tap (busy); never cold-start over
+            // it either. Stale → the writer is dead → cold-start.
+            return fresh ? .busy : .cold
         case .warmIdle:
             let windowOpen = record.warmExpiresAt.map { $0 > now } ?? false
             return (fresh && windowOpen) ? .warmResume : .cold
@@ -2632,12 +2641,25 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
                     startColdViaURLBounce()
                 }
 
+            case .busy:
+                // The record is ARMING (coming up) or in its post-recording
+                // pipeline — a fresh in-flight state that is NOT a live recording.
+                // Ignore the tap: do NOT requestStop (stopping the just-armed
+                // recording is the W6 regression) and do NOT cold-start over it.
+                // The mirror will catch up in a beat; the user can stop once it's
+                // actually recording.
+                keyboardLog.notice("Record reads arming/pipeline on a local .start -> ignoring (busy)")
+                DiagnosticsLog.record(
+                    source: "keyboard", category: .recordingOutcome,
+                    message: "mic tap ignored — record arming/pipeline (busy, W6 fix)"
+                )
+
             case .stop:
-                // The record reads a fresh in-flight session that the local mirror
-                // hasn't caught up to yet (it returned `.start`). Treat as a stop
-                // request so we don't cold-start over a live session. Rare race;
-                // the record is authoritative.
-                keyboardLog.notice("Record reads in-flight on a local .start -> routing stop (mirror lag)")
+                // The record reads a fresh LIVE recording/paused session that the
+                // local mirror hasn't caught up to yet (it returned `.start`). Treat
+                // as a stop request so we don't cold-start over a live session. Rare
+                // race; the record is authoritative.
+                keyboardLog.notice("Record reads live on a local .start -> routing stop (mirror lag)")
                 requestStop()
             }
 

@@ -145,7 +145,7 @@ struct HelpView: View {
                         tint: JotDesign.JotSemanticIcon.privacyMicReady,
                         shaded: JotDesign.JotSemanticIcon.privacyMicReadyShaded,
                         title: "Keep going when life interrupts",
-                        body: "Calls, app switches — the mic stays warm for five minutes, and what you said is already saved. Even if a call drops everything, the part you'd already dictated is safe in the text field.",
+                        body: "Calls, app switches — the mic stays warm for your chosen window (up to 30 minutes), and what you said is already saved. Even if a call drops everything, the part you'd already dictated is safe in the text field.",
                         showDivider: true
                     )
                     featureRow(
