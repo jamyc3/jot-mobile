@@ -52,18 +52,27 @@ enum CorrectionAsksPublisher {
         }
 
         // Worth asking on the keyboard: an APPLIED correction (the gate changed
-        // your text — most worth a quick confirm), a mapping part-way to automatic
-        // (prior > 0), or a low-confidence call (unsure). Confident KEPT blocks
-        // (the gate correctly left the original) stay on the transcript only.
-        // (Broader than the handoff's selectAsks, which deferred confident one-off
-        // APPLYs to the transcript — but that left a fresh user seeing NO nudge.)
+        // your text — most worth a quick confirm) or a mapping part-way to
+        // automatic (prior > 0). ALL other KEPT blocks — including low-confidence
+        // (`unsure`) ones — stay on the transcript only and are NOT surfaced as
+        // keyboard asks.
+        //
+        // (R4, 2026-07-12) Previously `|| r.unsure` also asked about proposals the
+        // gate had BLOCKED (kept the original) when TDT confidence was middling.
+        // That was the "it asks about words that don't even match" nagging: the
+        // gate correctly rejected a non-matching term, yet the keyboard still
+        // asked "did you mean <term>?". A blocked-because-implausible guess should
+        // never become an ask — if it was really right, the transcript review
+        // still surfaces it. Only corrections we actually made, or mappings the
+        // owner is already training (prior > 0), are worth a keyboard confirm.
+        //
         // EXCLUDE pairs the owner keeps rejecting (keyboardSuppressed) so the
         // keyboard stops nagging — they remain reviewable on the transcript.
         // Split into an explicitly-typed helper so the Swift type-checker doesn't
         // choke on the compound predicate inside `.filter`.
         func worthAsking(_ r: CorrectionProvenance.Record) -> Bool {
             if keyboardSuppressed.contains(pairKey(r)) { return false }
-            return r.outcome == "applied" || prior(r) > 0 || r.unsure
+            return r.outcome == "applied" || prior(r) > 0
         }
         let candidates: [CorrectionProvenance.Record] = unresolved.filter(worthAsking)
         let ranked: [CorrectionProvenance.Record] = candidates.sorted { prior($0) > prior($1) }
@@ -72,10 +81,14 @@ enum CorrectionAsksPublisher {
         var asks: [CorrectionBridge.Ask] = []
         for r in selected {
             let (before, after) = context(of: r, in: publishedText)
+            // 3-option ask: surface the first alternate (the keyboard card
+            // caps at 3 buttons — original, term, one alternate).
+            let alt = r.alternates?.first
             asks.append(CorrectionBridge.Ask(
                 recordKey: r.key, original: r.originalWord, term: r.term,
                 outcome: r.outcome, contextBefore: before, contextAfter: after,
-                publishedStart: r.publishedStart, publishedLength: r.publishedLength))
+                publishedStart: r.publishedStart, publishedLength: r.publishedLength,
+                altTerm: alt?.term, altFind: alt?.find))
         }
         guard !asks.isEmpty else {
             CorrectionBridge.clearAsks()

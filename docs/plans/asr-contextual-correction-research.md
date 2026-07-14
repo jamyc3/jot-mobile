@@ -80,6 +80,29 @@ No one ships silent on-device misrecognition-fixing over near-correct long-form 
 
 **Net:** the hard part is *plumbing per-word evidence safely through Jot's transform pipeline and surfacing it on tap*, not the ML. This is a real multi-week feature, but with over-correction ruled out by construction.
 
+## Empirical detection experiment 2026-07-11 — "can we find an out-of-place word WITHOUT a chat-LLM?"
+
+Built a ground-truth eval by **injecting known homophone errors** into 400 real Jot transcripts (+400 clean), then tested detectors (4 subagents in parallel + a combination pass I ran). Metric: Recall@1/@3 for catching the injected error, and **False-Alarm Rate (FAR)** = fraction of *clean* transcripts that flag ≥1 word (the precision killer).
+
+**Text-only detection ALONE fails** (all ~94–99% FAR — they conflate "rare/unseen" with "wrong"; your correct jargon "Corkus"/"OLAMA"/"Xcode" outscores real errors; separation is *inverted* in every case):
+| Method | Recall@1 | Recall@3 | FAR | On-device |
+|---|---|---|---|---|
+| N-gram (trigram KN) | 0.05 | 0.22 | 0.998 | tiny (KenLM) |
+| Word embeddings (spaCy) | 0.08 | 0.19 | 0.993 | tiny |
+| Causal LM (GPT-2 124M) | 0.22 | 0.48 | 0.945 | ~250MB, viable |
+| Masked LM (DistilBERT 67M) | 0.16 | 0.50 | 0.943 | slow (per-word passes) |
+
+**The WINNER — phonetic-gating + a small masked-LM candidate comparison:** only look at words that *have* a sound-alike (excludes all the proper-noun noise), then ask a small MLM "does a homophone fit **better** here?" (compare pseudo-log-likelihood of the word vs each homophone in context). This DETECTS + CORRECTS in one step, and is NOT a chat-LLM — a model that only outputs P(word) can't hallucinate/derail.
+- **All homophones:** detect-recall **0.905**, correct-recall **0.905**, **FAR 0.095**, ~58 ms/transcript.
+- **Content homophones only** (drop the unreliable grammar contractions it's/its, you're/your, they're/their): detect-recall **0.971**, correct-recall **0.971**, **FAR 0.003**. (Verification showed the 9% FAR was almost entirely the grammar-contraction class, where the MLM over-corrects the wrong direction — e.g. "It's pretty long" → "its". Excluding them fixes it.)
+- Corrections verified: 8/8 injected errors fixed with the right word (won→one, sea→see, write→right, …).
+
+**Why it works:** the phonetic gate is the second independent signal the research said was mandatory — it filters out the rare-but-correct words that wreck every text-only detector, and it *is* the candidate generator. This is essentially what Jot's CTC vocab-rescorer already does in spirit (constrained candidate rescoring).
+
+**Caveats / productionization:** (1) catches the HOMOPHONE/confusable class (a big chunk of "few words mixed up", not every misrecognition) — to go beyond a fixed list, generate candidates via **phonetic similarity** (Double Metaphone / G2P, native Swift libs exist) instead of a hardcoded homophone map; (2) exclude grammar contractions; (3) layering ASR **confidence** (available from FluidAudio) as a further gate should push FAR even lower; (4) the 0.3% FAR is likely an *over*estimate (some flagged "clean" words are real Jot ASR errors it correctly caught); (5) eval used synthetic errors — a real-error eval on human-verified transcripts is the ship gate. (6) The candidate comparison can use a small MLM (DistilBERT ~34MB int8) OR an n-gram (tinier) — both just score "which candidate fits", neither can hallucinate. Harness in session scratchpad (`word-fit-test/`).
+
+**Bottom line: YES — you can reliably find (and fix) an out-of-place word without a chat-LLM.** Phonetic-gating + a tiny fits-better scorer hits ~97% correction recall at ~0.3% false-alarm rate on content homophones — a genuinely shippable, safe, on-device profile, and it pairs perfectly with the tap-to-fix UX (precise enough to auto-suggest, safe because it only touches sound-alike words).
+
 ## Key sources
 - Apple, *Revisiting ASR Error Correction with Specialized Models* — https://machinelearning.apple.com/research/asr-error-correction
 - *ASR Error Correction using LLMs (n-best + constrained decoding)* — https://arxiv.org/html/2409.09554v2
@@ -89,3 +112,13 @@ No one ships silent on-device misrecognition-fixing over near-correct long-form 
 - *Confidence-guided error correction* — https://arxiv.org/pdf/2509.25048
 - *Non-Intrusive ASR Refinement: A Survey* — https://arxiv.org/pdf/2508.07285
 - FluidAudio (confidence/timestamps) — https://github.com/FluidInference/FluidAudio
+
+## REAL-DATA verdict 2026-07-12 — ran the phonetic-gate + DistilBERT over 2,643 UNMODIFIED real Jot recordings (NOT synthetic)
+Ran `word-fit-test/real_probe.py` (content-homophone map, DistilBERT PLL, all margins recorded) over the actual recordings CSV. **This overturns the synthetic 97%/0.3% headline.**
+
+- **56 candidate flags total across 2,643 transcripts.** Dominated by discourse/function words: **`right`→write n=22, `no`→know n=11, `than/then` n=6** = 68% of all flags, essentially ALL false alarms ("right now", "right?", "No, you idiot", "rather than"). DistilBERT is formal-text-trained and systematically prefers the homophone for conversational discourse markers.
+- **Only ~4–6 GENUINE catches in the entire corpus:** `hole`→whole ×2 (δ8.0, δ5.3), `brake`→break (δ5.8), `than`→then ×1 (FlinchR). That's ~0.2% of transcripts.
+- **No margin threshold separates signal from noise:** the top false alarm ("Don't right now"→write, δ5.3) outscores real catches (brake→break δ5.8 is barely above). Clean precision is only achievable by HARD-EXCLUDING the discourse words (right/no/then/than/here) — which leaves ~3 real catches total.
+- **Why the synthetic eval lied:** it injected uniform content-word homophone errors; the real error distribution is different — (a) Jot's Parakeet ASR is genuinely good, so clean homophone substitutions are rare; (b) the real errors in transcripts are **proper nouns / jargon** (Corkus, FlinchR, OLAMA, Route 53) — NOT homophones — which belong to the **CTC custom-vocabulary** domain, not a generic MLM.
+
+**Decision: ABORT standalone homophone auto-correction.** Real-data ROI (~3–6 fixes per 2,643 notes, at high false-alarm risk + a 34MB on-device model + latency) does not justify it. **Redirect the phonetic-gating insight to the CTC vocab-precision fix** (`docs/plans/ctc-vocab-precision-research.md`): a Double Metaphone gate on custom-vocabulary matching targets the owner's ACTUAL complaint ("it suggests words that don't match"), is cheaper (no MLM), and hits the real error class (custom proper nouns). Harness kept at `word-fit-test/` if we ever want to revisit with a broader phonetic candidate generator + ASR-confidence gating.

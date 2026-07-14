@@ -179,6 +179,14 @@ enum DictationPipeline {
         // R7: in-field dictation bypasses DictationStats).
         if !transient {
             DictationStats.record(durationSeconds: duration)
+            // Keyboard-nudge arming, priority order warm-hold › vocab ›
+            // Parakeet (owner-set 2026-07-13). Vocab arms first so the
+            // Parakeet arm's vocab-guard sees it; warm-hold outranks both via
+            // each arm's warmHoldNudgeShouldShow guard + the render chain.
+            // All three share the cross-nudge quiet period
+            // (`AppGroup.nudgeQuietPeriodActive`) so consecutive keyboard
+            // sessions never feel like a nag chain.
+            maybeArmVocabNudge()
             // Parakeet-upgrade nudge (deferred-engineering follow-up to Apple
             // becoming the default dictation engine): count English dictations
             // that ran on Apple's engine and arm the keyboard's one-time "switch to
@@ -682,6 +690,11 @@ enum DictationPipeline {
         // for a nudge — the rare all-Apple-failures user who's effectively on
         // FluidAudio might still get nudged, harmlessly (Opus nudge review B).
         guard TranscriptionService.shared.useAppleEngine else { return }
+        // NEVER nudge to Parakeet for a language Parakeet can't do (the CJK
+        // four, and Latin-American Spanish which is deliberately Apple-only —
+        // Parakeet's Spanish is European). Offering an engine that has no model
+        // for the current language is the bug this guard closes.
+        guard !LanguageChoice.current.isAppleOnly else { return }
         DictationStats.incrementAppleDictationCount()
         guard DictationStats.appleDictationCount >= 5,
               // `is600MCapable` is the codebase's existing "can run Parakeet
@@ -695,10 +708,42 @@ enum DictationPipeline {
               TranscriptionService.parakeetUsable,
               AppGroup.useAppleDictationForEnglish,
               !AppGroup.parakeetNudgeDeclined,
-              !AppGroup.warmHoldNudgeShouldShow
+              // Priority: warm-hold › vocab › Parakeet — defer to both.
+              !AppGroup.warmHoldNudgeShouldShow,
+              !AppGroup.vocabNudgeShouldShow,
+              // Cross-nudge quiet period (a nudge was just answered).
+              !AppGroup.nudgeQuietPeriodActive
         else { return }
         AppGroup.showParakeetUpgradeNudge = true
         CrossProcessNotification.post(name: CrossProcessNotification.parakeetUpgradeNudgeChanged)
+    }
+
+    /// Arms the keyboard's one-time Vocabulary-adoption nudge: Vocabulary
+    /// Boost is OFF and the user is either high-intent (has added custom
+    /// terms — they're going unused) or engaged (≥5 dictations). Opt-in only —
+    /// the nudge routes to the Vocabulary screen; nothing auto-enables.
+    /// Priority warm-hold › vocab › Parakeet: defers to an armed warm-hold
+    /// nudge, and the Parakeet arm defers to this. Shares the cross-nudge
+    /// quiet period so it never lands right after another nudge was answered.
+    private static func maybeArmVocabNudge() {
+        guard !VocabularyStore.shared.isEnabled,
+              !AppGroup.vocabNudgeDeclined,
+              !AppGroup.vocabNudgeShouldShow,          // already armed — no re-post
+              !AppGroup.warmHoldNudgeShouldShow,       // warm-hold outranks
+              !AppGroup.showParakeetUpgradeNudge,      // never stack an armed one
+              !AppGroup.nudgeQuietPeriodActive
+        else { return }
+        // Tier A (high-intent): terms exist but the toggle is off.
+        // Tier B (engaged): no terms yet, but a real usage habit (≥5
+        // dictations — same engagement bar as the Parakeet nudge).
+        let hasTerms = !VocabularyStore.shared.terms.isEmpty
+        guard hasTerms || DictationStats.totalCount >= 5 else { return }
+        AppGroup.vocabNudgeShouldShow = true
+        CrossProcessNotification.post(name: CrossProcessNotification.vocabNudgeChanged)
+        DiagnosticsLog.record(
+            source: "main-app", category: .vocabularyGate,
+            message: "vocab nudge armed",
+            metadata: ["tier": hasTerms ? "A-termsOff" : "B-engaged"])
     }
 
     private static func updateFollowUpDiscoveryState(

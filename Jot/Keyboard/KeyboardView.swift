@@ -63,6 +63,15 @@ struct KeyboardView: View {
     /// `showWarmHoldNudge` — see `topStrip`'s branch order.
     let showParakeetUpgradeNudge: Bool
 
+    /// Vocabulary-adoption nudge — when true, the keyboard renders the
+    /// one-time "Get names & jargon spelled right" strip over the strip area.
+    /// The app computes eligibility (Vocabulary Boost off + engaged user, or
+    /// terms added but toggle off) and sets the `vocabNudgeShouldShow`
+    /// App-Group projection; the keyboard renders off this boolean and writes
+    /// the two terminal actions back. Render precedence warm-hold › vocab ›
+    /// Parakeet — see `topStrip`'s branch order.
+    let showVocabNudge: Bool
+
     /// v2 retheme (2026-05-11) — host's `keyboardAppearance` hint
     /// (`UIKeyboardAppearance.default` / `.light` / `.dark`). Some
     /// hosts force `.dark` even when the system is in light mode; this
@@ -151,6 +160,14 @@ struct KeyboardView: View {
     /// Parakeet-upgrade nudge "Not now" (dismiss). One tap, no confirm:
     /// permanent decline.
     let onParakeetUpgradeNudgeDismiss: () -> Void
+
+    /// Vocabulary nudge "Set up" (accept). One tap, no confirm: opens the
+    /// main app's Vocabulary screen via a deep link (nothing auto-enables).
+    let onVocabNudgeSetUp: () -> Void
+
+    /// Vocabulary nudge "Not now" (dismiss). One tap, no confirm: permanent
+    /// decline.
+    let onVocabNudgeDismiss: () -> Void
 
     /// Correction quick-review — when true, the keyboard renders the post-paste
     /// correction-review strip over the strip area (higher priority than the
@@ -382,10 +399,26 @@ struct KeyboardView: View {
                     ? .opacity
                     : .opacity.combined(with: .move(edge: .top))
             )
+        } else if showVocabNudge && !recordingState.isRecording {
+            // Vocabulary-adoption nudge. Render precedence warm-hold › vocab
+            // › Parakeet (owner-set): only reachable when the warm-hold nudge
+            // above is NOT showing; the Parakeet branch below yields to this
+            // one. The nudges never stack.
+            VocabNudgeStrip(
+                reduceMotion: reduceMotion,
+                onSetUp: onVocabNudgeSetUp,
+                onDismiss: onVocabNudgeDismiss,
+                feedback: feedback
+            )
+            .transition(
+                reduceMotion
+                    ? .opacity
+                    : .opacity.combined(with: .move(edge: .top))
+            )
         } else if showParakeetUpgradeNudge && !recordingState.isRecording {
             // Deferred-engineering follow-up to the Apple Dictation A/B spike.
-            // Only reachable when the warm-hold nudge above is NOT showing —
-            // the two nudges never stack.
+            // Only reachable when neither nudge above is showing — the
+            // nudges never stack.
             ParakeetUpgradeNudgeStrip(
                 reduceMotion: reduceMotion,
                 onSwitch: onParakeetUpgradeNudgeUpgrade,

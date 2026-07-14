@@ -45,6 +45,18 @@ enum VocabularyGate {
     /// against a confident or common word.
     static let earnedMargin: Float = 4.0
 
+    /// An alternate candidate term for a proposal's span (3-option ask,
+    /// 2026-07-13). `term` is the vocab term to offer; `find` is the EXACT
+    /// in-text string it would replace (the winning span's published text
+    /// plus the following transcript words the longer term extends over,
+    /// e.g. find "Claude code" → term "Claude Code"). Computed at gate time
+    /// because FluidAudio's merge prefers the SHORTER span and drops the
+    /// longer term inside the package — Jot re-detects it here.
+    struct Alternate: Codable, Sendable, Equatable {
+        let term: String
+        let find: String
+    }
+
     /// One proposal the CTC spotter surfaced, with the gate's verdict — kept so
     /// the review surface can persist it per-transcript and let the owner
     /// adjudicate each **occurrence** later (plan §v2-A).
@@ -67,6 +79,9 @@ enum VocabularyGate {
         // or fail-safe), never proximity-guessed.
         let publishedStart: Int
         let publishedLength: Int
+        // Alternate candidate terms for this span (3-option ask). Empty for
+        // the common single-candidate case.
+        let alternates: [Alternate]
     }
 
     struct Result {
@@ -90,7 +105,9 @@ enum VocabularyGate {
         output: VocabularyRescorer.RescoreOutput,
         tokenTimings: [TokenTiming],
         overrides: [CorrectionStore.OverrideEntry] = [],
-        termAliases: [String: [String]] = [:]
+        termAliases: [String: [String]] = [:],
+        language: LanguageChoice = .english,
+        allTerms: [String] = []
     ) -> Result {
         guard output.wasModified, !output.replacements.isEmpty else {
             return Result(text: output.text, applied: 0, blocked: [], proposals: [])
@@ -108,6 +125,11 @@ enum VocabularyGate {
             let r: VocabularyRescorer.RescoringResult
             let d: (pass: Bool, confidence: Float, margin: Float, label: String, unsure: Bool)
             let range: Range<String.Index>
+            // The effective original span text — normally `r.originalWord`,
+            // but WIDER when the dedup guard absorbed a following duplicate
+            // word ("clawed" + following "code" for term "Claude Code" →
+            // "clawed code"), so reverts/chips restore the full span.
+            let originalWord: String
             let originalStart: Int
             let originalLength: Int
             let occurrenceIndex: Int
@@ -119,17 +141,115 @@ enum VocabularyGate {
         for r in output.replacements where r.shouldReplace {
             let key = r.originalWord.lowercased()
             let n = occurrence[key, default: 0]
-            guard let range = nthWholeWordRange(of: r.originalWord, in: originalTranscript, occurrence: n) else {
+            guard var range = nthWholeWordRange(of: r.originalWord, in: originalTranscript, occurrence: n) else {
                 continue
             }
             occurrence[key] = n + 1
-            let d = decide(
-                r, wordConfidence: wordConfidence, overrides: overrides,
-                aliases: termAliases[(r.replacementWord ?? "").lowercased()] ?? [])
+
+            // V2-1 · Alignment window (round-2 amendment). A multi-word term
+            // must align to ONE unique edge-touching window inside its span;
+            // extra span words survive; anything ambiguous blocks. Runs
+            // BEFORE decide() so identity/learning use the aligned span.
+            var alignmentBlocked = false
+            var effectiveOriginal = r.originalWord
+            if let term = r.replacementWord {
+                let termWords = term.split(separator: " ").map(String.init)
+                let spanWords = r.originalWord.split(separator: " ").map(String.init)
+                if termWords.count >= 2, spanWords.count >= termWords.count {
+                    switch Self.alignmentWindow(termWords: termWords, spanWords: spanWords) {
+                    case .unique(let wordIndex):
+                        if spanWords.count > termWords.count,
+                           let sub = Self.wordSubrange(
+                               of: range, wordIndex: wordIndex,
+                               count: termWords.count, in: originalTranscript) {
+                            range = sub
+                            effectiveOriginal = String(originalTranscript[sub])
+                            DiagnosticsLog.record(
+                                source: "main-app", category: .vocabularyGate,
+                                message: "align-narrowed \(r.originalWord) → \(effectiveOriginal)",
+                                metadata: ["term": term])
+                        }
+                    case .blocked:
+                        alignmentBlocked = true
+                    }
+                }
+            }
+            // Repeated-occurrence guard (round-2): the package gives no span
+            // position, so the k-th-arrival→k-th-occurrence mapping can hit
+            // the WRONG occurrence when the word repeats. Safe only when the
+            // word occurs once, OR every occurrence has a proposal with the
+            // SAME replacement (then order can't change the text). Otherwise
+            // block to the pane.
+            if !alignmentBlocked,
+               nthWholeWordRange(of: r.originalWord, in: originalTranscript, occurrence: 1) != nil {
+                // ≥2 textual occurrences. Count them + the proposals.
+                var occCount = 2
+                while nthWholeWordRange(of: r.originalWord, in: originalTranscript, occurrence: occCount) != nil {
+                    occCount += 1
+                }
+                let siblings = output.replacements.filter {
+                    $0.shouldReplace && $0.originalWord.lowercased() == key
+                }
+                let sameTerm = Set(siblings.map { ($0.replacementWord ?? "").lowercased() }).count == 1
+                if siblings.count != occCount || !sameTerm {
+                    alignmentBlocked = true
+                    DiagnosticsLog.record(
+                        source: "main-app", category: .vocabularyGate,
+                        message: "occurrence-ambiguous \(r.originalWord) → \(r.replacementWord ?? "—")",
+                        metadata: ["occurrences": "\(occCount)", "proposals": "\(siblings.count)"])
+                }
+            }
+
+            // Dedup guard (owner bug 2026-07-13: saying "Claude code" heard
+            // as "clawed code" applied the two-word term over just "clawed"
+            // → "Claude Code code"). When a multi-word term covers FEWER
+            // words than the term has, and the term's trailing word(s)
+            // duplicate the transcript word(s) right after the span, widen
+            // the span to absorb them so an apply can't double a word.
+            // Runs BEFORE decide() (diff-review fix): the widened span IS the
+            // proposal's identity, so learned demotions/overrides key on
+            // "clawed code", and a revert actually blocks the next occurrence.
+            // (Shape-gated only — widening a proposal that then blocks is
+            // harmless; the record just shows the true span.)
+            if let term = r.replacementWord, !alignmentBlocked,
+               let widened = absorbTrailingDuplicates(
+                   term: term, spanWord: effectiveOriginal,
+                   range: range, in: originalTranscript) {
+                range = widened
+                effectiveOriginal = String(originalTranscript[widened])
+                DiagnosticsLog.record(
+                    source: "main-app",
+                    category: .vocabularyGate,
+                    message: "dedup-absorbed \(r.originalWord) → \(effectiveOriginal)",
+                    metadata: ["term": term]
+                )
+            }
+
+            // decide() consumes the EFFECTIVE identity (aligned-narrowed or
+            // dedup-widened span text), not the raw engine span (diff-review
+            // fix): plausibility/confidence/common-word/learned lookups must
+            // all see the same words the replacement actually touches.
+            var d = decide(
+                r, originalWord: effectiveOriginal,
+                wordConfidence: wordConfidence, overrides: overrides,
+                aliases: termAliases[(r.replacementWord ?? "").lowercased()] ?? [],
+                language: language)
+            if alignmentBlocked, d.pass {
+                // Force-block a proposal whose span identity is unsafe. The
+                // proposal stays visible in the transcript pane for review.
+                d = (false, d.confidence, d.margin, "BLOCK", d.unsure)
+            }
             log.info(
                 "gate \(r.originalWord, privacy: .public)→\(r.replacementWord ?? "—", privacy: .public): conf=\(d.confidence, format: .fixed(precision: 3)) margin=\(d.margin, format: .fixed(precision: 2)) \(d.label, privacy: .public)"
             )
             // Surface each decision in the in-app Help → Diagnostics card.
+            // `netMargin` (R3 bootstrap, 2026-07-13): the margin with the
+            // engine's context-biasing head-start (cbw≈3.0) subtracted — an
+            // APPROXIMATION of "did the term win on acoustic merit alone?"
+            // (long multi-token terms get an adaptive cbw slightly above 3.0,
+            // so their true net is a bit lower than logged). Read these off
+            // real dictations, join with the verdict logs, and calibrate the
+            // R3 un-boosted-margin gate from the distribution.
             DiagnosticsLog.record(
                 source: "main-app",
                 category: .vocabularyGate,
@@ -138,6 +258,7 @@ enum VocabularyGate {
                     "decision": d.label,
                     "conf": String(format: "%.3f", d.confidence),
                     "margin": String(format: "%.2f", d.margin),
+                    "netMargin": String(format: "%.2f", d.margin - 3.0),
                 ]
             )
             items.append(
@@ -145,6 +266,7 @@ enum VocabularyGate {
                     r: r,
                     d: d,
                     range: range,
+                    originalWord: effectiveOriginal,
                     originalStart: originalTranscript.distance(from: originalTranscript.startIndex, to: range.lowerBound),
                     originalLength: originalTranscript.distance(from: range.lowerBound, to: range.upperBound),
                     occurrenceIndex: n,
@@ -153,7 +275,15 @@ enum VocabularyGate {
             )
         }
 
-        items.sort { $0.range.lowerBound < $1.range.lowerBound }
+        items.sort {
+            // Positional order; on an equal start (possible after V2-1
+            // narrowing), the LONGER span wins the slot — it's the more
+            // specific match (diff-review tie-break).
+            if $0.range.lowerBound != $1.range.lowerBound {
+                return $0.range.lowerBound < $1.range.lowerBound
+            }
+            return $0.range.upperBound > $1.range.upperBound
+        }
 
         var result = ""
         var cursor = originalTranscript.startIndex
@@ -161,13 +291,44 @@ enum VocabularyGate {
         var blocked: [String] = []
         var proposals: [Proposal] = []
         for item in items {
-            guard item.range.lowerBound >= cursor else { continue }  // overlap guard — skip (no proposal)
+            // Overlap guard — when two proposals claim overlapping spans
+            // (e.g. terms "Claude" AND "Claude Code" both matching the same
+            // audio), the leftmost-starting one wins and the rest are
+            // dropped. Log the drop (2026-07-13): this was silent, which made
+            // "I added Claude and Claude Code but only one works" untraceable.
+            guard item.range.lowerBound >= cursor else {
+                DiagnosticsLog.record(
+                    source: "main-app",
+                    category: .vocabularyGate,
+                    message: "overlap-dropped \(item.originalWord) → \(item.r.replacementWord ?? "—")",
+                    metadata: [
+                        "decision": item.d.label,
+                        "margin": String(format: "%.2f", item.d.margin),
+                    ]
+                )
+                continue
+            }
             result += originalTranscript[cursor..<item.range.lowerBound]
             let publishedStart = result.count
             result += item.publishedText
+            // 3-option ask (2026-07-13): detect LONGER vocab siblings of the
+            // winning term whose extension matches the words that follow in
+            // the transcript ("Claude" won but "Claude Code" fits the audio +
+            // next word). FluidAudio's merge prefers the shorter span and
+            // drops the longer candidate inside the package, so it can never
+            // reach this gate — re-derive it here so the ask can offer it.
+            let alternates = extensionAlternates(
+                winnerTerm: item.r.replacementWord,
+                publishedText: item.publishedText,
+                after: item.range.upperBound,
+                in: originalTranscript,
+                allTerms: allTerms)
             proposals.append(
                 Proposal(
-                    originalWord: item.r.originalWord,
+                    // Effective span text (dedup-widened when the guard
+                    // absorbed a following duplicate) — reverts and ask
+                    // chips must restore/show the FULL replaced span.
+                    originalWord: item.originalWord,
                     term: item.r.replacementWord ?? item.r.originalWord,
                     decision: item.d.label,
                     outcome: item.d.pass ? "applied" : "kept",
@@ -178,7 +339,8 @@ enum VocabularyGate {
                     originalStart: item.originalStart,
                     originalLength: item.originalLength,
                     publishedStart: publishedStart,
-                    publishedLength: item.publishedText.count
+                    publishedLength: item.publishedText.count,
+                    alternates: alternates
                 )
             )
             if item.d.pass { applied += 1 } else { blocked.append(String(originalTranscript[item.range])) }
@@ -196,17 +358,24 @@ enum VocabularyGate {
     /// §v2-H) — used to prioritise the keyboard's quick-review asks.
     private static func decide(
         _ r: VocabularyRescorer.RescoringResult,
+        originalWord: String? = nil,
         wordConfidence: [String: Float],
         overrides: [CorrectionStore.OverrideEntry],
-        aliases: [String]
+        aliases: [String],
+        language: LanguageChoice
     ) -> (pass: Bool, confidence: Float, margin: Float, label: String, unsure: Bool) {
         let margin = (r.replacementScore ?? r.originalScore) - r.originalScore
-        let base = normalize(r.originalWord)
+        // The EFFECTIVE span identity (aligned-narrowed / dedup-widened) when
+        // the caller adjusted it; every guard below keys on this, so the
+        // decision matches the words the replacement actually touches.
+        let base = normalize(originalWord ?? r.originalWord)
         let term = r.replacementWord ?? ""
         let baseWords = base.split(separator: " ").map(String.init)
         let measured = baseWords.compactMap { wordConfidence[$0] }.min()
         let confidence = measured ?? lowConfidence
-        let isCommon = baseWords.contains { CommonWords.isCommon($0) }
+        let isCommon = baseWords.contains {
+            CommonWords.isCommon($0, resource: language.commonWordsResource)
+        }
         // Genuine acoustic uncertainty: a MEASURED confidence between "shaky" and
         // "sure". Unknown confidence (tokens missed the confidence map — common
         // for the OOV names this feature targets) is NOT unsure, so it doesn't
@@ -273,6 +442,237 @@ enum VocabularyGate {
         return (true, confidence, margin, "APPLY", unsure)
     }
 
+    // MARK: - Alignment window (V2-1 — multi-word term over a WIDER span)
+
+    /// Where a multi-word term's words sit inside a wider matched span.
+    enum AlignmentResult: Equatable {
+        /// Exactly one contiguous window aligns, touching a span edge —
+        /// `wordIndex` is the window's first word index within the span.
+        case unique(wordIndex: Int)
+        /// No window aligns (e.g. span "Claude Claude" vs term "Claude
+        /// Code") or more than one does (repeated words) or the only
+        /// window is mid-span (extra words on BOTH sides). Precision-first:
+        /// the proposal must BLOCK, never trim-and-guess.
+        case blocked
+    }
+
+    /// V2-1 (round-2 amendment): a multi-word term may only apply to a span
+    /// with MORE words than the term when the term's words form ONE unique,
+    /// ordered, contiguous, edge-touching window inside the span (per-word
+    /// skeleton alignment at the plausibility ceiling). Extra words outside
+    /// the window SURVIVE the replacement ("use Claude code" → window
+    /// "Claude code", "use" survives). Anything ambiguous blocks. This
+    /// closes both round-2 breaks: the eaten leading word (ledger #1) and
+    /// the equal-width-shifted span ("Claude Claude" never aligns to
+    /// "Claude Code" because word 2 fails per-word alignment).
+    static func alignmentWindow(termWords: [String], spanWords: [String]) -> AlignmentResult {
+        guard termWords.count >= 2, spanWords.count > termWords.count else {
+            // Equal width: require EVERY word to align (shifted spans block).
+            if spanWords.count == termWords.count {
+                let ok = zip(spanWords, termWords).allSatisfy { wordAligns($0, $1) }
+                return ok ? .unique(wordIndex: 0) : .blocked
+            }
+            return .unique(wordIndex: 0)  // narrower span — dedup guard's domain
+        }
+        var matches: [Int] = []
+        for start in 0...(spanWords.count - termWords.count) {
+            let window = spanWords[start..<(start + termWords.count)]
+            if zip(window, termWords).allSatisfy({ wordAligns($0, $1) }) {
+                matches.append(start)
+            }
+        }
+        guard matches.count == 1, let start = matches.first else { return .blocked }
+        // Edge-touching: leading edge (start == 0) or trailing edge.
+        let touchesEdge = start == 0 || start + termWords.count == spanWords.count
+        return touchesEdge ? .unique(wordIndex: start) : .blocked
+    }
+
+    /// Per-word alignment at the same ceiling as the plausibility guard.
+    private static func wordAligns(_ spanWord: String, _ termWord: String) -> Bool {
+        let a = skeleton(spanWord)
+        let b = skeleton(termWord)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        return Double(levenshtein(a, b)) / Double(max(a.count, b.count)) <= plausibilityCeiling
+    }
+
+    /// Character range of `count` whole words starting at word index
+    /// `wordIndex` within `range` in `text`. nil if the slice doesn't have
+    /// that many words (defensive).
+    private static func wordSubrange(
+        of range: Range<String.Index>, wordIndex: Int, count: Int, in text: String
+    ) -> Range<String.Index>? {
+        var starts: [String.Index] = []
+        var ends: [String.Index] = []
+        var i = range.lowerBound
+        var inWord = false
+        while i < range.upperBound {
+            if text[i] == " " {
+                if inWord { ends.append(i); inWord = false }
+            } else if !inWord {
+                starts.append(i); inWord = true
+            }
+            i = text.index(after: i)
+        }
+        if inWord { ends.append(range.upperBound) }
+        guard wordIndex + count <= starts.count, ends.count == starts.count else { return nil }
+        // Trim the window's ends to alphanumerics (diff-review fix): boundary
+        // punctuation must stay OUTSIDE the replaced range so "cloud code,"
+        // → "Claude Code," keeps its comma. Leading trim on the first word,
+        // trailing trim on the last.
+        var lo = starts[wordIndex]
+        let wordEnd = ends[wordIndex]
+        while lo < wordEnd, !(text[lo].isLetter || text[lo].isNumber) {
+            lo = text.index(after: lo)
+        }
+        var hi = ends[wordIndex + count - 1]
+        let lastStart = starts[wordIndex + count - 1]
+        while hi > lastStart {
+            let prev = text.index(before: hi)
+            if text[prev].isLetter || text[prev].isNumber { break }
+            hi = prev
+        }
+        guard lo < hi else { return nil }
+        return lo..<hi
+    }
+
+    // MARK: - Dedup guard (multi-word term over a narrower span)
+
+    /// When a multi-word term is applied over a span with FEWER words than
+    /// the term ("Claude Code" over just "clawed"), and the term's trailing
+    /// word(s) duplicate the transcript word(s) immediately after the span,
+    /// return the span widened to absorb those duplicates — so the apply
+    /// yields "Claude Code" once, never "Claude Code code". Returns nil when
+    /// nothing should be absorbed.
+    ///
+    /// Precision rules: absorb at most (term words − span words) words — a
+    /// span that already covers every term word absorbs NOTHING, so a real
+    /// following "code" ("Claude Code code review") is never eaten; only
+    /// cross plain spaces (any punctuation or newline between blocks it);
+    /// compare letter skeletons (case/punctuation-insensitive) and require
+    /// EXACT equality; the widened span ends at the absorbed word's last
+    /// alphanumeric so its trailing punctuation survives outside the span.
+    private static func absorbTrailingDuplicates(
+        term: String,
+        spanWord: String,
+        range: Range<String.Index>,
+        in text: String
+    ) -> Range<String.Index>? {
+        let termSkels = term.split(separator: " ").map { skeleton(String($0)) }
+        let spanWordCount = spanWord.split(separator: " ").count
+        let maxAbsorb = termSkels.count - spanWordCount
+        guard maxAbsorb >= 1 else { return nil }
+
+        // Collect up to `maxAbsorb` following words (plain-space separated).
+        var follow: [(skel: [Character], letterEnd: String.Index)] = []
+        var i = range.upperBound
+        scan: while follow.count < maxAbsorb, i < text.endIndex {
+            // Cross plain spaces only — punctuation/newline ends the run.
+            guard text[i] == " " else { break }
+            while i < text.endIndex, text[i] == " " { i = text.index(after: i) }
+            guard i < text.endIndex, text[i].isLetter || text[i].isNumber else { break }
+            // Read the token up to the next space/newline; track its last
+            // alphanumeric so "code," absorbs as "code" and keeps the comma.
+            var wordEnd = i
+            var lastAlnum = i
+            while wordEnd < text.endIndex, text[wordEnd] != " ", text[wordEnd] != "\n" {
+                if text[wordEnd].isLetter || text[wordEnd].isNumber { lastAlnum = wordEnd }
+                wordEnd = text.index(after: wordEnd)
+            }
+            let letterEnd = text.index(after: lastAlnum)
+            follow.append((skeleton(String(text[i..<letterEnd])), letterEnd))
+            // Trailing punctuation on this token ends the absorbable run.
+            if letterEnd != wordEnd { break scan }
+            i = wordEnd
+        }
+        guard !follow.isEmpty else { return nil }
+
+        // Longest suffix of the term's words that equals the following words.
+        var n = min(maxAbsorb, follow.count)
+        while n > 0 {
+            let tail = Array(termSkels.suffix(n))
+            let head = follow.prefix(n).map(\.skel)
+            if tail == head {
+                return range.lowerBound..<follow[n - 1].letterEnd
+            }
+            n -= 1
+        }
+        return nil
+    }
+
+    // MARK: - Extension alternates (3-option ask)
+
+    /// Longer vocab siblings of the winning term whose extra words match the
+    /// transcript words that FOLLOW the span. FluidAudio's greedy merge
+    /// prefers the SHORTER span ("Prefer shorter spans", its Pass 2), so when
+    /// the user's list has both "Claude" and "Claude Code", "Claude" always
+    /// wins and the longer candidate is dropped inside the package — this
+    /// re-derives it so the ask card can offer all three choices. The
+    /// extension words must be an acoustic cousin of what follows (same
+    /// skeleton-distance ceiling as the plausibility guard), and never cross
+    /// a paragraph break. Capped at 2 (the keyboard card surfaces 1).
+    private static func extensionAlternates(
+        winnerTerm: String?,
+        publishedText: String,
+        after upperBound: String.Index,
+        in transcript: String,
+        allTerms: [String]
+    ) -> [Alternate] {
+        guard let winner = winnerTerm, !winner.isEmpty, !allTerms.isEmpty else { return [] }
+        let winnerLower = winner.lowercased()
+        var out: [Alternate] = []
+        for term in allTerms {
+            guard out.count < 2 else { break }
+            let termLower = term.lowercased()
+            guard termLower != winnerLower,
+                  termLower.hasPrefix(winnerLower + " ") else { continue }
+            let extensionText = String(term.dropFirst(winner.count))
+                .trimmingCharacters(in: .whitespaces)
+            let extWords = extensionText.split(separator: " ").map(String.init)
+            guard !extWords.isEmpty else { continue }
+            let follow = nextWords(count: extWords.count, after: upperBound, in: transcript)
+            guard follow.count == extWords.count, let lastEnd = follow.last?.end else { continue }
+            let a = skeleton(follow.map(\.word).joined())
+            let b = skeleton(extensionText)
+            guard !a.isEmpty, !b.isEmpty else { continue }
+            let ratio = Double(levenshtein(a, b)) / Double(max(a.count, b.count))
+            guard ratio <= plausibilityCeiling else { continue }
+            // `find` is built from the EXACT transcript slice after the span
+            // (diff-review fix): double spaces / odd separators are preserved
+            // verbatim so the strict anchored splice can actually match.
+            out.append(
+                Alternate(
+                    term: term,
+                    find: publishedText + String(transcript[upperBound..<lastEnd])
+                )
+            )
+        }
+        return out
+    }
+
+    /// The next `count` space-separated words after `start` in `text`,
+    /// each with its end index (trailing punctuation retained — consumers
+    /// trim it; stops at a newline so an alternate never extends across a
+    /// paragraph break).
+    private static func nextWords(
+        count: Int, after start: String.Index, in text: String
+    ) -> [(word: String, end: String.Index)] {
+        var words: [(word: String, end: String.Index)] = []
+        var current = ""
+        var i = start
+        while i < text.endIndex, words.count < count {
+            let ch = text[i]
+            if ch == "\n" { break }
+            if ch == " " {
+                if !current.isEmpty { words.append((current, i)); current = "" }
+            } else {
+                current.append(ch)
+            }
+            i = text.index(after: i)
+        }
+        if !current.isEmpty, words.count < count { words.append((current, i)) }
+        return words
+    }
+
     // MARK: - Plausibility (guard 1)
 
     /// Max normalized edit distance (Levenshtein over letter-skeletons, divided
@@ -296,9 +696,12 @@ enum VocabularyGate {
 
     /// Lowercased alphanumerics only — spaces and punctuation dropped so a
     /// merged ASR word ("ramanathan") measures fairly against a multi-word
-    /// term ("Ramaa Nathan" → "ramaanathan").
+    /// term ("Ramaa Nathan" → "ramaanathan"). NFC-precomposed first
+    /// (diff-review fix) so canonically-equivalent Unicode (composed vs
+    /// decomposed "é") skeletons identically instead of dropping a
+    /// combining mark.
     private static func skeleton(_ s: String) -> [Character] {
-        s.lowercased().unicodeScalars
+        s.precomposedStringWithCanonicalMapping.lowercased().unicodeScalars
             .filter { CharacterSet.alphanumerics.contains($0) }
             .map(Character.init)
     }

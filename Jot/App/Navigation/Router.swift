@@ -71,6 +71,11 @@ final class Router {
     /// "Switch" tap). Set by `JotApp`'s `.onOpenURL`.
     var showUpgradeEngine = false
 
+    /// Drives the Vocabulary settings sheet — the destination of the
+    /// keyboard's `jot://vocabulary` deep link (its Vocabulary-adoption
+    /// nudge's "Set up" tap). Set by `JotApp`'s `.onOpenURL`.
+    var showVocabularySettings = false
+
     /// Drives the "Jot for Mac" screen when opened from the home screen's
     /// one-time Mac-app promo popup (see `DictationStats
     /// .shouldShowMacAppPromo`). The permanent Settings → About row reaches

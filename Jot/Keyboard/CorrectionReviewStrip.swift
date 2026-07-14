@@ -28,7 +28,8 @@ struct CorrectionReviewStrip: View {
     let totalUnresolved: Int
     let reduceMotion: Bool
     let feedback: KeyboardFeedback
-    /// (recordKey, verdict) where verdict is "term" | "original".
+    /// (recordKey, verdict) where verdict is "term" | "original" | "alt0"
+    /// ("alt0" = the ask's alternate longer term, 3-option ask 2026-07-13).
     var onVerdict: (String, String) -> Void
     /// Dismiss → return the strip slot to recents (teach mode) OR "done, paste the
     /// resolved text now" (hold mode).
@@ -234,7 +235,9 @@ struct CorrectionReviewStrip: View {
                         .transition(.opacity)
                 } else {
                     HStack(spacing: 8) {
-                        // Original first, then term.
+                        // Original first, then term, then (3-option ask) the
+                        // alternate longer term when one fits the span —
+                        // "cloud code" · "Claude" · "Claude Code".
                         wordChip(
                             word: ask.original,
                             inText: ask.outcome == "kept",
@@ -247,6 +250,14 @@ struct CorrectionReviewStrip: View {
                             verdict: "term",
                             ask: ask
                         )
+                        if let altTerm = ask.altTerm {
+                            wordChip(
+                                word: altTerm,
+                                inText: false,
+                                verdict: "alt0",
+                                ask: ask
+                            )
+                        }
 
                         Spacer(minLength: 0)
 
@@ -444,6 +455,10 @@ struct CorrectionReviewStrip: View {
             return applied
                 ? (ask.term, " confirmed.")
                 : (ask.term, " applied.")
+        }
+        // 3-option ask: the alternate longer term was chosen.
+        if verdict == "alt0", let alt = ask.altTerm {
+            return (alt, " applied.")
         }
         return applied
             ? (ask.original, " restored.")

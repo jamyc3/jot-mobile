@@ -401,11 +401,20 @@ public actor VocabularyRescorerHolder {
             return nil
         }
 
+        // (R2, 2026-07-12) Raise the candidate-match floor above FluidAudio's
+        // default 0.50 (`ContextBiasingConstants.minSimilarityFloor`). At 0.50 a
+        // heard word sharing only half its characters with a term qualifies as a
+        // match — the weak-candidate source of "it proposed a word that doesn't
+        // match". 0.60 culls the weakest matches upstream (precision over recall;
+        // the owner prefers fewer, surer proposals). Verified good pairs stay
+        // above the floor (cloud→claude ≈0.67, jamie→jamy ≈0.6–0.8). TUNABLE —
+        // validate recall on-device; lower if real corrections start being missed.
         let output = rescorer.ctcTokenRescore(
             transcript: transcript,
             tokenTimings: tokenTimings,
             logProbs: spotResult.logProbs,
-            frameDuration: spotResult.frameDuration
+            frameDuration: spotResult.frameDuration,
+            minSimilarity: 0.60
         )
 
         // Visible in Help → Diagnostics ONLY when the spotter actually proposed
@@ -448,7 +457,13 @@ public actor VocabularyRescorerHolder {
                 output: output,
                 tokenTimings: tokenTimings,
                 overrides: overrides,
-                termAliases: termAliases
+                termAliases: termAliases,
+                // The common-word guard needs the dictation language so it checks
+                // the right list (an English list can't protect a Spanish word).
+                language: LanguageChoice.current,
+                // Full term list for extension-alternate detection (3-option
+                // ask): "Claude" won the span but "Claude Code" also fits.
+                allTerms: vocabulary.terms.map(\.text)
             )
             log.info(
                 "rescored \(output.replacements.count) proposal(s) → applied \(gated.applied), blocked \(gated.blocked.count, privacy: .public)"

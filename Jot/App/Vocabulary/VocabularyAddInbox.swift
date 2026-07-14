@@ -31,11 +31,15 @@ enum VocabularyAddInbox {
         // Clear first so a crash mid-add can't replay the whole queue forever.
         AppGroup.defaults.removeObject(forKey: key)
 
+        // Common-word check in the dictation language so we don't add an
+        // everyday foreign word (keyboard applied the English guard for its own
+        // feedback; this is defense-in-depth in the right language).
+        let resource = LanguageChoice.current.commonWordsResource
         var added = 0
         for word in words {
             let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            if CommonWords.isCommon(trimmed.lowercased()) { continue }
+            if CommonWords.isCommon(trimmed.lowercased(), resource: resource) { continue }
             if VocabularyStore.shared.addTerm(trimmed) != nil { added += 1 }
         }
         if added > 0 {

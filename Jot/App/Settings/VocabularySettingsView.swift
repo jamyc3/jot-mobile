@@ -167,7 +167,13 @@ struct VocabularySettingsView: View {
                     Label("Couldn't save changes to this device — they may be lost. Try again.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
-                Text("Helps Jot recognize names, technical terms, and words it tends to mishear. The list stays on your iPhone. Avoid adding terms that sound alike — Jot can only favor one, so the other won't take effect.")
+                // Copy updated 2026-07-13 (3-option ask): related terms like
+                // "Claude" + "Claude Code" now COEXIST — when both fit, Jot asks
+                // which one you meant — so the old "avoid sound-alike terms"
+                // warning is gone. The casing tip replaces it (a term's exact
+                // casing is inserted verbatim; a lowercase term would "correct"
+                // properly-cased text the wrong way — seen in the owner's logs).
+                Text("Helps Jot recognize names, technical terms, and words it tends to mishear. The list stays on your iPhone. Type each term exactly as you want it written — capitalization included. Related terms like \"Claude\" and \"Claude Code\" can coexist; when both fit, Jot asks which one you meant.")
             }
         }
     }
@@ -352,23 +358,56 @@ private struct VocabRow: View {
     var focusedID: FocusState<VocabTerm.ID?>.Binding
     let rowID: VocabTerm.ID
 
-    var body: some View {
-        HStack(spacing: 8) {
-            TextField("Term", text: $term.text)
-                .font(.system(size: 16))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-                .focused(focusedID, equals: rowID)
+    /// Local draft for the comma-separated "Sounds like" line so typing a
+    /// comma or trailing space isn't eaten by a live re-parse; the parsed
+    /// aliases persist on every change via the binding.
+    @State private var soundsLikeDraft: String = ""
 
-            if let warning = warningMessage {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .help(warning)
-                    .accessibilityLabel(warning)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                TextField("Term", text: $term.text)
+                    .font(.system(size: 16))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .focused(focusedID, equals: rowID)
+
+                if let warning = warningMessage {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .help(warning)
+                        .accessibilityLabel(warning)
+                }
+            }
+            // "Sounds like" (aliases) — VISIBLE + editable (owner ask,
+            // 2026-07-14; round-2 review flagged hidden aliases as unsafe:
+            // Find & Replace / correction teaching writes them, and an
+            // unwanted one silently changes future dictations). Shown only
+            // when aliases exist — they're created by the teaching flows.
+            if !term.aliases.isEmpty || !soundsLikeDraft.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Sounds like")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .layoutPriority(1)
+                    TextField("comma-separated", text: $soundsLikeDraft)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .accessibilityLabel("Sounds like — misheard forms this term corrects")
+                }
+                .padding(.bottom, 6)
             }
         }
         .frame(minHeight: 44)
+        .onAppear { soundsLikeDraft = term.aliases.joined(separator: ", ") }
+        .onChange(of: soundsLikeDraft) { _, new in
+            term.aliases = new.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
     }
 
     private var warningMessage: String? {

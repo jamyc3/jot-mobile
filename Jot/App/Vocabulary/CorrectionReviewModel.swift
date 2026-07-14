@@ -96,9 +96,35 @@ final class CorrectionReviewModel {
             await reportSelfEdit(editText(r, find: r.originalWord, replaceWith: r.term), key: r.key)
         } else if choice == "original", r.outcome == "applied" {
             await reportSelfEdit(editText(r, find: r.term, replaceWith: r.originalWord), key: r.key)
+        } else if choice == "alt0", let alt = r.alternates?.first {
+            // 3-option ask: replace the alternate's `find` phrase (winner +
+            // following words, e.g. "Claude code") with the longer term. The
+            // find string was built from the gate-output span, so it matches
+            // whichever word (term or original) is in the text plus its tail.
+            await reportSelfEdit(editText(r, find: alt.find, replaceWith: alt.term), key: r.key)
+            // Teach the CHOSEN mapping directly (original → alternate term).
+            // The record's own (original → term) mapping gets a neutral 0
+            // from `desiredContribution` (alt verdicts count as neither
+            // confirm nor demote), so only the picked pair learns.
+            if priorVerdict != "alt0" {
+                await CorrectionStore.shared.adjust(
+                    originalWord: r.originalWord, term: alt.term, by: 1)
+            }
         }
         let delta = await CorrectionProvenance.shared.setVerdict(transcriptID: transcript.id, record: r, verdict: choice)
         await applyLearning(delta)
+        // R3 bootstrap (2026-07-13): log every verdict so the Diagnostics
+        // timeline carries ground truth ("was this correction right?") that
+        // joins — by pair + time — with the gate's per-proposal margin /
+        // netMargin logs. Together they calibrate the future un-boosted-
+        // margin gate (R3) from real usage. On-device only, like all
+        // diagnostics.
+        DiagnosticsLog.record(
+            source: "main-app",
+            category: .vocabularyGate,
+            message: "verdict \(r.originalWord) → \(r.term)",
+            metadata: ["choice": choice, "outcome": r.outcome]
+        )
         // "Keep original" on a BLOCKED pair contributes 0 to `net` (demote needs an
         // APPLIED revert), so a common-word proposal like "okay"→"Okta" would be
         // re-asked forever no matter how often it's rejected. Count it separately so
@@ -120,6 +146,13 @@ final class CorrectionReviewModel {
             await reportSelfEdit(editText(r, find: r.term, replaceWith: r.originalWord), key: r.key)
         } else if v == "original", r.outcome == "applied" {
             await reportSelfEdit(editText(r, find: r.originalWord, replaceWith: r.term), key: r.key)
+        } else if v == "alt0", let alt = r.alternates?.first {
+            // Reverse of the 3-option alt pick: put the gate-output span
+            // (whatever `find` held) back, and give back the +1 the pick
+            // taught the chosen mapping.
+            await reportSelfEdit(editText(r, find: alt.term, replaceWith: alt.find), key: r.key)
+            await CorrectionStore.shared.adjust(
+                originalWord: r.originalWord, term: alt.term, by: -1)
         }
         let delta = await CorrectionProvenance.shared.clearVerdict(transcriptID: transcript.id, record: r)
         await applyLearning(delta)

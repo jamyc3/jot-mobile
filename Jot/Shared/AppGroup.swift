@@ -193,6 +193,23 @@ enum AppGroup {
         /// terminal state (the switch itself makes the nudge moot).
         static let parakeetNudgeDeclined = "jot.parakeetUpgrade.nudgeDeclined"
 
+        /// Boolean projection the app sets when the user is eligible for the
+        /// Vocabulary-adoption nudge (Vocabulary Boost OFF + engaged user, or
+        /// terms added but the toggle off). Mirrors `showParakeetUpgradeNudge`;
+        /// the keyboard renders off this boolean and clears it via the two
+        /// terminal actions (Set up / Not now). Priority: warm-hold › vocab ›
+        /// Parakeet (see `KeyboardView.topStrip`'s branch order).
+        static let vocabNudgeShouldShow = "jot.vocabNudge.nudgeShouldShow"
+        /// Permanent "don't show again" flag for the Vocabulary nudge.
+        /// Mirrors `parakeetNudgeDeclined`. Enabling Vocabulary does NOT set
+        /// this — the arm-site guard (vocab already enabled) makes it moot.
+        static let vocabNudgeDeclined = "jot.vocabNudge.nudgeDeclined"
+        /// Unix timestamp of the last time ANY keyboard nudge was resolved
+        /// (accepted or dismissed). Cross-nudge quiet period: no OTHER nudge
+        /// may arm within `AppGroup.nudgeQuietPeriodSeconds` of it, so a user
+        /// who just answered one nudge isn't hit by the next immediately.
+        static let lastNudgeResolvedAt = "jot.nudges.lastResolvedAt"
+
         /// Default-ON Lab kill-switch for the MiniLM embedding writer.
         /// Read by `TranscriptStore.append`, `PhoneSideWCSession.saveTranscript`,
         /// and `EmbeddingBackfillTask` before any encode work. Default `true`
@@ -406,6 +423,42 @@ enum AppGroup {
     static var parakeetNudgeDeclined: Bool {
         get { defaults.bool(forKey: Keys.parakeetNudgeDeclined) }
         set { defaults.set(newValue, forKey: Keys.parakeetNudgeDeclined) }
+    }
+
+    /// Boolean projection for the Vocabulary-adoption nudge. Mirrors
+    /// `showParakeetUpgradeNudge` — see that accessor's doc for the
+    /// cross-process reasoning.
+    static var vocabNudgeShouldShow: Bool {
+        get { defaults.bool(forKey: Keys.vocabNudgeShouldShow) }
+        set { defaults.set(newValue, forKey: Keys.vocabNudgeShouldShow) }
+    }
+
+    /// Permanent "Don't show this again" flag for the Vocabulary nudge.
+    /// Mirrors `parakeetNudgeDeclined`.
+    static var vocabNudgeDeclined: Bool {
+        get { defaults.bool(forKey: Keys.vocabNudgeDeclined) }
+        set { defaults.set(newValue, forKey: Keys.vocabNudgeDeclined) }
+    }
+
+    /// Cross-nudge quiet period: how long after ANY nudge is resolved before a
+    /// DIFFERENT nudge may arm. Keeps consecutive keyboard sessions from
+    /// feeling like a nag chain (research: nudge fatigue is a cliff).
+    static let nudgeQuietPeriodSeconds: TimeInterval = 24 * 60 * 60
+
+    /// Unix timestamp of the last time any keyboard nudge was resolved
+    /// (accepted or dismissed). `0` = never.
+    static var lastNudgeResolvedAt: TimeInterval {
+        get { defaults.double(forKey: Keys.lastNudgeResolvedAt) }
+        set { defaults.set(newValue, forKey: Keys.lastNudgeResolvedAt) }
+    }
+
+    /// True while the cross-nudge quiet period is active (a nudge was
+    /// resolved less than `nudgeQuietPeriodSeconds` ago). Arm sites consult
+    /// this so a user who just answered one nudge isn't shown another.
+    static var nudgeQuietPeriodActive: Bool {
+        let last = lastNudgeResolvedAt
+        guard last > 0 else { return false }
+        return Date().timeIntervalSince1970 - last < nudgeQuietPeriodSeconds
     }
 
     /// Selected AI rewrite backend. Currently the only valid value is

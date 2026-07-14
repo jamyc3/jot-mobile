@@ -4,7 +4,7 @@ Status: DRAFT (2026-06-29). Owner approved scope "engine + build the Playground.
 
 ## Goal
 1. Make Jot's text-to-speech **multilingual** (English, French, German, Italian, Portuguese, Spanish) for both **synthesis** and **voice cloning**.
-2. Move TTS out of the hidden "Lab" + transcript read-aloud into a dedicated **Text-to-Speech Playground** page under Settings → About. Mockup: `jot-mockup.ideaflow.page` (atlas `tts-playground` / `tts-voice-picker` / `tts-clone`).
+2. Move TTS out of the hidden "Lab" + transcript read-aloud into a dedicated **Text-to-Speech Playground** page under Settings → About. Mockup: `sites.simple-host.app/vineetu/jot-mockup` (atlas `tts-playground` / `tts-voice-picker` / `tts-clone`).
 3. **Remove** read-aloud from the transcript detail view + retire the TTS Lab toggle.
 
 ## Key engine findings (verified against the pinned FluidAudio)

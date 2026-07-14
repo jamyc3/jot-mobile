@@ -32,10 +32,20 @@ enum CorrectionBridge {
         /// pre-Thread-2 call sites compiling.
         let publishedStart: Int?
         let publishedLength: Int?
+        /// 3-option ask (2026-07-13): an alternate vocab term for the same
+        /// span ("Claude Code" when "Claude" won). `altFind` is the exact
+        /// in-text string the alternate replaces (winner + following words).
+        /// Optional — nil keeps the familiar 2-option card, and blobs encoded
+        /// before this field decode to nil. Plain strings (not the gate's
+        /// Alternate type) because this file compiles into the keyboard
+        /// target, which doesn't build the vocabulary subsystem.
+        let altTerm: String?
+        let altFind: String?
 
         init(recordKey: String, original: String, term: String, outcome: String,
              contextBefore: String, contextAfter: String,
-             publishedStart: Int? = nil, publishedLength: Int? = nil) {
+             publishedStart: Int? = nil, publishedLength: Int? = nil,
+             altTerm: String? = nil, altFind: String? = nil) {
             self.recordKey = recordKey
             self.original = original
             self.term = term
@@ -44,6 +54,8 @@ enum CorrectionBridge {
             self.contextAfter = contextAfter
             self.publishedStart = publishedStart
             self.publishedLength = publishedLength
+            self.altTerm = altTerm
+            self.altFind = altFind
         }
     }
 

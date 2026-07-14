@@ -595,6 +595,15 @@ struct JotApp: App {
                         return
                     }
 
+                    // `jot://vocabulary` — the keyboard's Vocabulary-adoption
+                    // nudge "Set up" tap. No dictation auto-start — just
+                    // present the Vocabulary settings screen (opt-in; the
+                    // user flips the toggle / adds terms there).
+                    if url.host == "vocabulary" {
+                        router.showVocabularySettings = true
+                        return
+                    }
+
 // Explicit user intent — bypass the once-per-session gate.
                     autoStartConsumed = false
                     // v7 auto-paste: parse `?session=<uuid>` off the keyboard's

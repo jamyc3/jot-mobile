@@ -163,6 +163,50 @@ targets:
       # word. See App/Vocabulary/{CommonWords,VocabularyGate}.swift.
       - path: Resources/common-words.txt
         buildPhase: resources
+      # Per-language common-word lists (top ~24k, wordfreq/MIT) so the guard
+      # works in every language the CTC vocab correction runs for — the
+      # Parakeet-v3 European set. Main app only (the keyboard stays English).
+      # See LanguageChoice.commonWordsResource.
+      - path: Resources/common-words-es.txt
+        buildPhase: resources
+      - path: Resources/common-words-fr.txt
+        buildPhase: resources
+      - path: Resources/common-words-de.txt
+        buildPhase: resources
+      - path: Resources/common-words-it.txt
+        buildPhase: resources
+      - path: Resources/common-words-pt.txt
+        buildPhase: resources
+      - path: Resources/common-words-ro.txt
+        buildPhase: resources
+      - path: Resources/common-words-ru.txt
+        buildPhase: resources
+      - path: Resources/common-words-uk.txt
+        buildPhase: resources
+      - path: Resources/common-words-bg.txt
+        buildPhase: resources
+      - path: Resources/common-words-sr.txt
+        buildPhase: resources
+      - path: Resources/common-words-da.txt
+        buildPhase: resources
+      - path: Resources/common-words-nl.txt
+        buildPhase: resources
+      - path: Resources/common-words-fi.txt
+        buildPhase: resources
+      - path: Resources/common-words-el.txt
+        buildPhase: resources
+      - path: Resources/common-words-hu.txt
+        buildPhase: resources
+      - path: Resources/common-words-sv.txt
+        buildPhase: resources
+      - path: Resources/common-words-pl.txt
+        buildPhase: resources
+      - path: Resources/common-words-cs.txt
+        buildPhase: resources
+      - path: Resources/common-words-sk.txt
+        buildPhase: resources
+      - path: Resources/common-words-sl.txt
+        buildPhase: resources
       # Bundled product-help corpus (distilled from features.md, pre-embedded
       # with EmbeddingGemma) powering Ask's "how do I use Jot" lane. Regenerate
       # via scripts/make-help-corpus.sh when features.md changes;

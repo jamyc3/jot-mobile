@@ -295,6 +295,12 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// back and clear via `hub.clearParakeetUpgradeNudge`.
     private var showParakeetUpgradeNudge: Bool { hub.showParakeetUpgradeNudge }
 
+    /// Whether the Vocabulary-adoption nudge should render. Owned by
+    /// `KeyboardStreamingHub` (mirrored on `vocabNudgeChanged`); the two
+    /// terminal actions write the App-Group flags back and clear via
+    /// `hub.clearVocabNudge`.
+    private var showVocabNudge: Bool { hub.showVocabNudge }
+
     /// Whether the post-paste correction quick-review strip should render. Owned
     /// by `KeyboardStreamingHub` — set by `hub.maybeShowCorrectionNudge` (paste-
     /// time) or the `correctionAsksReady` feed; cleared on finish/dismiss.
@@ -683,6 +689,8 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             onWarmHoldNudgeDismiss: { [weak self] in self?.handleWarmHoldNudgeDismiss() },
             onParakeetUpgradeNudgeUpgrade: { [weak self] in self?.handleParakeetNudgeUpgrade() },
             onParakeetUpgradeNudgeDismiss: { [weak self] in self?.handleParakeetNudgeDismiss() },
+            onVocabNudgeSetUp: { [weak self] in self?.handleVocabNudgeSetUp() },
+            onVocabNudgeDismiss: { [weak self] in self?.handleVocabNudgeDismiss() },
             onCorrectionVerdict: { [weak self] key, verdict in
                 guard let self, let a = self.correctionAsks else { return }
                 CorrectionBridge.enqueueVerdict(
@@ -735,6 +743,7 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         keyboardInputs.statusBanner = statusBanner
         keyboardInputs.showWarmHoldNudge = showWarmHoldNudge
         keyboardInputs.showParakeetUpgradeNudge = showParakeetUpgradeNudge
+        keyboardInputs.showVocabNudge = showVocabNudge
         // v2 retheme (2026-05-11): host's `keyboardAppearance` hint.
         // Some hosts (dark Mail, dark Notes, Spotlight) force `.dark`
         // even when the system itself is in light mode. We pass the
@@ -814,6 +823,9 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// drop the hub render flag, post the cross-process change, and re-render.
     private func resolveWarmHoldNudge() {
         AppGroup.warmHoldNudgeShouldShow = false
+        // Cross-nudge quiet period: stamp so no OTHER nudge arms right after
+        // this one was answered (`AppGroup.nudgeQuietPeriodActive`).
+        AppGroup.lastNudgeResolvedAt = Date().timeIntervalSince1970
         // `hub.clearWarmHoldNudge()` fires the `onShouldRender` hook, which
         // re-renders this controller — no separate `renderRootView()` needed.
         hub.clearWarmHoldNudge()
@@ -848,10 +860,41 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// change, and re-render. Mirrors `resolveWarmHoldNudge`.
     private func resolveParakeetUpgradeNudge() {
         AppGroup.showParakeetUpgradeNudge = false
+        // Cross-nudge quiet period stamp (see `resolveWarmHoldNudge`).
+        AppGroup.lastNudgeResolvedAt = Date().timeIntervalSince1970
         // `hub.clearParakeetUpgradeNudge()` fires the `onShouldRender` hook,
         // which re-renders this controller — no separate `renderRootView()`.
         hub.clearParakeetUpgradeNudge()
         CrossProcessNotification.post(name: CrossProcessNotification.parakeetUpgradeNudgeChanged)
+    }
+
+    /// Accept the Vocabulary nudge: open the app's Vocabulary screen via a
+    /// deep link (opt-in — nothing auto-enables; the user flips the toggle /
+    /// adds terms there). Same responder-chain opener as the Parakeet nudge
+    /// (`extensionContext?.open` silently force-fails on iOS 18+).
+    private func handleVocabNudgeSetUp() {
+        keyboardLog.info("Vocabulary nudge: opening Vocabulary screen")
+        if let url = URL(string: "jot://vocabulary") {
+            openContainingApp(url)
+        }
+        resolveVocabNudge()
+    }
+
+    /// Dismiss the Vocabulary nudge. One tap, no confirm: set the permanent
+    /// decline flag so it never shows again, then clear + post.
+    private func handleVocabNudgeDismiss() {
+        AppGroup.vocabNudgeDeclined = true
+        resolveVocabNudge()
+    }
+
+    /// Shared terminal for both Vocabulary-nudge actions. Mirrors
+    /// `resolveParakeetUpgradeNudge`.
+    private func resolveVocabNudge() {
+        AppGroup.vocabNudgeShouldShow = false
+        // Cross-nudge quiet period stamp (see `resolveWarmHoldNudge`).
+        AppGroup.lastNudgeResolvedAt = Date().timeIntervalSince1970
+        hub.clearVocabNudge()
+        CrossProcessNotification.post(name: CrossProcessNotification.vocabNudgeChanged)
     }
 
     /// After a successful auto-paste, surface the correction quick-review strip
@@ -927,8 +970,18 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         var edits: [Edit] = []
         for ask in asks {
             guard let v = verdicts[ask.recordKey], let anchor = ask.publishedStart else { continue }
-            let inText = (ask.outcome == "applied") ? ask.term : ask.original   // word now in text
-            let want = (v == "term") ? ask.term : ask.original                  // chosen word
+            // 3-option ask: "alt0" replaces the alternate's `find` phrase
+            // (winner + following words, e.g. "Claude code") with the longer
+            // term ("Claude Code") — same anchor, wider span.
+            let inText: String
+            let want: String
+            if v == "alt0", let altTerm = ask.altTerm, let altFind = ask.altFind {
+                inText = altFind
+                want = altTerm
+            } else {
+                inText = (ask.outcome == "applied") ? ask.term : ask.original   // word now in text
+                want = (v == "term") ? ask.term : ask.original                  // chosen word
+            }
             let inCore = Self.trimGatedWord(inText)
             let wantCore = Self.trimGatedWord(want)
             guard !wantCore.isEmpty, wantCore.caseInsensitiveCompare(inCore) != .orderedSame else { continue }

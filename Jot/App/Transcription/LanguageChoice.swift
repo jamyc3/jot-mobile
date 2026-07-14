@@ -30,8 +30,10 @@ import Foundation
 /// `.english`, so a stale write can never brick dictation.
 enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
     case english
-    // European — Latin script:
-    case spanish, french, german, italian, portuguese, romanian,
+    // European — Latin script (Parakeet v3), plus Latin-American Spanish which
+    // is Apple-only (locale es-MX): Parakeet's Spanish is European, so the
+    // Latin-American variant routes exclusively through Apple's engine.
+    case spanish, spanishLatinAmerica, french, german, italian, portuguese, romanian,
          polish, czech, slovak, slovenian, croatian, bosnian
     // European — Cyrillic script:
     case russian, ukrainian, belarusian, bulgarian, serbian
@@ -62,7 +64,51 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
     var isAppleOnly: Bool {
         switch self {
         case .japanese, .korean, .chineseMandarin, .cantonese: return true
+        // Latin-American Spanish: Parakeet only ships European Spanish, so this
+        // variant is forced through Apple (which has es-MX). Treating it as
+        // Apple-only also keeps the Parakeet-upgrade nudge away from it.
+        case .spanishLatinAmerica: return true
         default: return false
+        }
+    }
+
+    /// Bundle resource base name (`<name>.txt`) of the high-frequency
+    /// common-word list for THIS language, used by the vocabulary gate's
+    /// common-word guard (`CommonWords`). `nil` → no list ships for this
+    /// language, so the guard is inert for it (the plausibility + confidence
+    /// guards still apply). English is the original `common-words`; the
+    /// Parakeet-v3 European set has per-language lists (`common-words-<code>`).
+    /// `nil` for the Apple-only CJK languages (vocab correction never runs for
+    /// them) and for Belarusian (no reliable frequency data — falls back to no
+    /// guard, unchanged from before per-language lists shipped).
+    var commonWordsResource: String? {
+        switch self {
+        case .english: return "common-words"
+        case .spanish, .spanishLatinAmerica: return "common-words-es"
+        case .french: return "common-words-fr"
+        case .german: return "common-words-de"
+        case .italian: return "common-words-it"
+        case .portuguese: return "common-words-pt"
+        case .romanian: return "common-words-ro"
+        case .polish: return "common-words-pl"
+        case .czech: return "common-words-cs"
+        case .slovak: return "common-words-sk"
+        case .slovenian: return "common-words-sl"
+        // Croatian/Bosnian/Serbian share the Serbo-Croatian frequency list.
+        case .croatian, .bosnian, .serbian: return "common-words-sr"
+        case .russian: return "common-words-ru"
+        case .ukrainian: return "common-words-uk"
+        case .bulgarian: return "common-words-bg"
+        case .danish: return "common-words-da"
+        case .dutch: return "common-words-nl"
+        case .finnish: return "common-words-fi"
+        case .greek: return "common-words-el"
+        case .hungarian: return "common-words-hu"
+        case .swedish: return "common-words-sv"
+        // No reliable frequency data (Belarusian) → no guard, unchanged.
+        case .belarusian: return nil
+        // Apple-only CJK — vocab correction never runs for these.
+        case .japanese, .korean, .chineseMandarin, .cantonese: return nil
         }
     }
 
@@ -76,6 +122,7 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .english:         return "en-US"
         case .spanish:         return "es-ES"
+        case .spanishLatinAmerica: return "es-MX"
         case .french:          return "fr-FR"
         case .german:          return "de-DE"
         case .italian:         return "it-IT"
@@ -102,6 +149,10 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .english:    return ("English", "English")
         case .spanish:    return ("Spanish", "Español")
+        // Region qualifier lives in the English name only — repeating it in the
+        // endonym ("Español (Latinoamérica)") made the picker row wrap to three
+        // lines and hyphenate mid-word. Short native keeps the row clean.
+        case .spanishLatinAmerica: return ("Spanish (Latin America)", "Español")
         case .french:     return ("French", "Français")
         case .german:     return ("German", "Deutsch")
         case .italian:    return ("Italian", "Italiano")
@@ -172,7 +223,8 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
             return nil
         // Apple-only — FluidAudio has no model at all, so there is no
         // script hint to give it; these never reach a FluidAudio call.
-        case .japanese, .korean, .chineseMandarin, .cantonese:
+        // Latin-American Spanish is forced to Apple too (no FluidAudio call).
+        case .japanese, .korean, .chineseMandarin, .cantonese, .spanishLatinAmerica:
             return nil
         }
     }
@@ -185,6 +237,8 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .english:    return "en"
         case .spanish:    return "es"
+        // Latin-American Spanish is still "Spanish" for translation/display.
+        case .spanishLatinAmerica: return "es"
         case .french:     return "fr"
         case .german:     return "de"
         case .italian:    return "it"

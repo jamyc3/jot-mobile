@@ -222,6 +222,13 @@ final class KeyboardStreamingHub {
     /// handlers, which clear this).
     private(set) var showParakeetUpgradeNudge = false
 
+    /// Whether the Vocabulary-adoption nudge should render. Mirrors the
+    /// `AppGroup.vocabNudgeShouldShow && !vocabNudgeDeclined` projection; the
+    /// keyboard renders off this flag (render precedence warm-hold › vocab ›
+    /// Parakeet, `KeyboardView.topStrip`) and the controller's terminal
+    /// handlers clear it.
+    private(set) var showVocabNudge = false
+
     /// Whether the post-paste correction quick-review strip should render. Set
     /// when the app publishes asks for the just-pasted session (the
     /// `correctionAsksReady` feed, or the controller's paste-time trigger);
@@ -283,6 +290,7 @@ final class KeyboardStreamingHub {
     private var pipelinePhaseObserver: CrossProcessNotification.Observer?
     private var warmHoldNudgeObserver: CrossProcessNotification.Observer?
     private var parakeetUpgradeNudgeObserver: CrossProcessNotification.Observer?
+    private var vocabNudgeObserver: CrossProcessNotification.Observer?
     private var historyMirrorUpdatedObserver: CrossProcessNotification.Observer?
     private var correctionAsksReadyObserver: CrossProcessNotification.Observer?
 
@@ -324,6 +332,11 @@ final class KeyboardStreamingHub {
         ) { [weak self] in
             self?.refreshParakeetUpgradeNudgeFromProjection()
         }
+        vocabNudgeObserver = CrossProcessNotification.addObserver(
+            name: CrossProcessNotification.vocabNudgeChanged
+        ) { [weak self] in
+            self?.refreshVocabNudgeFromProjection()
+        }
         historyMirrorUpdatedObserver = CrossProcessNotification.addObserver(
             name: CrossProcessNotification.historyMirrorUpdated
         ) { [weak self] in
@@ -345,6 +358,7 @@ final class KeyboardStreamingHub {
         refreshStreamingLoadingFromProjection()
         refreshWarmHoldNudgeFromProjection()
         refreshParakeetUpgradeNudgeFromProjection()
+        refreshVocabNudgeFromProjection()
         refreshHistory()
     }
 
@@ -453,6 +467,26 @@ final class KeyboardStreamingHub {
     /// flags + post).
     func clearParakeetUpgradeNudge() {
         showParakeetUpgradeNudge = false
+        onShouldRender?()
+    }
+
+    // MARK: - Vocabulary-adoption nudge
+
+    private func refreshVocabNudgeFromProjection() {
+        // Mirror the app's predicate (`shouldShow && !declined`) so the two
+        // renderers can't diverge — same shape as the sibling nudges.
+        let shouldShow = hasFullAccess
+            && AppGroup.vocabNudgeShouldShow
+            && !AppGroup.vocabNudgeDeclined
+        guard shouldShow != showVocabNudge else { return }
+        showVocabNudge = shouldShow
+        onShouldRender?()
+    }
+
+    /// Clear the Vocabulary nudge render flag (driven by the controller's
+    /// two terminal actions, which also write the App-Group flags + post).
+    func clearVocabNudge() {
+        showVocabNudge = false
         onShouldRender?()
     }
 

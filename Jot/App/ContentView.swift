@@ -177,6 +177,14 @@ struct ContentView: View {
             // engineering follow-up to the Apple Dictation A/B spike).
             UpgradeEngineView()
         }
+        .sheet(isPresented: Bindable(router).showVocabularySettings) {
+            // Vocabulary-adoption nudge deep-link destination
+            // (`jot://vocabulary`). Wrapped in a NavigationStack so the
+            // screen's navigationTitle ("Vocabulary") renders in the sheet.
+            NavigationStack {
+                VocabularySettingsView()
+            }
+        }
         .sheet(isPresented: Bindable(router).showJotForMac) {
             // Home popup's "Get Jot for Mac" destination (see
             // `Router.showJotForMac`). Wrapped in a NavigationStack the same

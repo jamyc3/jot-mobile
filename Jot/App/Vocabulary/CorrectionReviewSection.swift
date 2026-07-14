@@ -297,20 +297,28 @@ struct CorrectionRowHeader: View {
     }
 }
 
-/// The two "pick the word you meant" chips (original first; in-text one tagged).
+/// The "pick the word you meant" chips (original first; in-text one tagged;
+/// plus the alternate longer term when one fits the span — 3-option ask).
 struct CorrectionChips: View {
     let record: CorrectionProvenance.Record
     var onPick: (String) -> Void
     var body: some View {
         let applied = (record.outcome == "applied")
+        let alt = record.alternates?.first
         // A word must never wrap mid-word inside a chip ("Rochit / ha"). Try the
-        // two chips side-by-side; if they don't fit the width, STACK them (each on
+        // chips side-by-side; if they don't fit the width, STACK them (each on
         // its own line) rather than break a long name.
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) { chip(record.originalWord, inText: !applied) { onPick("original") }
-                                 chip(record.term, inText: applied) { onPick("term") } }
-            VStack(alignment: .leading, spacing: 8) { chip(record.originalWord, inText: !applied) { onPick("original") }
-                                                      chip(record.term, inText: applied) { onPick("term") } }
+            HStack(spacing: 8) {
+                chip(record.originalWord, inText: !applied) { onPick("original") }
+                chip(record.term, inText: applied) { onPick("term") }
+                if let alt { chip(alt.term, inText: false) { onPick("alt0") } }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                chip(record.originalWord, inText: !applied) { onPick("original") }
+                chip(record.term, inText: applied) { onPick("term") }
+                if let alt { chip(alt.term, inText: false) { onPick("alt0") } }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

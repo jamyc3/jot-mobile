@@ -1,0 +1,83 @@
+<!-- Settings → Dictation → Language picker menu (§6.1). The native iOS pull-down
+     opened from the Language row: a "Recent" (MRU) section pinned on top, then
+     the full list alphabetical by English name, each shown "English — native".
+     Spanish is TWO picks — Spanish (European) and Spanish (Latin America), the
+     latter always on Apple (es-MX). Its row uses the short native ("Español")
+     so it doesn't wrap. SHIPPED build 273. -->
+
+<div style="position:relative;min-height:720px">
+
+  <!-- dimmed Settings backdrop (menu is modal over it) -->
+  <div style="opacity:.32;pointer-events:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="jot-tile" style="--c1:#1A8CFF;--c2:#0064CC;width:24px;height:24px;border-radius:7px">
+          <svg viewBox="0 0 24 24"><path d="M13 3c-3 0-5 2-5 6v6c0 2-1 3-2 3v2c4 0 6-2 6-6V8c0-2 1-3 2-3z"/></svg>
+        </span>
+        <span style="font-weight:600;font-size:15px;color:var(--jot-ink)">Jot</span>
+      </div>
+      <span class="jot-donebtn">Done</span>
+    </div>
+    <div class="jot-display" style="margin:6px 0 2px">Settings</div>
+    <div class="jot-section">Dictation</div>
+    <div class="jot-card">
+      <div class="jot-row">
+        <span class="jot-tile" style="--c1:#1A8CFF;--c2:#1573D1">
+          <svg viewBox="0 0 24 24"><path d="M3 11h2v2H3zm4-4h2v10H7zm4-3h2v16h-2zm4 3h2v10h-2zm4 4h2v2h-2z"/></svg>
+        </span>
+        <div class="grow jot-row-title">Language</div>
+        <span style="display:inline-flex;align-items:center;gap:4px;color:var(--jot-accent);font-size:15px;font-weight:500">Spanish (Latin America) <span style="font-size:11px;opacity:.8">⌄</span></span>
+      </div>
+      <div class="jot-row">
+        <div class="grow">
+          <div class="jot-row-title">Live text while dictating</div>
+          <div class="jot-row-sub">Show words as you speak.</div>
+        </div>
+        <span class="jot-toggle"></span>
+      </div>
+    </div>
+    <div class="jot-section">Vocabulary</div>
+    <div class="jot-card"><div class="jot-row">
+      <span class="jot-tile" style="--c1:#1FCED1;--c2:#19A9AB">
+        <svg viewBox="0 0 24 24"><path d="M5 3h11a3 3 0 013 3v15l-4-2-4 2-4-2V5a2 2 0 012-2z" fill="none" stroke="#fff" stroke-width="2"/></svg>
+      </span>
+      <div class="grow"><div class="jot-row-title">Custom terms</div><div class="jot-row-sub">18 terms · on this iPhone</div></div>
+      <span class="jot-chev">›</span>
+    </div></div>
+  </div>
+
+  <!-- the language pull-down menu (iOS pull-down material), attached to the row -->
+  <div style="position:absolute;top:70px;right:2px;width:264px;max-height:600px;overflow:hidden;
+              border-radius:16px;border:.5px solid var(--jot-card-border);
+              background:var(--jot-card-top);backdrop-filter:blur(34px) saturate(1.5);
+              -webkit-backdrop-filter:blur(34px) saturate(1.5);
+              box-shadow:0 14px 44px rgba(0,0,0,.26)">
+
+    <!-- Recent (MRU) -->
+    <div style="padding:11px 16px 5px;font-size:13px;font-weight:600;color:var(--jot-ink-cap)">Recent</div>
+    <!-- active pick: Spanish (Latin America), short native so the row never wraps -->
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)">
+      <span style="width:18px;color:var(--jot-accent);font-weight:700;text-align:center">✓</span><span>Spanish (Latin America) — Español</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)">
+      <span style="width:18px"></span><span>English</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)">
+      <span style="width:18px"></span><span>Croatian — Hrvatski</span>
+    </div>
+
+    <!-- full list, alphabetical by English name -->
+    <div style="height:7px;background:var(--jot-sep)"></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink)"><span style="width:18px"></span><span>Belarusian — Беларуская</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Bosnian — Bosanski</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Bulgarian — Български</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Cantonese — 粵語</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Chinese (Mandarin) — 中文（简体）</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Croatian — Hrvatski</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Czech — Čeština</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Danish — Dansk</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>Dutch — Nederlands</span></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:16px;color:var(--jot-ink);border-top:.5px solid var(--jot-sep)"><span style="width:18px"></span><span>English</span></div>
+  </div>
+
+</div>

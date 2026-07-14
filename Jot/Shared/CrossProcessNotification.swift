@@ -124,6 +124,14 @@ enum CrossProcessNotification {
         rawValue: "com.vineetu.jot.mobile.parakeet-upgrade-nudge-changed"
     )
 
+    /// Posted when the Vocabulary-adoption nudge state flips. The app writes
+    /// the `AppGroup.vocabNudgeShouldShow` boolean projection and posts this
+    /// so the keyboard re-reads and renders (or hides) the nudge. Mirrors the
+    /// `parakeetUpgradeNudgeChanged` projection + notification pattern.
+    static let vocabNudgeChanged = Name(
+        rawValue: "com.vineetu.jot.mobile.vocab-nudge-changed"
+    )
+
     /// Posted by the app AFTER it writes the keyboard correction "asks" to the
     /// App Group (which happens a beat after the clipboard publish + paste). The
     /// keyboard shows its quick-review nudge on THIS signal, not at paste time —

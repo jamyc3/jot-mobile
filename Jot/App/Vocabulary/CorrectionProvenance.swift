@@ -44,6 +44,10 @@ actor CorrectionProvenance {
         let originalLength: Int
         var publishedStart: Int      // LIVE anchor — mutated only by reconcile
         let publishedLength: Int     // gate-time span length (display/diag only)
+        /// Alternate candidate terms for this span (3-option ask, 2026-07-13).
+        /// Optional so payloads persisted BEFORE this field existed decode as
+        /// nil — treat nil and [] identically.
+        var alternates: [VocabularyGate.Alternate]?
 
         /// Stable per-occurrence identity key (verdict + mark lookup).
         var key: String { "\(originalWord.lowercased())|\(term.lowercased())|\(originalStart)" }
@@ -96,7 +100,8 @@ actor CorrectionProvenance {
                 outcome: $0.outcome, confidence: $0.confidence, margin: $0.margin,
                 unsure: $0.unsure, occurrenceIndex: $0.occurrenceIndex,
                 originalStart: $0.originalStart, originalLength: $0.originalLength,
-                publishedStart: $0.publishedStart, publishedLength: $0.publishedLength)
+                publishedStart: $0.publishedStart, publishedLength: $0.publishedLength,
+                alternates: $0.alternates.isEmpty ? nil : $0.alternates)
         }
     }
 
