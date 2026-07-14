@@ -41,11 +41,16 @@ enum CorrectionBridge {
         /// target, which doesn't build the vocabulary subsystem.
         let altTerm: String?
         let altFind: String?
+        /// V2-3: true for teach-only asks (split-word merge class) that must
+        /// NEVER hold the paste — they surface via the post-paste teach strip
+        /// instead. Optional/nil = normal ask (back-compat decode).
+        let postPasteOnly: Bool?
 
         init(recordKey: String, original: String, term: String, outcome: String,
              contextBefore: String, contextAfter: String,
              publishedStart: Int? = nil, publishedLength: Int? = nil,
-             altTerm: String? = nil, altFind: String? = nil) {
+             altTerm: String? = nil, altFind: String? = nil,
+             postPasteOnly: Bool? = nil) {
             self.recordKey = recordKey
             self.original = original
             self.term = term
@@ -56,6 +61,7 @@ enum CorrectionBridge {
             self.publishedLength = publishedLength
             self.altTerm = altTerm
             self.altFind = altFind
+            self.postPasteOnly = postPasteOnly
         }
     }
 

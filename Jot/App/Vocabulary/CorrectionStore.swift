@@ -10,18 +10,42 @@ import os.log
 /// term)` pair only** — so once the owner has said "when I say Jamie I mean
 /// Jamy", the gate applies it, even though "jamie" is a common word.
 ///
-/// Safety (review §0j):
-///   - A mapping whose `originalWord` is a **common word** arms only at
-///     **net ≥ 2** (two confirmations) — a single ✓ (or mis-tap) on a blocked
-///     "name→Jamy" card can't re-arm the headline over-correction bug. A
-///     rare/OOV original arms at net ≥ 1. Deactivation is always net ≤ 0
-///     (easy to disarm, hard to arm a dangerous one).
+/// Safety (review §0j, corrected V2-4 2026-07-14 — the old "common arms at
+/// net ≥ 2" note described behavior the gate never implemented):
+///   - A mapping whose `originalWord` is a **common word** NEVER auto-applies
+///     from net alone (§v2-B) — it auto-applies only via the explicit
+///     "Always replace" grant (`alwaysReplace`), which the pane offers after
+///     net ≥ 2 and which ONE revert revokes. A rare/OOV original arms at
+///     net ≥ 1. Deactivation is always net ≤ 0 (easy to disarm, hard to arm
+///     a dangerous one).
 ///   - "Confirm a block is correct" adds the pair to a per-term **suppressed**
 ///     set so the pane stops re-surfacing it (the gate keeps blocking silently).
 ///
 /// Storage: a side-JSON `corrections.json` next to `vocabulary.txt` in the app
 /// sandbox (`Application Support/Vocabulary/`) — NO SwiftData schema bump,
 /// main-app-only (§0g). Single writer (this actor); atomic writes.
+
+/// ONE normalization for every correction-learning identity key (V2-2,
+/// 2026-07-14). EXACT-string semantics under: NFC precompose → case-fold →
+/// collapse internal whitespace runs → trim OUTER punctuation only.
+/// Internal punctuation and word boundaries are PRESERVED (can't ≠ cant,
+/// "a part" ≠ "apart") — the round-2 review killed skeleton-canonical keys
+/// for exactly those collisions. Used by CorrectionStore keys, provenance
+/// mapping keys, and the ask publisher's prior lookups so the three can
+/// never disagree about which pair a verdict belongs to. For every key any
+/// prior build could persist (ASCII, single-spaced, punct-trimmed), the
+/// output is IDENTICAL to the old per-file normalizers — so existing data
+/// needs no migration; a legacy-key fallback in the provenance ledger
+/// covers the rare pre-existing untrimmed mapping keys.
+enum CorrectionKey {
+    static func normalize(_ s: String) -> String {
+        let nfc = s.precomposedStringWithCanonicalMapping.lowercased()
+        let collapsed = nfc.split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+        return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:\"'()"))
+    }
+}
+
 actor CorrectionStore {
     static let shared = CorrectionStore()
 
@@ -43,24 +67,33 @@ actor CorrectionStore {
         /// keyboard-only. Defaulted-decode for back-compat with corrections.json
         /// written before this field existed.
         var blockedKeeps: Int = 0
+        /// V2-4 explicit grant: the owner tapped "Always replace" for this
+        /// exact pair — the gate auto-applies it even when the original is a
+        /// common word (§v2-B's letter is kept: the user consented
+        /// explicitly, on-screen). REVOKED automatically by any negative
+        /// learning event (an applied-revert) — one revert demotes.
+        var alwaysReplace: Bool = false
         var net: Int { confirmations - reverts }
 
         init(originalWord: String, term: String,
-             confirmations: Int = 0, reverts: Int = 0, blockedKeeps: Int = 0) {
+             confirmations: Int = 0, reverts: Int = 0, blockedKeeps: Int = 0,
+             alwaysReplace: Bool = false) {
             self.originalWord = originalWord
             self.term = term
             self.confirmations = confirmations
             self.reverts = reverts
             self.blockedKeeps = blockedKeeps
+            self.alwaysReplace = alwaysReplace
         }
 
         enum CodingKeys: String, CodingKey {
-            case originalWord, term, confirmations, reverts, blockedKeeps
+            case originalWord, term, confirmations, reverts, blockedKeeps, alwaysReplace
         }
 
-        // Custom decode so an existing corrections.json (no `blockedKeeps` key)
-        // loads cleanly instead of throwing — a throw here makes `loadIfNeeded`
-        // silently drop ALL learned corrections. Encodable stays synthesized.
+        // Custom decode so an existing corrections.json (no `blockedKeeps` /
+        // `alwaysReplace` key) loads cleanly instead of throwing — a throw
+        // here makes `loadIfNeeded` silently drop ALL learned corrections.
+        // Encodable stays synthesized.
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             originalWord = try c.decode(String.self, forKey: .originalWord)
@@ -68,6 +101,7 @@ actor CorrectionStore {
             confirmations = try c.decodeIfPresent(Int.self, forKey: .confirmations) ?? 0
             reverts = try c.decodeIfPresent(Int.self, forKey: .reverts) ?? 0
             blockedKeeps = try c.decodeIfPresent(Int.self, forKey: .blockedKeeps) ?? 0
+            alwaysReplace = try c.decodeIfPresent(Bool.self, forKey: .alwaysReplace) ?? false
         }
     }
 
@@ -78,6 +112,11 @@ actor CorrectionStore {
     struct Term: Codable, Sendable {
         var mappings: [Mapping] = []
         var suppressedBlocks: [String] = []   // normalized originalWords the user said "don't ask"
+        /// V2-3 one-shot teach lane: normalized heard phrases this term has
+        /// already used its single merge-teach ask on ("sri ram"). A phrase
+        /// appears here once EVER — asked and never re-asked, adjudicated or
+        /// not (round-2: bounded fatigue). Optional for back-compat decode.
+        var mergeAskedPhrases: [String]?
     }
 
     /// Immutable, `Sendable` snapshot handed to the (synchronous) gate so the
@@ -86,6 +125,15 @@ actor CorrectionStore {
         let originalWord: String
         let term: String
         let net: Int
+        /// V2-4 explicit grant flag (see `Mapping.alwaysReplace`).
+        let alwaysReplace: Bool
+
+        init(originalWord: String, term: String, net: Int, alwaysReplace: Bool = false) {
+            self.originalWord = originalWord
+            self.term = term
+            self.net = net
+            self.alwaysReplace = alwaysReplace
+        }
     }
 
     // MARK: - State
@@ -101,8 +149,21 @@ actor CorrectionStore {
     func snapshot() -> [OverrideEntry] {
         loadIfNeeded()
         return terms.values.flatMap { term in
-            term.mappings.map { OverrideEntry(originalWord: $0.originalWord, term: $0.term, net: $0.net) }
+            term.mappings.map {
+                OverrideEntry(originalWord: $0.originalWord, term: $0.term,
+                              net: $0.net, alwaysReplace: $0.alwaysReplace)
+            }
         }
+    }
+
+    /// V2-4: grant "always replace originalWord with term" — the explicit
+    /// user consent that lets the gate auto-apply a common-word pair. Ends
+    /// the forever-ask treadmill for a pair the owner has confirmed twice.
+    func grantAlwaysReplace(originalWord: String, term: String) {
+        loadIfNeeded()
+        mutate(originalWord: originalWord, term: term) { $0.alwaysReplace = true }
+        persist()
+        log.info("always-replace GRANTED \(originalWord, privacy: .public)→\(term, privacy: .public)")
     }
 
     /// True if the owner tapped "Stop asking" on a blocked `(originalWord → term)`
@@ -135,6 +196,36 @@ actor CorrectionStore {
         return out
     }
 
+    /// V2-3 one-shot teach lane reads: every "originalWord|term" pair whose
+    /// merge-teach ask has already been used. Same pair-key shape as
+    /// `keyboardSuppressedPairs`.
+    func mergeAskedPairs() -> Set<String> {
+        loadIfNeeded()
+        var out: Set<String> = []
+        for (termKey, term) in terms {
+            for phrase in term.mergeAskedPhrases ?? [] {
+                out.insert("\(phrase)|\(termKey)")
+            }
+        }
+        return out
+    }
+
+    /// Record that a merge-teach ask for `(originalWord → term)` has been
+    /// published — its single shot is spent, adjudicated or not.
+    func noteMergeAsked(originalWord: String, term: String) {
+        loadIfNeeded()
+        let key = term.lowercased()
+        let phrase = normalize(originalWord)
+        var t = terms[key] ?? Term()
+        var asked = t.mergeAskedPhrases ?? []
+        guard !asked.contains(phrase) else { return }
+        asked.append(phrase)
+        t.mergeAskedPhrases = asked
+        terms[key] = t
+        persist()
+        log.info("merge-teach ask spent \(phrase, privacy: .public)→\(key, privacy: .public)")
+    }
+
     // MARK: - Verdicts (called by the pane)
 
     /// Owner confirmed a correction `(originalWord → term)` should apply. Raises
@@ -157,6 +248,9 @@ actor CorrectionStore {
         loadIfNeeded()
         mutate(originalWord: originalWord, term: term) {
             if delta > 0 { $0.confirmations += delta } else { $0.reverts += -delta }
+            // V2-4: one revert revokes an "always replace" grant — the user
+            // changed their mind, the pair goes back to asking.
+            if delta < 0 { $0.alwaysReplace = false }
         }
         persist()
         log.info("correction adjust \(originalWord, privacy: .public)→\(term, privacy: .public) by \(delta, privacy: .public)")
@@ -222,7 +316,7 @@ actor CorrectionStore {
     }
 
     private func normalize(_ s: String) -> String {
-        s.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:\"'()"))
+        CorrectionKey.normalize(s)
     }
 
     private var fileURL: URL? {

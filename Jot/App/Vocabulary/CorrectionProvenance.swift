@@ -48,11 +48,22 @@ actor CorrectionProvenance {
         /// Optional so payloads persisted BEFORE this field existed decode as
         /// nil — treat nil and [] identically.
         var alternates: [VocabularyGate.Alternate]?
+        /// V2-3: structural shape ("merge" = split-word class). Optional for
+        /// back-compat with payloads persisted before the field existed.
+        var shape: String?
 
         /// Stable per-occurrence identity key (verdict + mark lookup).
         var key: String { "\(originalWord.lowercased())|\(term.lowercased())|\(originalStart)" }
         /// Mapping key (shared by every occurrence of the same original→term).
-        var mappingKey: String { "\(originalWord.lowercased())|\(term.lowercased())" }
+        /// V2-2: uses the ONE shared normalization (`CorrectionKey`) so the
+        /// contributions ledger, CorrectionStore nets, and the ask publisher's
+        /// prior lookups can never disagree about pair identity. (`key` above
+        /// stays raw-lowercased — it's a per-occurrence identity within one
+        /// payload, where raw and normalized are equally unique.)
+        var mappingKey: String { "\(CorrectionKey.normalize(originalWord))|\(CorrectionKey.normalize(term))" }
+        /// Pre-V2-2 mapping key shape — read-side fallback only, so old
+        /// persisted contribution entries keep reconciling.
+        var legacyMappingKey: String { "\(originalWord.lowercased())|\(term.lowercased())" }
     }
 
     /// On-disk shape: proposals + per-occurrence verdicts + this transcript's
@@ -101,7 +112,8 @@ actor CorrectionProvenance {
                 unsure: $0.unsure, occurrenceIndex: $0.occurrenceIndex,
                 originalStart: $0.originalStart, originalLength: $0.originalLength,
                 publishedStart: $0.publishedStart, publishedLength: $0.publishedLength,
-                alternates: $0.alternates.isEmpty ? nil : $0.alternates)
+                alternates: $0.alternates.isEmpty ? nil : $0.alternates,
+                shape: $0.shape)
         }
     }
 
@@ -274,11 +286,14 @@ actor CorrectionProvenance {
     }
 
     /// Record a per-occurrence verdict and return how the mapping's global net
-    /// should move (caller applies it to `CorrectionStore`). `verdict` ∈
-    /// {"term","original"}. A transcript contributes at most ±1 per mapping
-    /// (recomputed from ALL its verdicts), so three "name→Jamy" picks can't
-    /// inflate net to 3, and a mixed transcript (some term, some revert) gives 0.
-    func setVerdict(transcriptID: UUID, record: Record, verdict: String) -> MappingDelta? {
+    /// should move (caller applies them to `CorrectionStore`). `verdict` ∈
+    /// {"term","original","alt0"}. A transcript contributes at most ±1 per
+    /// mapping (recomputed from ALL its verdicts), so three "name→Jamy" picks
+    /// can't inflate net to 3, a mixed transcript (some term, some revert)
+    /// gives 0 — and an "alt0" pick moves the ALTERNATE's mapping through the
+    /// same clamp (V2-2; may return one delta per affected mapping, e.g. a
+    /// switch from "term" to "alt0" moves two).
+    func setVerdict(transcriptID: UUID, record: Record, verdict: String) -> [MappingDelta] {
         var p = payload(transcriptID: transcriptID)
         p.verdicts[record.key] = verdict
         return finalize(&p, transcriptID: transcriptID, record: record)
@@ -286,7 +301,7 @@ actor CorrectionProvenance {
 
     /// Undo a verdict — clears the pick (row re-surfaces) and reverses this
     /// transcript's mapping contribution if no sibling verdict still supports it.
-    func clearVerdict(transcriptID: UUID, record: Record) -> MappingDelta? {
+    func clearVerdict(transcriptID: UUID, record: Record) -> [MappingDelta] {
         var p = payload(transcriptID: transcriptID)
         p.verdicts.removeValue(forKey: record.key)
         return finalize(&p, transcriptID: transcriptID, record: record)
@@ -294,23 +309,61 @@ actor CorrectionProvenance {
 
     /// Recompute this transcript's contribution to `record`'s mapping from its
     /// CURRENT verdicts, store it, and return the delta vs the stored value.
-    private func finalize(_ p: inout Payload, transcriptID: UUID, record: Record) -> MappingDelta? {
-        let mk = record.mappingKey
-        let desired = desiredContribution(p, mappingKey: mk)
-        let old = p.contributions[mk] ?? 0
-        if desired == 0 { p.contributions[mk] = nil } else { p.contributions[mk] = desired }
+    private func finalize(_ p: inout Payload, transcriptID: UUID, record: Record) -> [MappingDelta] {
+        // V2-2 selected-mapping ledger: one verdict can move EITHER the base
+        // mapping (term/original picks) OR an alternate mapping ("alt0" picks
+        // in the 3-option ask). Reconcile every mapping this record can
+        // affect through the same ±1-per-transcript contribution clamp —
+        // this replaces the old direct CorrectionStore.adjust(±1) for alt
+        // picks, which bypassed the clamp (round-2 confirmed break).
+        var targets: [(term: String, key: String, legacy: String?)] = [
+            (record.term, record.mappingKey, record.legacyMappingKey)
+        ]
+        for alt in record.alternates ?? [] {
+            let altKey = "\(CorrectionKey.normalize(record.originalWord))|\(CorrectionKey.normalize(alt.term))"
+            targets.append((alt.term, altKey, nil))
+        }
+        var deltas: [MappingDelta] = []
+        for t in targets {
+            // Legacy-key fallback (V2-2): a payload persisted before the
+            // shared normalization may hold this mapping's contribution
+            // under the old raw-lowercased key. Migrate in place so an
+            // undo/re-pick can't double-count.
+            if p.contributions[t.key] == nil, let lk = t.legacy, lk != t.key,
+               let legacy = p.contributions[lk] {
+                p.contributions[t.key] = legacy
+                p.contributions[lk] = nil
+            }
+            let desired = desiredContribution(p, mappingKey: t.key)
+            let old = p.contributions[t.key] ?? 0
+            if desired == 0 { p.contributions[t.key] = nil } else { p.contributions[t.key] = desired }
+            let delta = desired - old
+            if delta != 0 {
+                deltas.append(MappingDelta(originalWord: record.originalWord, term: t.term, delta: delta))
+            }
+        }
         persist(transcriptID: transcriptID, p)
-        let delta = desired - old
-        return delta == 0 ? nil : MappingDelta(originalWord: record.originalWord, term: record.term, delta: delta)
+        return deltas
     }
 
-    /// +1 if the owner meant the term for this mapping (any "term", no revert),
+    /// +1 if the owner meant the term for this mapping (any "term" pick — or
+    /// an "alt0" pick whose alternate IS this mapping — with no revert),
     /// −1 if they reverted an applied one (any revert, no "term"), 0 if mixed or
     /// only "kept-original" (no learning signal).
     private func desiredContribution(_ p: Payload, mappingKey: String) -> Int {
-        let occ = p.records.filter { $0.mappingKey == mappingKey }
-        let anyTerm = occ.contains { p.verdicts[$0.key] == "term" }
-        let anyDemote = occ.contains { p.verdicts[$0.key] == "original" && $0.outcome == "applied" }
+        var anyTerm = false
+        var anyDemote = false
+        for occ in p.records {
+            let v = p.verdicts[occ.key]
+            if occ.mappingKey == mappingKey {
+                if v == "term" { anyTerm = true }
+                if v == "original", occ.outcome == "applied" { anyDemote = true }
+            }
+            if v == "alt0", let alt = occ.alternates?.first {
+                let altKey = "\(CorrectionKey.normalize(occ.originalWord))|\(CorrectionKey.normalize(alt.term))"
+                if altKey == mappingKey { anyTerm = true }
+            }
+        }
         if anyTerm && !anyDemote { return 1 }
         if anyDemote && !anyTerm { return -1 }
         return 0

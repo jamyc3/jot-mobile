@@ -1641,7 +1641,12 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             // is skipped the second time).
             if !deckHandledSessions.contains(session.id),
                let staged = CorrectionBridge.readAsks(sessionID: session.id),
-               !staged.asks.isEmpty {
+               !staged.asks.isEmpty,
+               // V2-3: teach-only asks (split-word merge class) must NEVER
+               // hold the paste — if EVERY staged ask is post-paste-only,
+               // skip the hold entirely; they surface via the post-paste
+               // teach strip instead (`maybeShowCorrectionNudge`).
+               staged.asks.contains(where: { $0.postPasteOnly != true }) {
                 // MUST: a re-entrant flush (phase-change / re-present) can land WHILE
                 // the deck is open and before the session is "handled" — bail BEFORE
                 // touching any state so we never wipe the verdicts the user is mid-way

@@ -82,6 +82,11 @@ enum VocabularyGate {
         // Alternate candidate terms for this span (3-option ask). Empty for
         // the common single-candidate case.
         let alternates: [Alternate]
+        // V2-3: structural shape of the proposal. "merge" = the heard span
+        // has MORE words than the term and its concatenation matches the
+        // term (or an alias) — the split-word class ("sri ram" → "Sriram").
+        // nil for ordinary proposals.
+        let shape: String?
     }
 
     struct Result {
@@ -323,6 +328,21 @@ enum VocabularyGate {
                 after: item.range.upperBound,
                 in: originalTranscript,
                 allTerms: allTerms)
+            // V2-3 · merge-shape classification: span words > term words AND
+            // the concatenated span EXACTLY equals the normalized term (or
+            // one of its aliases) — the split-word class ("sri ram" →
+            // "Sriram"). Shape rides the proposal so the ask publisher can
+            // route it to the post-paste teach strip instead of silence.
+            let shape: String? = {
+                guard let term = item.r.replacementWord else { return nil }
+                let spanWords = item.originalWord.split(separator: " ").map(String.init)
+                let termWords = term.split(separator: " ")
+                guard spanWords.count > termWords.count else { return nil }
+                let concat = skeleton(spanWords.joined())
+                let candidates = [term] + (termAliases[term.lowercased()] ?? [])
+                for c in candidates where skeleton(c) == concat { return "merge" }
+                return nil
+            }()
             proposals.append(
                 Proposal(
                     // Effective span text (dedup-widened when the guard
@@ -340,7 +360,8 @@ enum VocabularyGate {
                     originalLength: item.originalLength,
                     publishedStart: publishedStart,
                     publishedLength: item.publishedText.count,
-                    alternates: alternates
+                    alternates: alternates,
+                    shape: shape
                 )
             )
             if item.d.pass { applied += 1 } else { blocked.append(String(originalTranscript[item.range])) }
@@ -392,15 +413,29 @@ enum VocabularyGate {
         //     For common originals the gate keeps proposing-and-asking; only the
         //     UI pre-highlights the learned term. Auto-apply is reserved for
         //     rare/OOV originals (net ≥ 1) and multi-word terms (self-gating below).
-        if let ov = overrides.first(where: { $0.originalWord == base && $0.term == term }) {
+        // Case-insensitive term compare (V2-2 identity fix, diff-reviewed
+        // round 2): the engine re-cases replacements from sentence context
+        // ("Claude" vs "claude"), while the store keys terms lowercased — a
+        // case-sensitive compare here silently missed learned overrides and
+        // demotions for differently-capitalized occurrences.
+        if let ov = overrides.first(where: {
+            $0.originalWord == base && $0.term.lowercased() == term.lowercased()
+        }) {
             // DEMOTED: the owner reverted this mapping (via the marks/bubble or the
             // accordion) → stop auto-applying it. Works for common AND rare
             // originals, so a wrong auto-correction the owner undid stays undone.
             if ov.net <= -1 {
                 return (false, confidence, margin, "BLOCK", unsure)
             }
+            // V2-4 EXPLICIT GRANT: the owner tapped "Always replace 'X' with
+            // 'Y'" — auto-apply even for a common-word original. §v2-B's
+            // intent holds: the user consented explicitly, on-screen, for
+            // this EXACT pair; one revert revokes the grant (store-side).
+            if ov.alwaysReplace {
+                return (true, confidence, margin, "OVERRIDE", unsure)
+            }
             // CONFIRMED: auto-apply — rare/OOV originals only (common words never
-            // auto-apply, §v2-B).
+            // auto-apply without the explicit grant, §v2-B).
             if !isCommon, ov.net >= 1 {
                 return (true, confidence, margin, "OVERRIDE", unsure)
             }
@@ -727,7 +762,11 @@ enum VocabularyGate {
     // MARK: - Helpers
 
     private static func normalize(_ s: String) -> String {
-        s.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:\"'()"))
+        // Diff-review fix: MUST be the same normalization the store keys use
+        // (`CorrectionKey`) — the override lookup compares this output to
+        // store-normalized keys, and any divergence (NFC, whitespace runs)
+        // silently misses learned overrides/demotions.
+        CorrectionKey.normalize(s)
     }
 
     /// Per-word minimum *content-token* confidence, keyed by lowercased word.

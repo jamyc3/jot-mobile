@@ -70,13 +70,53 @@ enum CorrectionAsksPublisher {
         // keyboard stops nagging — they remain reviewable on the transcript.
         // Split into an explicitly-typed helper so the Swift type-checker doesn't
         // choke on the compound predicate inside `.filter`.
+        // V2-3 one-shot teach lane: a merge-shaped BLOCKED proposal ("sri
+        // ram" → Sriram, blocked because its fragments are common words)
+        // gets exactly ONE teach ask per phrase EVER — surfaced post-paste
+        // (never holding the paste; see `postPasteOnly` below). Confirming
+        // writes the heard phrase as a sounds-like on the term.
+        let mergeAsked = await CorrectionStore.shared.mergeAskedPairs()
+        func mergeTeachEligible(_ r: CorrectionProvenance.Record) -> Bool {
+            r.shape == "merge" && r.outcome == "kept" && !mergeAsked.contains(pairKey(r))
+        }
+        // V2-4: a pair the owner explicitly granted "Always replace" stops
+        // consuming ask budget — it auto-applies (visible in the transcript
+        // review, where one revert revokes the grant).
+        func granted(_ r: CorrectionProvenance.Record) -> Bool {
+            overrides.first {
+                $0.originalWord == Self.normalize(r.originalWord)
+                    && $0.term.lowercased() == r.term.lowercased()
+            }?.alwaysReplace == true
+        }
         func worthAsking(_ r: CorrectionProvenance.Record) -> Bool {
             if keyboardSuppressed.contains(pairKey(r)) { return false }
+            if granted(r) { return false }
+            // Diff-review fix: a merge-shaped BLOCKED record is eligible ONLY
+            // through the one-shot teach lane — never via prior>0 (which
+            // would resurrect a spent phrase as a paste-holding card and
+            // defeat both once-ever and post-paste-only).
+            if r.shape == "merge", r.outcome == "kept" {
+                return mergeTeachEligible(r)
+            }
             return r.outcome == "applied" || prior(r) > 0
         }
         let candidates: [CorrectionProvenance.Record] = unresolved.filter(worthAsking)
         let ranked: [CorrectionProvenance.Record] = candidates.sorted { prior($0) > prior($1) }
-        let selected: [CorrectionProvenance.Record] = Array(ranked.prefix(maxAsks))
+        var selected: [CorrectionProvenance.Record] = Array(ranked.prefix(maxAsks))
+        // Diff-review fixes:
+        // (a) pair-dedupe merge teach asks — two occurrences of "sri ram" in
+        //     one dictation must produce ONE card, not two;
+        // (b) MIXED payloads: if any normal (paste-holding) ask is selected,
+        //     drop the merge teach asks from this publish WITHOUT spending
+        //     their one shot — the keyboard presents a held deck wholesale,
+        //     and a teach card must never ride a paste-holding deck.
+        var seenMergePairs: Set<String> = []
+        let hasNormalAsk = selected.contains { !($0.shape == "merge" && $0.outcome == "kept") }
+        selected = selected.filter { r in
+            guard r.shape == "merge", r.outcome == "kept" else { return true }
+            if hasNormalAsk { return false }
+            return seenMergePairs.insert(pairKey(r)).inserted
+        }
 
         var asks: [CorrectionBridge.Ask] = []
         for r in selected {
@@ -84,11 +124,19 @@ enum CorrectionAsksPublisher {
             // 3-option ask: surface the first alternate (the keyboard card
             // caps at 3 buttons — original, term, one alternate).
             let alt = r.alternates?.first
+            let isMergeTeach = mergeTeachEligible(r)
             asks.append(CorrectionBridge.Ask(
                 recordKey: r.key, original: r.originalWord, term: r.term,
                 outcome: r.outcome, contextBefore: before, contextAfter: after,
                 publishedStart: r.publishedStart, publishedLength: r.publishedLength,
-                altTerm: alt?.term, altFind: alt?.find))
+                altTerm: alt?.term, altFind: alt?.find,
+                postPasteOnly: isMergeTeach ? true : nil))
+            if isMergeTeach {
+                // The single shot is spent at PUBLISH time (adjudicated or
+                // not) — bounded fatigue, round-2 amendment.
+                await CorrectionStore.shared.noteMergeAsked(
+                    originalWord: r.originalWord, term: r.term)
+            }
         }
         guard !asks.isEmpty else {
             CorrectionBridge.clearAsks()
@@ -114,9 +162,10 @@ enum CorrectionAsksPublisher {
         return true
     }
 
-    /// Mirrors `CorrectionStore.normalize` so `prior` keys align.
+    /// Mirrors `CorrectionStore.normalize` so `prior` keys align — now the
+    /// literal same function (V2-2 shared normalization).
     private static func normalize(_ s: String) -> String {
-        s.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:\"'()"))
+        CorrectionKey.normalize(s)
     }
 
     /// ~`contextWindow` chars on each side of the published span (ellipsized).
