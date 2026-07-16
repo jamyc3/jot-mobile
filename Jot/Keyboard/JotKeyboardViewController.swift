@@ -985,7 +985,27 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             let inCore = Self.trimGatedWord(inText)
             let wantCore = Self.trimGatedWord(want)
             guard !wantCore.isEmpty, wantCore.caseInsensitiveCompare(inCore) != .orderedSame else { continue }
-            guard let (s, e) = Self.wholeWordRange(of: inCore, anchoredAtChar: anchor, in: chars) else { continue }
+            // alt0's needle is `altFind` (winner word + following words), but the
+            // ask's contextAfter starts right after the PRIMARY span — i.e. INSIDE
+            // the altFind tail. Pass the primary word's length so corroboration
+            // searches the after-context from the right place (see
+            // `contextCorroborates`); nil for the plain original/term splice.
+            let primaryLenForAlt: Int? = (v == "alt0")
+                ? Self.trimGatedWord((ask.outcome == "applied") ? ask.term : ask.original).count
+                : nil
+            // Resolve the span to splice. `publishedStart` is diff-mapped from the
+            // gate-output text into `publishedText` (`CorrectionAsksPublisher`), and
+            // when AI Rewrite cleanup is ON `publishedText` is the cleaned text — an
+            // ambiguous diff can shift the anchor a char off its word, failing a
+            // strict exact-at-anchor match. Left unhandled the splice silently no-ops
+            // and the paste keeps the TERM while the saved transcript flips to the
+            // pick (they resolve against different texts) — the divergence. See
+            // `spliceRange` for the anchor-first, window-bounded recovery.
+            guard let (s, e) = Self.spliceRange(
+                of: inCore, anchoredAtChar: anchor, in: defaultText,
+                contextBefore: ask.contextBefore, contextAfter: ask.contextAfter,
+                primaryLengthInNeedle: primaryLenForAlt)
+            else { continue }
             edits.append(Edit(start: s, end: e, replacement: wantCore))
         }
         DiagnosticsLog.record(
@@ -1008,20 +1028,160 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         s.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?\"'\u{2019}\u{201D})]}"))
     }
 
-    /// Char range [start,end) of `word` if it sits as a WHOLE word starting exactly
-    /// at `anchor` (case-insensitive). Mirrors the app's anchor-exact resolution; nil
-    /// if the anchor doesn't land on that word (the body shifted — fail safe).
-    private static func wholeWordRange(of word: String, anchoredAtChar anchor: Int,
-                                       in chars: [Character]) -> (Int, Int)? {
-        let needle = Array(word)
-        guard !needle.isEmpty, anchor >= 0 else { return nil }
-        let end = anchor + needle.count
-        guard end <= chars.count else { return nil }
-        guard String(chars[anchor..<end]).caseInsensitiveCompare(word) == .orderedSame else { return nil }
-        let beforeOK = anchor == 0 || !chars[anchor - 1].isLetter
-        let afterOK = end == chars.count || !chars[end].isLetter
-        guard beforeOK, afterOK else { return nil }
-        return (anchor, end)
+    /// Character range [start,end) of the whole-word occurrence of `word` to splice
+    /// for the ask anchored at `anchor` (offsets index `text`). Resolution, in
+    /// priority order:
+    ///
+    ///  1. STRICT anchor — a DIRECT `.anchored` match at `anchor` on the FULL text
+    ///     wins outright (parity with the transcript review's exact-at-offset
+    ///     resolution, `CorrectionReviewModel.resolveSpan`). A direct anchored test
+    ///     (not "scan, then look for a candidate that starts at the anchor") is
+    ///     immune to the enumeration order of overlapping matches.
+    ///  2. Otherwise a UNIQUE whole-word match WITHIN A BOUNDED WINDOW around the
+    ///     anchor, CORROBORATED by the ask's spoken context. The window (not a global
+    ///     scan) is load-bearing: cleanup shifts an anchor by small LOCAL deltas, so
+    ///     the true occurrence sits near it; a global search would splice a
+    ///     same-spelled word ELSEWHERE when cleanup DELETED the intended occurrence
+    ///     but an identical word survives — divergence in reverse. Zero or 2+
+    ///     in-window matches → fail safe. A lone survivor in a DIFFERENT clause is
+    ///     still wrong, so a fallback match must also be corroborated by the ask's
+    ///     `contextBefore`/`contextAfter` (see `contextCorroborates`). If cleanup
+    ///     truly removed the word we correctly do NOTHING (the paste can't show a
+    ///     word that no longer exists — inherent bound); a corroborated-but-still-
+    ///     wrong splice is the accepted floor.
+    ///
+    /// Matching uses `String.range(of:options:.caseInsensitive)` — NOT a fixed
+    /// needle.count char window — so variable-length Unicode case folds
+    /// (Straße↔STRASSE) resolve, matching the transcript resolver's semantics
+    /// (`CorrectionReviewModel.wholeWordRanges`). Whole-word boundaries use the SAME
+    /// `isLetter` rule as that resolver AND are always evaluated against the FULL
+    /// text by absolute offset (never a cropped window slice — a letter just outside
+    /// the window still blocks the match). The two sides MUST stay in `isLetter`
+    /// parity (changing one reintroduces divergence); the consequence — an
+    /// apostrophe reads as a separator (so "Don" can match inside "don't") and
+    /// adjacent CJK ideographs read as one word — is accepted symmetrically. In
+    /// practice the apostrophe case biases toward the fail-safe (a stray "don't"
+    /// near the anchor adds a second match → ambiguous → no splice).
+    private static func spliceRange(of word: String, anchoredAtChar anchor: Int,
+                                    in text: String,
+                                    contextBefore: String, contextAfter: String,
+                                    primaryLengthInNeedle: Int? = nil) -> (Int, Int)? {
+        let n = text.count
+        guard !word.isEmpty else { return nil }
+        // Out-of-range anchor (incl. one mapped to a removal point at/after the text
+        // end) fails safe, matching HEAD and the transcript resolver — an anchor with
+        // no character to sit on must not resurrect a splice.
+        guard anchor >= 0, anchor < n else { return nil }
+
+        func charOffset(_ idx: String.Index) -> Int { text.distance(from: text.startIndex, to: idx) }
+        func idx(_ off: Int) -> String.Index { text.index(text.startIndex, offsetBy: off) }
+        // Boundary test against the FULL text by absolute offset (an out-of-bounds
+        // side is a text edge → not a letter → boundary OK).
+        func isLetterAt(_ off: Int) -> Bool {
+            guard off >= 0, off < n else { return false }
+            return text[idx(off)].isLetter
+        }
+        func wholeWord(start: Int, end: Int) -> Bool {
+            !isLetterAt(start - 1) && !isLetterAt(end)
+        }
+
+        // 1. Strict anchor — direct anchored match on the full text.
+        let anchorIdx = idx(anchor)
+        if let r = text.range(of: word, options: [.caseInsensitive, .anchored],
+                              range: anchorIdx..<text.endIndex) {
+            let end = charOffset(r.upperBound)
+            if wholeWord(start: anchor, end: end) { return (anchor, end) }
+        }
+
+        // 2. Windowed unique + context-corroborated fallback.
+        // Radius = 2× the ask context window (`CorrectionAsksPublisher.contextWindow`
+        // = 24 chars): generous for local cleanup drift, well short of unrelated
+        // repeats. `+ 8` fold slack on `hi` so a variable-length case fold near the
+        // far edge (Straße→STRASSE, +1 char) still fits the window.
+        let radius = 48
+        let lo = max(0, anchor - radius)
+        let hi = min(n, anchor + word.count + radius + 8)
+        guard lo < hi else { return nil }
+        var matches: [(start: Int, end: Int)] = []   // GLOBAL char offsets
+        var searchLo = idx(lo)
+        let hiIdx = idx(hi)
+        while let r = text.range(of: word, options: [.caseInsensitive], range: searchLo..<hiIdx) {
+            let start = charOffset(r.lowerBound)
+            let end = charOffset(r.upperBound)
+            if wholeWord(start: start, end: end) { matches.append((start, end)) }
+            // Advance by ONE Character past the match START (not its end) so
+            // OVERLAPPING candidates are still enumerated for the ambiguity count.
+            searchLo = text.index(after: r.lowerBound)
+            if searchLo >= hiIdx { break }
+        }
+        guard matches.count == 1 else { return nil }   // zero or ambiguous → fail safe
+        let match = matches[0]
+        // For alt0 the after-context begins after the PRIMARY word inside the
+        // altFind match, not after the whole match — start the after-side
+        // corroboration search there (clamped into the match).
+        let afterSearchStart = primaryLengthInNeedle.map { min(match.start + $0, match.end) } ?? match.end
+        guard contextCorroborates(matchStart: match.start, matchEnd: match.end, in: text,
+                                  contextBefore: contextBefore, contextAfter: contextAfter,
+                                  afterSearchStart: afterSearchStart)
+        else { return nil }
+        return match
+    }
+
+    /// Whether a FALLBACK splice candidate (a lone in-window match that did NOT sit
+    /// exactly on the anchor) is corroborated by the ask's spoken context. Requires
+    /// at least one context word (from `contextBefore` within the 24 chars PRECEDING
+    /// the match, OR from `contextAfter` within the 24 chars FOLLOWING it) to appear,
+    /// case-insensitively. Genuine cleanup drift preserves the neighbouring words; a
+    /// same-spelled survivor in a different clause shares neither side. If both
+    /// contexts are empty (span at a text edge) there is nothing to corroborate
+    /// against → fall back to uniqueness-only (best available). Words shorter than 2
+    /// chars are ignored so a stray "a"/"I" can't rubber-stamp any neighbourhood.
+    private static func contextCorroborates(matchStart: Int, matchEnd: Int, in text: String,
+                                            contextBefore: String, contextAfter: String,
+                                            afterSearchStart: Int? = nil) -> Bool {
+        func words(_ s: String) -> [String] {
+            s.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "\u{2026}" })
+                .map { Self.trimGatedWord(String($0)) }
+                .filter { $0.count >= 2 }
+        }
+        let before = words(contextBefore)
+        let after = words(contextAfter)
+        if before.isEmpty && after.isEmpty { return true }   // edge span — uniqueness-only
+        let n = text.count
+        func idx(_ off: Int) -> String.Index { text.index(text.startIndex, offsetBy: off) }
+        func isLetterAt(_ off: Int) -> Bool {
+            guard off >= 0, off < n else { return false }
+            return text[idx(off)].isLetter
+        }
+        // WHOLE-WORD, case-insensitive presence of any context word inside
+        // [lo,hi) — boundaries checked by ABSOLUTE offset on the full text so a
+        // context word can't corroborate from inside a longer word ("he" must
+        // not match inside "breathe"), and a word straddling the neighbourhood
+        // edge can't fake a boundary.
+        func anyWholeWord(_ list: [String], from lo: Int, to hi: Int) -> Bool {
+            guard lo < hi, !list.isEmpty else { return false }
+            let hiIdx = idx(hi)
+            for w in list {
+                var searchLo = idx(lo)
+                while let r = text.range(of: w, options: [.caseInsensitive], range: searchLo..<hiIdx) {
+                    let s = text.distance(from: text.startIndex, to: r.lowerBound)
+                    let e = text.distance(from: text.startIndex, to: r.upperBound)
+                    if !isLetterAt(s - 1) && !isLetterAt(e) { return true }
+                    searchLo = text.index(after: r.lowerBound)
+                    if searchLo >= hiIdx { break }
+                }
+            }
+            return false
+        }
+        if anyWholeWord(before, from: max(0, matchStart - 24), to: matchStart) { return true }
+        // After-side: normally the 24 chars following the match; for alt0 the
+        // caller passes `afterSearchStart` = matchStart + primary-word length,
+        // because the ask's contextAfter begins after the PRIMARY span — inside
+        // the altFind tail — not after the whole match.
+        let aStart = afterSearchStart ?? matchEnd
+        let aEnd = min(n, max(matchEnd, aStart) + 24)
+        if anyWholeWord(after, from: aStart, to: aEnd) { return true }
+        return false
     }
 
     private var currentActionAvailability: KeyboardActionAvailability {

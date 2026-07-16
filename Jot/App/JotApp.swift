@@ -10,20 +10,32 @@ import os.log
 private let lifecycleLog = Logger(subsystem: "com.vineetu.jot.mobile.Jot", category: "app-lifecycle")
 
 /// Minimal `UIApplicationDelegate` — exists ONLY to receive the background
-/// URLSession relaunch handoff for the overnight EmbeddingGemma fetch
-/// (⚠️REVIEW H1). SwiftUI's `App` lifecycle has no equivalent hook. It forwards
-/// the completion handler to `EmbeddingModelFetcher` and implements nothing
-/// else, so all scene/lifecycle behaviour continues to flow through `JotApp`.
+/// URLSession relaunch handoffs for the discretionary model fetches (⚠️REVIEW H1).
+/// SwiftUI's `App` lifecycle has no equivalent hook. It routes the completion
+/// handler to whichever fetcher owns the session identifier and implements
+/// nothing else, so all scene/lifecycle behaviour continues to flow through
+/// `JotApp`. Two owners today: the overnight EmbeddingGemma fetch and the
+/// Parakeet-upgrade download-on-charge fetch.
 final class JotAppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
-        EmbeddingModelFetcher.shared.handleBackgroundSessionEvents(
-            identifier: identifier,
-            completionHandler: completionHandler
-        )
+        switch identifier {
+        case EmbeddingModelFetcher.sessionIdentifier:
+            EmbeddingModelFetcher.shared.handleBackgroundSessionEvents(
+                identifier: identifier,
+                completionHandler: completionHandler
+            )
+        case ParakeetModelFetcher.sessionIdentifier:
+            ParakeetModelFetcher.shared.handleBackgroundSessionEvents(
+                completionHandler: completionHandler
+            )
+        default:
+            // Not one of ours — release the system immediately so we never strand it.
+            completionHandler()
+        }
     }
 }
 
@@ -237,6 +249,14 @@ struct JotApp: App {
         // contention is in the ANE compiler, not the scheduler), so we gate each
         // stage behind the previous one and load them strictly one at a time.
         Task { @MainActor in
+            // Drain an armed-but-unapplied Parakeet engine switch BEFORE the warm
+            // chain reads the engine state — covers a background download that
+            // completed while the app was closed (or a switch deferred because a
+            // recording was in flight last session). Launch is a safe boundary
+            // (nothing is recording yet), so this applies immediately and the warm
+            // chain below then warms the right model. No-op unless armed.
+            ParakeetModelArrival.applyPendingSwitchIfSafe()
+
             // Stage 1 → 2: wait for Parakeet, then prepare the vocab rescorer IF
             // the user has it enabled. Done as an `if` (not an early return) so
             // the EmbeddingGemma prewarm below still runs when vocab is disabled.
@@ -282,6 +302,14 @@ struct JotApp: App {
                 // bundled (Build A) or already carried-forward. Presence-checked
                 // + idempotent, so it also recovers a force-quit-cancelled fetch.
                 EmbeddingModelFetcher.shared.enqueueIfNeeded()
+
+                // TAIL (order-free): resume an in-flight Parakeet-upgrade
+                // download-on-charge fetch. Another OUT-OF-PROCESS background
+                // URLSession — no ANE contention, position immaterial. No-op
+                // unless `AppGroup.parakeetDownloadPending` is set (this fetch is
+                // user-initiated via the nudge, never unprompted); presence-checked
+                // + idempotent, so it also recovers a force-quit-cancelled fetch.
+                ParakeetModelFetcher.shared.resumeIfPending()
             }
         }
 

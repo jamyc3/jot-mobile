@@ -90,7 +90,21 @@ struct SettingsView: View {
     @State private var useAppleDictationForEnglish: Bool = AppGroup.useAppleDictationForEnglish
     /// Presents `VoiceCloneRecorderView` from the Lab's "Clone my voice" row.
     @State private var showVoiceCloneSheet: Bool = false
+    /// Keeps the engine toggle honest if a background Parakeet-upgrade download
+    /// auto-switches the engine while Settings is open (the toggle @State is
+    /// seeded once, so it would otherwise show a stale Apple-ON).
+    @State private var engineActivatedObserver: CrossProcessNotification.Observer?
 
+
+    /// Re-read the engine toggle from the App Group (source of truth). Guarded so
+    /// it only writes when the value actually changed — an already-synced toggle
+    /// doesn't needlessly re-fire the toggle's `onChange` side-effects.
+    private func refreshEngineToggle() {
+        let latest = AppGroup.useAppleDictationForEnglish
+        if latest != useAppleDictationForEnglish {
+            useAppleDictationForEnglish = latest
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -111,6 +125,17 @@ struct SettingsView: View {
                 // If the Lab was already opted in (persisted), keep it revealed.
                 ttsLabRevealed = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled) || ttsLabRevealed
                 ttsLabEnabled = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled)
+                // Re-seed the engine toggle from the source of truth on every
+                // appear — a background auto-switch (or the keyboard nudge path)
+                // may have flipped it since this @State was first seeded.
+                useAppleDictationForEnglish = AppGroup.useAppleDictationForEnglish
+                if engineActivatedObserver == nil {
+                    engineActivatedObserver = CrossProcessNotification.addObserver(
+                        name: CrossProcessNotification.parakeetEngineActivated
+                    ) {
+                        refreshEngineToggle()
+                    }
+                }
                 vocabularyStore.load()
                 if clientAdapter == nil {
                     let client = LLMClientFactory.shared.client()
@@ -121,6 +146,7 @@ struct SettingsView: View {
             }
             .onDisappear {
                 clientAdapter?.stop()
+                engineActivatedObserver = nil
             }
             .onChange(of: warmHoldEnabled) { _, newValue in
                 AppGroup.warmHoldEnabled = newValue
@@ -400,6 +426,14 @@ struct SettingsView: View {
                     LanguageChoice.recordRecent(lang)
                 }
                 TranscriptionService.shared.handleLanguageChange()
+                // Apple-routed languages install their per-locale speech asset
+                // via Apple (not our Parakeet download). Preinstall it now, at
+                // the moment of picking, so the first recording isn't stalled by
+                // a mid-session download — matching the Apple-engine toggle's
+                // consent-time preinstall. Unobtrusive; no download UI.
+                if TranscriptionService.activeLanguageUsesApple {
+                    TranscriptionService.shared.preinstallAppleAssets()
+                }
             }
         )
     }
@@ -985,8 +1019,17 @@ struct SettingsView: View {
                                 .disabled(!TranscriptionService.parakeetUsable)
                                 .onChange(of: useAppleDictationForEnglish) { _, newValue in
                                     AppGroup.useAppleDictationForEnglish = newValue
+                                    // The user's LAST EXPLICIT choice wins: an
+                                    // explicit engine change here (either
+                                    // direction) disarms any pending
+                                    // download-on-charge auto-switch so it can't
+                                    // later override this. The download itself is
+                                    // left running — the on-disk model is still
+                                    // useful, and the upgrade sheet then offers an
+                                    // instant switch instead of re-downloading.
+                                    AppGroup.parakeetSwitchArmed = false
                                     if newValue {
-                                        Task { await TranscriptionService.shared.preinstallAppleAssets() }
+                                        TranscriptionService.shared.preinstallAppleAssets()
                                     } else {
                                         // Turning Apple OFF == taking the Parakeet upgrade;
                                         // clear the nudge + reset the count so it matches the

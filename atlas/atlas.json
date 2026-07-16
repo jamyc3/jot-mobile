@@ -563,7 +563,7 @@
           ],
           "image": "screens/settings/settings-upgrade-engine.png",
           "captured": false,
-          "target": "Medium-detent sheet reached from the keyboard upgrade nudge (jot://upgrade-engine). \"Use Jot's engine\" flips English dictation Apple\u2192Parakeet (instant today; a download step attaches once the bundled model is stripped). \"Keep Apple\" = permanent decline. Same no-pressure tone as the donation card."
+          "target": "Medium-detent sheet reached from the keyboard upgrade nudge (jot://upgrade-engine) \u2014 a small state machine. If Jot's engine is already on the device, \"Use Jot's engine\" switches instantly with an in-sheet confirmation. On a stripped build where it isn't, \"Download & switch automatically\" queues a background, Wi-Fi download (usually while charging) and Jot switches over automatically when it lands \u2014 the sheet then shows \"Downloading\u2026\" with a Stop download option, and a one-time \"You're on Jot's engine\" note appears on the home screen (EngineSwitchedCard). Ineligible device, low disk, and a failed download each keep Apple honestly (failed offers Try again). \"Keep Apple\" is a permanent decline. Same no-pressure tone as the donation card."
         }
       ]
     },

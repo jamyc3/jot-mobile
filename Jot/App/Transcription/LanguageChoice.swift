@@ -42,7 +42,20 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
     // Apple-only — FluidAudio has NO model for these at all (not even
     // auto-detect); they route exclusively through Apple's on-device
     // `SpeechTranscriber` (see `isAppleOnly`/`appleLocaleIdentifier` below).
-    case japanese, korean, chineseMandarin, cantonese
+    // Cantonese ships as TWO rows (device-verified against the iOS 26
+    // SpeechTranscriber catalog): Hong Kong Cantonese is `zh-HK`, Mainland
+    // Cantonese is `yue-CN`. (`yue-HK` does not exist — it aliases to
+    // `zh-HK`.) Traditional-script Mandarin (`zh-TW`) ships as its own row
+    // (owner call, 2026-07-16) — same Apple-only path as the rest.
+    case japanese, korean, chineseMandarin, cantoneseHongKong, chineseTraditional
+    // LEGACY rawValue PIN — do NOT "clean up" to "cantoneseMainland".
+    // The originally-shipped single `cantonese` case (builds 267–278) was
+    // locale yue-CN, i.e. Mainland Cantonese. Pinning THIS case's rawValue
+    // back to "cantonese" makes every already-stored selection, historical
+    // `Transcript.language` string, and MRU-recents entry decode straight to
+    // the correct case with ZERO migration code. `cantoneseHongKong` is new,
+    // so it keeps its implicit "cantoneseHongKong" rawValue.
+    case cantoneseMainland = "cantonese"
 
     var id: String { rawValue }
 
@@ -63,7 +76,8 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
     /// these.
     var isAppleOnly: Bool {
         switch self {
-        case .japanese, .korean, .chineseMandarin, .cantonese: return true
+        case .japanese, .korean, .chineseMandarin, .cantoneseHongKong, .cantoneseMainland,
+             .chineseTraditional: return true
         // Latin-American Spanish: Parakeet only ships European Spanish, so this
         // variant is forced through Apple (which has es-MX). Treating it as
         // Apple-only also keeps the Parakeet-upgrade nudge away from it.
@@ -108,7 +122,43 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         // No reliable frequency data (Belarusian) → no guard, unchanged.
         case .belarusian: return nil
         // Apple-only CJK — vocab correction never runs for these.
-        case .japanese, .korean, .chineseMandarin, .cantonese: return nil
+        case .japanese, .korean, .chineseMandarin, .cantoneseHongKong, .cantoneseMainland,
+             .chineseTraditional: return nil
+        }
+    }
+
+    /// Whether the CTC custom-vocabulary boost (keyword spot + merge) runs
+    /// for this language. Two independent reasons force a skip, both covered
+    /// here so the gate is a single named flag rather than scattered checks:
+    ///
+    /// - **No inter-word spaces** (Japanese, Mandarin, Cantonese): the vocab
+    ///   pipeline splits transcript text on the literal space character to
+    ///   find word spans (`VocabularyGate` / `VocabularyRescorerHolder` /
+    ///   `AppleDictationEngine.words(from:)`); these scripts would collapse an
+    ///   entire clause into one "word" and break the merge.
+    /// - **CTC-scorer script mismatch** (Korean): the scorer
+    ///   (`parakeet-ctc-110m`) is English/Latin-trained, and the merge IS
+    ///   reachable on the Apple path (Apple emits synthetic `tokenTimings`),
+    ///   so running it over Korean audio can false-positive-inject a Latin
+    ///   term into otherwise-correct Korean text. Korean stays OFF pending an
+    ///   on-device Korean + Latin-term false-positive test (see the
+    ///   apple-only-languages plan's as-built note) — "safe no-op" was an
+    ///   unverified assumption, and vocab trustworthiness is not worth the
+    ///   risk here.
+    ///
+    /// Latin-American Spanish is also listed (it routes to Apple): this keeps
+    /// the shipped behavior unchanged. European Spanish (Parakeet) keeps vocab
+    /// on; enabling LatAm Spanish for parity is a deliberate future call, not
+    /// a silent flip. Net: currently equivalent to `!isAppleOnly`, but written
+    /// as an explicit list so a future no-word-space FluidAudio language
+    /// (e.g. Thai) is skipped too rather than wrongly treated as eligible.
+    var isVocabEligible: Bool {
+        switch self {
+        case .japanese, .korean, .chineseMandarin, .cantoneseHongKong, .cantoneseMainland,
+             .chineseTraditional, .spanishLatinAmerica:
+            return false
+        default:
+            return true
         }
     }
 
@@ -130,7 +180,9 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         case .japanese:        return "ja-JP"
         case .korean:          return "ko-KR"
         case .chineseMandarin: return "zh-CN"
-        case .cantonese:       return "yue-CN"
+        case .chineseTraditional: return "zh-TW"
+        case .cantoneseHongKong: return "zh-HK"
+        case .cantoneseMainland: return "yue-CN"
         default:               return nil
         }
     }
@@ -178,7 +230,12 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         case .japanese:        return ("Japanese", "日本語")
         case .korean:          return ("Korean", "한국어")
         case .chineseMandarin: return ("Chinese (Mandarin)", "中文（简体）")
-        case .cantonese:       return ("Cantonese", "粵語")
+        case .chineseTraditional: return ("Chinese (Traditional)", "中文（繁體）")
+        // Both rows share the short native endonym (粵語); the region
+        // qualifier lives in the English name only — same treatment as
+        // Latin-American Spanish above, keeping the picker row clean.
+        case .cantoneseHongKong: return ("Cantonese (Hong Kong)", "粵語")
+        case .cantoneseMainland: return ("Cantonese (Mainland China)", "粵語")
         }
     }
 
@@ -224,7 +281,8 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         // Apple-only — FluidAudio has no model at all, so there is no
         // script hint to give it; these never reach a FluidAudio call.
         // Latin-American Spanish is forced to Apple too (no FluidAudio call).
-        case .japanese, .korean, .chineseMandarin, .cantonese, .spanishLatinAmerica:
+        case .japanese, .korean, .chineseMandarin, .cantoneseHongKong, .cantoneseMainland,
+             .chineseTraditional, .spanishLatinAmerica:
             return nil
         }
     }
@@ -263,8 +321,14 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         case .swedish:    return "sv"
         case .japanese:        return "ja"
         case .korean:          return "ko"
-        case .chineseMandarin: return "zh"
-        case .cantonese:       return "yue"
+        // Traditional-script Mandarin is still "zh" for Translate/display,
+        // same treatment as the two Cantonese rows sharing "yue".
+        case .chineseMandarin, .chineseTraditional: return "zh"
+        // Both Cantonese rows are the same spoken language (yue). Keeping the
+        // ISO code as "yue" for HK too (rather than zh-HK's "zh") keeps it
+        // distinct from Mandarin for Translate/exclusion and lets the device
+        // availability resolver key both rows on Apple's Cantonese support.
+        case .cantoneseHongKong, .cantoneseMainland: return "yue"
         }
     }
 
@@ -364,7 +428,9 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         case "ja": return .japanese
         case "ko": return .korean
         case "zh": return .chineseMandarin
-        case "yue": return .cantonese
+        // "yue" maps to the Mainland row as the canonical Cantonese default
+        // (system-locale seeding only; the user can pick the HK row explicitly).
+        case "yue": return .cantoneseMainland
         default:   return nil
         }
     }

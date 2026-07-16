@@ -193,6 +193,30 @@ enum AppGroup {
         /// terminal state (the switch itself makes the nudge moot).
         static let parakeetNudgeDeclined = "jot.parakeetUpgrade.nudgeDeclined"
 
+        /// Set true while a background, charging-gated download of the Parakeet
+        /// 600M English weights is in flight (user tapped "Use Jot's engine" on
+        /// a stripped build where the model isn't yet on disk). `UpgradeEngineView`
+        /// reads it to show "Downloading… we'll switch you automatically" instead
+        /// of re-offering. Cleared on install-complete or terminal failure.
+        static let parakeetDownloadPending = "jot.parakeetUpgrade.downloadPending"
+        /// Set true when the Parakeet download has landed but the engine flip is
+        /// waiting for a SAFE BOUNDARY (never mid-recording). Drained at the next
+        /// non-recording moment (recording-end, or launch). Cleared when applied.
+        static let parakeetSwitchArmed = "jot.parakeetUpgrade.switchArmed"
+        /// One-shot "we switched you to Jot's engine" home confirmation flag. Set
+        /// when the auto-switch actually applies; cleared when the user dismisses
+        /// the home note. So the background switch never reads as a silent change.
+        static let parakeetSwitchedNotice = "jot.parakeetUpgrade.switchedNotice"
+        /// Terminal-failure flag for the Parakeet download (repo-gone 404 on a
+        /// required file, or repeated verify/install failure). Clears `pending`
+        /// and drives `UpgradeEngineView`'s retriable "failed" state instead of
+        /// parking on "Downloading…" forever. Cleared when the user retries.
+        static let parakeetDownloadFailed = "jot.parakeetUpgrade.downloadFailed"
+        /// Count of install-time verify/rollback failures for the Parakeet
+        /// download; a small ceiling promotes it to `parakeetDownloadFailed` so a
+        /// persistently corrupt download can't retry-loop forever.
+        static let parakeetDownloadInstallFailures = "jot.parakeetUpgrade.installFailures"
+
         /// Boolean projection the app sets when the user is eligible for the
         /// Vocabulary-adoption nudge (Vocabulary Boost OFF + engaged user, or
         /// terms added but the toggle off). Mirrors `showParakeetUpgradeNudge`;
@@ -423,6 +447,42 @@ enum AppGroup {
     static var parakeetNudgeDeclined: Bool {
         get { defaults.bool(forKey: Keys.parakeetNudgeDeclined) }
         set { defaults.set(newValue, forKey: Keys.parakeetNudgeDeclined) }
+    }
+
+    /// True while a background download of the Parakeet 600M English weights is
+    /// in flight (see `Keys.parakeetDownloadPending`). Written by
+    /// `ParakeetModelFetcher`; read by `UpgradeEngineView` for its state.
+    static var parakeetDownloadPending: Bool {
+        get { defaults.bool(forKey: Keys.parakeetDownloadPending) }
+        set { defaults.set(newValue, forKey: Keys.parakeetDownloadPending) }
+    }
+
+    /// True when the Parakeet download landed but the engine flip is waiting for
+    /// a safe (non-recording) boundary (see `Keys.parakeetSwitchArmed`).
+    static var parakeetSwitchArmed: Bool {
+        get { defaults.bool(forKey: Keys.parakeetSwitchArmed) }
+        set { defaults.set(newValue, forKey: Keys.parakeetSwitchArmed) }
+    }
+
+    /// One-shot flag driving the home "you're now on Jot's engine" confirmation
+    /// after a background auto-switch (see `Keys.parakeetSwitchedNotice`).
+    static var parakeetSwitchedNotice: Bool {
+        get { defaults.bool(forKey: Keys.parakeetSwitchedNotice) }
+        set { defaults.set(newValue, forKey: Keys.parakeetSwitchedNotice) }
+    }
+
+    /// Terminal-failure flag for the Parakeet download (see
+    /// `Keys.parakeetDownloadFailed`). Drives the retriable "failed" sheet state.
+    static var parakeetDownloadFailed: Bool {
+        get { defaults.bool(forKey: Keys.parakeetDownloadFailed) }
+        set { defaults.set(newValue, forKey: Keys.parakeetDownloadFailed) }
+    }
+
+    /// Install-time failure counter for the Parakeet download (see
+    /// `Keys.parakeetDownloadInstallFailures`).
+    static var parakeetDownloadInstallFailures: Int {
+        get { defaults.integer(forKey: Keys.parakeetDownloadInstallFailures) }
+        set { defaults.set(newValue, forKey: Keys.parakeetDownloadInstallFailures) }
     }
 
     /// Boolean projection for the Vocabulary-adoption nudge. Mirrors

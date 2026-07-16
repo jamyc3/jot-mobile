@@ -64,6 +64,15 @@ packages:
   CoreMLLLM:
     url: https://github.com/john-rocky/CoreML-LLM
     exactVersion: "1.9.0"
+  # Shared deterministic text-cleanup pipeline (filler strip, number ITN,
+  # paragraph segmentation), extracted so iOS and the Mac app build from one
+  # source instead of drifting copies. Foundation-only, no ASR/CoreML deps.
+  # Path is relative to `Jot/project.yml`: `..` is the jot-mobile repo root
+  # and `../..` is the workspace root, so `../../jot-shared` is the sibling
+  # jot-shared repo. Main-app only — JotKeyboard/JotWatch never reference
+  # these components (Shared/ mentions are comments only).
+  JotTextPipeline:
+    path: ../../jot-shared
 
 targets:
   Jot:
@@ -309,6 +318,10 @@ targets:
     dependencies:
       - package: FluidAudio
         product: FluidAudio
+      # Shared deterministic text-cleanup pipeline. Main-app-only — the
+      # keyboard/watch never reference these components.
+      - package: JotTextPipeline
+        product: JotTextPipeline
       - sdk: AppIntents.framework
       # MLX stack for Qwen 3.5. Main-app-only — extensions stay MLX-free.
       - package: MLXSwiftLM

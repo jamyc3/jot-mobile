@@ -316,6 +316,16 @@ struct LanguageStep: View {
         LanguageChoice.recordRecent(picked)
         // Evicts the old model + downloads/warms the newly-selected one.
         transcriptionService.handleLanguageChange()
+        // An Apple-routed language (the 4 CJK + Latin-American Spanish, plus
+        // any Apple-supported language the user hasn't opted down to Parakeet)
+        // installs its per-locale asset through Apple, not our Parakeet
+        // download. Kick that install now — at the moment of picking — so the
+        // first recording isn't stalled by a mid-session asset download
+        // (the same consent-time preinstall the Apple-engine Settings toggle
+        // does). Apple's install is unobtrusive, so no download UI is shown.
+        if TranscriptionService.activeLanguageUsesApple {
+            transcriptionService.preinstallAppleAssets()
+        }
     }
 
     /// Retry the European-model fetch after it failed to start / fell back to

@@ -1,7 +1,98 @@
 # Parakeet-upgrade nudge: "Switch" dead-tap FIXED; background download-on-charge is the remaining enhancement
 
-**Status: primary "nothing happens" bug FIXED 2026-07-07 (awaiting owner device-test). The background download-on-charge + auto-enable enhancement remains BACKLOG — NEEDS VALIDATION.**
+**Status: primary "nothing happens" bug FIXED 2026-07-07 (awaiting owner device-test). Background download-on-charge + auto-enable enhancement IMPLEMENTED 2026-07-14 (compiles Jot + JotKeyboard; awaiting owner copy-review + on-device test — the discretionary Wi-Fi+charging transfer and background-relaunch handoff can't be exercised in the sim). Design as-built matches the sketch below.**
 Recorded 2026-07-07 from owner report.
+
+## As-built (2026-07-14)
+
+- **`ParakeetModelFetcher`** (`Jot/App/Transcription/`) — a second background,
+  discretionary, Wi-Fi-only `URLSession` mirroring `EmbeddingModelFetcher`
+  exactly: 22-file v2 manifest (subset the loader needs, sizes parity-checked
+  live vs `FluidInference/parakeet-tdt-0.6b-v2-coreml`), per-file staging across
+  relaunches, pinned `weight.bin` sizes + `AsrModels.modelsExist` verify, atomic
+  install into the SAME `…/Models/parakeet-tdt-0.6b-v2` dir carry-forward uses,
+  install-time backup-exclusion. Runs only while `AppGroup.parakeetDownloadPending`;
+  `resumeIfPending()` at launch recovers force-quit cancellation.
+- **`ParakeetModelArrival`** — flips `useAppleDictationForEnglish=false` ONLY at a
+  safe boundary (armed on arrival, applied when not recording — drained at
+  recording-end in `HomeScreen` and at launch in `JotApp`), posts
+  `parakeetEngineActivated`, sets the one-shot `parakeetSwitchedNotice`, prewarms.
+- **`UpgradeEngineView`** — state machine: offerInstant / offerDownload /
+  downloading / switched / ineligibleDevice / lowDisk. **`EngineSwitchedCard`** —
+  home confirmation popup (the download almost always finishes backgrounded).
+- **`JotAppDelegate`** now routes `handleEventsForBackgroundURLSession` by
+  session identifier to the owning fetcher (two background sessions now).
+- Eligibility: `TranscriptionService.parakeetUsable` + ~1.1 GB free-disk preflight
+  + `parakeetV2ReadyOnDevice()`.
+- **Validation item #1 (deep link foregrounds the app):** confirmed by code-read —
+  `handleParakeetNudgeUpgrade` routes through the responder-chain `openContainingApp`,
+  the same proven opener `jot://dictate` uses; HIGH confidence. Flag for a quick
+  on-device confirm only.
+- Keyboard UNCHANGED (reads no new state).
+
+### Hardening (2026-07-15, post-review findings 1–7)
+
+1. **No stuck "Downloading…" wedge.** `ParakeetModelFetcher.stopDownload()` +
+   `cancelDiscretionaryFetch()` back a "Stop download" (keep Apple) action in the
+   `.downloading` sheet state (cancels tasks, clears `parakeetDownloadPending`,
+   drops staged files). Terminal errors — a 404 on a REQUIRED file (repo/path
+   gone) or `maxInstallFailures` (3) repeated verify/rollback failures — now call
+   `markTerminalFailure`: cancel, clear pending, raise `AppGroup.parakeetDownloadFailed`,
+   which drives a retriable `.failed` sheet state (Try again / Keep Apple).
+2. **Install-time disk re-check.** Before the staging→temp copy (~464 MB),
+   `attemptInstallIfComplete` re-checks free disk against `installHeadroomBytes`
+   (~550 MB); on shortfall it clears pending + drops staging so the sheet surfaces
+   the retriable `lowDisk`/offer state instead of wedging.
+3. **Last explicit choice wins.** The Settings "Use Apple speech engine" toggle
+   (`SettingsView`) now clears `parakeetSwitchArmed` on ANY explicit change (either
+   direction), disarming a pending auto-switch; the download itself keeps running.
+4. **Copy honesty.** iOS has no strict-charging API (`isDiscretionary` only
+   PREFERS power; Wi-Fi is the hard guarantee), so all copy now promises Wi-Fi
+   firmly and charging softly: "in the background over Wi-Fi — usually while your
+   phone charges." (offerDownload + downloading bodies, features.md §5.2b.)
+5. **No double-pending.** `requestBackgroundDownload` sets `parakeetDownloadPending`
+   only when files were actually enqueued (`enqueued > 0`) — the `enqueued == 0`
+   inline-install path already cleared it.
+6. **No latent switch.** The safe-boundary drain now also fires on
+   `isPipelineInFlight` clearing (post-stop pipeline outlives `isRecording`), and
+   `scenePhase == .active` calls `applyPendingSwitchIfSafe()` (not just refresh).
+7. **No fake "downloading".** `requestBackgroundDownload()` returns `Bool`; the
+   sheet only enters `.downloading` when it returns true (staging create OK),
+   else `.failed`.
+
+New App-Group keys: `parakeetDownloadFailed`, `parakeetDownloadInstallFailures`.
+Both targets rebuilt clean (Jot + JotKeyboard, sim Debug).
+
+### Final polish (2026-07-15, re-review NITs)
+
+Re-review verdict: CLEAN / ship-ready. Fixed three NITs:
+1. `.lowDisk` now offers a "Try again" button (re-runs `resolveScreen()`), so a
+   user who freed space advances to the download offer instead of dead-ending on
+   "Done" (mirrors `.failed`).
+2. The Settings "Use Apple speech engine" toggle @State is re-seeded from the App
+   Group on `.onAppear` AND on a `parakeetEngineActivated` observer, so a
+   background auto-switch while Settings is open no longer leaves a stale Apple-ON
+   toggle. (Kept @State, not @AppStorage; the re-seed is guarded so it doesn't
+   re-fire the toggle's onChange when already in sync.)
+3. `ParakeetModelArrival.applyPendingSwitchIfSafe` sets `parakeetSwitchedNotice`
+   only when the flip actually CHANGES the engine — a user who manually switched
+   to Jot's engine before the download landed no longer gets a redundant home
+   popup (it still disarms + prewarms).
+
+### Accepted residuals (reviewed, left as-is)
+
+- **`stopDownload` one-file re-stage race** — `cancelDiscretionaryFetch()` is
+  async (getAllTasks → cancel) while `cleanUpStaging()` runs synchronously, so an
+  in-flight `didFinishDownloadingTo` could re-stage one file just after cleanup.
+  Self-limiting: at most one stray file, `parakeetDownloadPending` is already
+  false so nothing resumes it, and the next `requestBackgroundDownload` recreates
+  staging fresh. Not worth an await handshake.
+- **Transient 5xx on a REQUIRED file loops without a hard cap** — a required file
+  returning repeated 5xx is left unstaged for retry (only a 404 is treated as
+  terminal, and only install/verify failures hit the `maxInstallFailures` ceiling).
+  A repo serving persistent 5xx on one file could re-attempt across launches.
+  Mitigated by the user-facing **Stop download** exit and the discretionary
+  (idle-only) scheduling; a download-attempt cap is possible future hardening.
 
 ## The bug (as observed)
 

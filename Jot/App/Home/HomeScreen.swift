@@ -123,6 +123,15 @@ struct HomeScreen: View {
     /// Darwin observer for the warm-hold switching-nudge projection flip.
     @State private var warmHoldNudgeObserver: CrossProcessNotification.Observer?
 
+    /// Mirrors `AppGroup.parakeetSwitchedNotice` — the one-time "you're now on
+    /// Jot's engine" confirmation after a background Parakeet-upgrade download
+    /// lands and auto-switches the engine (see `ParakeetModelArrival`). Re-read on
+    /// appear, on `.active`, and on the `parakeetEngineActivated` cross-process
+    /// signal (which fires the moment a foreground switch applies).
+    @State private var engineSwitchedNoticeVisible = false
+    /// Darwin observer for the engine-activated signal.
+    @State private var engineActivatedObserver: CrossProcessNotification.Observer?
+
     var body: some View {
         ZStack(alignment: .bottom) {
             WallpaperBackground()
@@ -241,10 +250,14 @@ struct HomeScreen: View {
             } else if macAppPromoVisible {
                 macAppPromoPopup
                     .transition(.opacity)
+            } else if engineSwitchedNoticeVisible {
+                engineSwitchedPopup
+                    .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.3), value: donationCardVisible)
         .animation(.easeInOut(duration: 0.3), value: macAppPromoVisible)
+        .animation(.easeInOut(duration: 0.3), value: engineSwitchedNoticeVisible)
         // Floating selection-Cancel: pinned to the top so it's reachable
         // anywhere in a long list (the in-header Cancel scrolled away). Glass
         // so the list reads through it.
@@ -339,6 +352,17 @@ struct HomeScreen: View {
                 }
             }
             refreshWarmHoldNudge()
+            // Engine-switched confirmation: arm the observer + read the current
+            // state (a background download may have auto-switched the engine while
+            // we were away).
+            if engineActivatedObserver == nil {
+                engineActivatedObserver = CrossProcessNotification.addObserver(
+                    name: CrossProcessNotification.parakeetEngineActivated
+                ) {
+                    refreshEngineSwitchedNotice()
+                }
+            }
+            refreshEngineSwitchedNotice()
         }
         .onDisappear {
             copyResetTask?.cancel()
@@ -350,6 +374,20 @@ struct HomeScreen: View {
             // landing back on home.
             refreshDonationCardVisibility()
             refreshMacAppPromoVisibility()
+            // Safe boundary: a background Parakeet download may have landed while
+            // a recording was in flight, deferring the engine switch. Now that
+            // nothing is recording, apply it (no-op unless armed), then surface
+            // the confirmation.
+            ParakeetModelArrival.applyPendingSwitchIfSafe()
+            refreshEngineSwitchedNotice()
+        }
+        .onChange(of: recordingService.isPipelineInFlight) { _, inFlight in
+            guard !inFlight else { return }
+            // The post-stop pipeline can outlive `isRecording` going false, so the
+            // safe boundary isn't fully reached until this also clears. Drain the
+            // armed engine switch here too (Fix 6).
+            ParakeetModelArrival.applyPendingSwitchIfSafe()
+            refreshEngineSwitchedNotice()
         }
         // Keyboard dictations increment the stats counter from another
         // process without ever opening Jot.app. When the user returns to
@@ -362,6 +400,11 @@ struct HomeScreen: View {
                 refreshDonationCardVisibility()
                 refreshMacAppPromoVisibility()
                 refreshWarmHoldNudge()
+                // Foregrounding is a safe boundary: apply any armed switch (Fix 6)
+                // — e.g. a background download that completed while suspended —
+                // before reading the confirmation flag.
+                ParakeetModelArrival.applyPendingSwitchIfSafe()
+                refreshEngineSwitchedNotice()
             }
         }
         .onChange(of: visibleTranscriptIDs) { _, visibleIDs in
@@ -888,6 +931,52 @@ struct HomeScreen: View {
             macAppPromoVisible = false
         }
         router.showJotForMac = true
+    }
+
+    // MARK: - Parakeet engine-switched confirmation
+
+    /// Same centered-modal-popup treatment as `macAppPromoPopup`, over
+    /// `EngineSwitchedCard`. Surfaced once after a background Parakeet-upgrade
+    /// download lands and the engine auto-switches (`ParakeetModelArrival`).
+    private var engineSwitchedPopup: some View {
+        ZStack {
+            Color.black.opacity(0.38)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { handleEngineSwitchedDismiss() }
+            EngineSwitchedCard(onDismiss: handleEngineSwitchedDismiss)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(JotDesign.background)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color.jotInk.opacity(0.08), lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(0.22), radius: 26, x: 0, y: 12)
+                .padding(.horizontal, 28)
+                .transition(.scale(scale: 0.92).combined(with: .opacity))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Re-reads `AppGroup.parakeetSwitchedNotice` into the local @State flag.
+    /// Cheap (one bool read); called from every plausible entry point, same as
+    /// the donation card's own refresh.
+    private func refreshEngineSwitchedNotice() {
+        let next = AppGroup.parakeetSwitchedNotice
+        guard next != engineSwitchedNoticeVisible else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            engineSwitchedNoticeVisible = next
+        }
+    }
+
+    /// Acknowledged — terminal, one-shot: clear the flag so it never re-fires.
+    private func handleEngineSwitchedDismiss() {
+        AppGroup.parakeetSwitchedNotice = false
+        withAnimation(.easeInOut(duration: 0.3)) {
+            engineSwitchedNoticeVisible = false
+        }
     }
 
     // MARK: - Transcript actions

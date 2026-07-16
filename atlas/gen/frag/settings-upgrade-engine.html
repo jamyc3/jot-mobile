@@ -1,38 +1,119 @@
 <!-- Upgrade-engine sheet (§5.2b): the destination of the keyboard's Parakeet
-     upgrade nudge (jot://upgrade-engine deep link). Medium detent bottom
-     sheet. "Use Jot's engine" flips English dictation from Apple to Jot's own
-     (Parakeet) — instant today (Parakeet is bundled; a download step attaches
-     once the bundle is stripped). "Keep Apple" is a permanent decline. Same
+     upgrade nudge (jot://upgrade-engine deep link). A medium-detent bottom
+     sheet whose content is a small STATE MACHINE. On a device where Jot's
+     engine is already on disk the switch is instant; on a stripped build where
+     it isn't, "Download & switch automatically" queues a background, Wi-Fi
+     download (usually while charging) and Jot switches over automatically when
+     it lands. Ineligible device / low disk / a failed download all keep Apple,
+     honestly. This catalog shows each state the one sheet can present; the last
+     card is the home confirmation that appears after a background switch. Same
      no-pressure tone as the donation card. -->
 
-<!-- dimmed home behind the sheet -->
-<div style="position:absolute;inset:0;background:rgba(0,0,0,0.28)"></div>
+<style>
+  .ue-cap { font-size:11px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase;
+    color:var(--jot-ink-cap); margin:0 4px 7px; display:flex; align-items:center; gap:7px; }
+  .ue-cap .dot { width:6px; height:6px; border-radius:50%; background:var(--jot-accent); flex:none; }
+  .ue-cap.keep .dot { background:var(--jot-ink-cap); }
+  .ue-cap.warn .dot { background:var(--jot-warning-ink); }
+  .ue-card { position:relative; background:var(--jot-page-base); border:0.5px solid var(--jot-card-border);
+    border-radius:20px; padding:20px 18px 16px; margin-bottom:18px; box-shadow:var(--jot-card-shadow); }
+  .ue-grab { position:absolute; left:50%; top:8px; transform:translateX(-50%); width:34px; height:5px;
+    border-radius:3px; background:rgba(120,120,128,0.4); }
+  .ue-title { font-size:20px; font-weight:600; letter-spacing:-0.3px; color:var(--jot-ink); margin:6px 0 10px; }
+  .ue-body { font-size:14.5px; line-height:1.5; color:var(--jot-ink-2); }
+  .ue-dl { display:flex; align-items:flex-start; gap:10px; }
+  .ue-spin { width:17px; height:17px; border-radius:50%; border:2px solid rgba(120,120,128,0.28);
+    border-top-color:var(--jot-accent); flex:none; margin-top:2px; }
+  .ue-primary { height:48px; border-radius:999px; background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));
+    display:flex; align-items:center; justify-content:center; box-shadow:0 0 18px rgba(26,140,255,0.35); margin-top:16px; }
+  .ue-primary span { color:#fff; font-size:16px; font-weight:600; }
+  .ue-secondary { height:42px; display:flex; align-items:center; justify-content:center; margin-top:4px; }
+  .ue-secondary span { color:var(--jot-ink-2); font-size:16px; }
+  .ue-hint { font-size:12px; color:var(--jot-ink-cap); text-align:center; margin-top:6px; }
+</style>
 
-<!-- medium-detent sheet pinned to the bottom -->
-<div style="position:absolute;left:0;right:0;bottom:0;height:52%;background:var(--jot-page-base);border-radius:22px 22px 0 0;box-shadow:0 -12px 40px rgba(0,0,0,0.25);display:flex;flex-direction:column">
+<div class="jot-display" style="margin:4px 0 6px">Switch to Jot's Engine</div>
+<div class="jot-caption" style="margin:0 4px 18px">The §5.2b upgrade sheet (jot://upgrade-engine) is a small state machine — the state depends on the device, whether Jot's engine is already on disk, and any in-flight download. Each card below is one state of the same medium-detent sheet.</div>
 
-  <!-- grabber + Close -->
-  <div style="position:relative;height:44px;flex:none">
-    <div style="position:absolute;left:50%;top:9px;transform:translateX(-50%);width:36px;height:5px;border-radius:3px;background:rgba(120,120,128,0.4)"></div>
-    <span style="position:absolute;left:16px;top:11px;color:var(--jot-accent);font-size:17px">Close</span>
+<!-- OFFER · model already on device -->
+<div class="ue-cap"><span class="dot"></span>Offer · engine already on device</div>
+<div class="ue-card">
+  <div class="ue-grab"></div>
+  <div class="ue-title">More accurate dictation</div>
+  <div class="ue-body">Jot's own on-device engine is more precise for English. Switch to it — it runs fully on-device, and Apple's engine stays as a fallback.</div>
+  <div class="ue-primary"><span>Use Jot's engine</span></div>
+  <div class="ue-secondary"><span>Keep Apple</span></div>
+</div>
+
+<!-- OFFER · needs background download (stripped build) -->
+<div class="ue-cap"><span class="dot"></span>Offer · engine not yet on device</div>
+<div class="ue-card">
+  <div class="ue-grab"></div>
+  <div class="ue-title">More accurate dictation</div>
+  <div class="ue-body">Jot's own on-device engine is more precise for English. It's a one-time ~450 MB download — Jot grabs it in the background over Wi-Fi, usually while your phone charges, then switches you over automatically. Apple's engine keeps working until then.</div>
+  <div class="ue-primary"><span>Download &amp; switch automatically</span></div>
+  <div class="ue-secondary"><span>Keep Apple</span></div>
+</div>
+
+<!-- DOWNLOADING -->
+<div class="ue-cap"><span class="dot"></span>Downloading</div>
+<div class="ue-card">
+  <div class="ue-grab"></div>
+  <div class="ue-title">Downloading the better engine</div>
+  <div class="ue-dl">
+    <div class="ue-spin"></div>
+    <div class="ue-body">Downloading in the background over Wi-Fi, usually while your phone charges. Jot switches you over automatically when it's ready — Apple's engine keeps working until then.</div>
   </div>
+  <div class="ue-secondary"><span>Stop download</span></div>
+  <div class="ue-hint">"Close" leaves the download running in the background.</div>
+</div>
 
-  <div style="flex:1;display:flex;flex-direction:column;padding:6px 24px 24px">
-    <div style="font-size:24px;font-weight:600;letter-spacing:-0.4px;color:var(--jot-ink);margin-bottom:14px">More accurate dictation</div>
+<!-- SWITCHED · in-sheet confirmation -->
+<div class="ue-cap"><span class="dot"></span>Switched · confirmation</div>
+<div class="ue-card">
+  <div class="ue-grab"></div>
+  <div class="ue-title">You're on Jot's engine</div>
+  <div class="ue-body">English dictation now uses Jot's own on-device engine. You can switch back to Apple anytime in Settings.</div>
+  <div class="ue-secondary"><span>Done</span></div>
+</div>
 
-    <div style="font-size:16px;line-height:1.5;color:var(--jot-ink-2)">Jot's own on-device engine is more precise for English. Switch to it — it runs fully on-device, and Apple's engine stays as a fallback.</div>
+<!-- INELIGIBLE DEVICE -->
+<div class="ue-cap keep"><span class="dot"></span>Ineligible device · keeps Apple</div>
+<div class="ue-card">
+  <div class="ue-grab"></div>
+  <div class="ue-title">Staying on Apple's engine</div>
+  <div class="ue-body">Jot's own engine needs a newer iPhone or iPad to run well, so English dictation stays on Apple's on-device engine here — it's the best option on this device.</div>
+  <div class="ue-secondary"><span>Done</span></div>
+</div>
 
-    <div style="flex:1"></div>
+<!-- LOW DISK -->
+<div class="ue-cap keep"><span class="dot"></span>Not enough free space · keeps Apple</div>
+<div class="ue-card">
+  <div class="ue-grab"></div>
+  <div class="ue-title">Not enough free space</div>
+  <div class="ue-body">Jot's own engine is a ~450 MB download and there isn't enough free space right now. Free up some space and try again — Apple's engine keeps working in the meantime.</div>
+  <div class="ue-secondary"><span>Done</span></div>
+</div>
 
-    <!-- primary: switch -->
-    <div style="height:52px;border-radius:999px;background:linear-gradient(var(--jot-accent),var(--jot-accent-deep));display:flex;align-items:center;justify-content:center;box-shadow:0 0 22px rgba(26,140,255,0.4);margin-bottom:6px">
-      <span style="color:#fff;font-size:17px;font-weight:600">Use Jot's engine</span>
-    </div>
+<!-- FAILED · retriable -->
+<div class="ue-cap warn"><span class="dot"></span>Download failed · retriable</div>
+<div class="ue-card">
+  <div class="ue-grab"></div>
+  <div class="ue-title">Download didn't finish</div>
+  <div class="ue-body">Something interrupted the download of Jot's engine. You can try again — Apple's engine keeps working in the meantime.</div>
+  <div class="ue-primary"><span>Try again</span></div>
+  <div class="ue-secondary"><span>Keep Apple</span></div>
+</div>
 
-    <!-- secondary: keep apple -->
-    <div style="height:48px;display:flex;align-items:center;justify-content:center">
-      <span style="color:var(--jot-ink-2);font-size:17px">Keep Apple</span>
+<!-- HOME CONFIRMATION · EngineSwitchedCard -->
+<div class="ue-cap"><span class="dot"></span>After a background switch · home note</div>
+<div class="ue-card">
+  <div class="ue-title" style="font-size:18px">You're on Jot's engine.</div>
+  <div class="ue-body">The download finished, so English dictation now uses Jot's own on-device engine — more precise, still fully on-device. You can switch back to Apple anytime in Settings.</div>
+  <div style="display:flex;margin-top:14px">
+    <div style="display:inline-flex;align-items:center;height:38px;padding:0 16px;border-radius:999px;background:rgba(26,140,255,0.15)">
+      <span style="color:var(--jot-accent-deep);font-size:15px;font-weight:600">Got it</span>
     </div>
   </div>
-
+  <div class="ue-hint" style="text-align:left;margin-top:8px">A one-time centered popup on the home screen — the background download almost always finishes while the app is backgrounded, so this is where the switch is confirmed.</div>
 </div>

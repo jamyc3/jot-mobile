@@ -496,12 +496,34 @@ final class KeyboardStreamingHub {
     /// latest and show the nudge. This is the RELIABLE trigger (reading at paste
     /// time races the publish). Yields to an already-showing correction nudge or
     /// the warm-hold nudge.
+    /// Whether a published asks blob may be surfaced by the POST-PASTE teach
+    /// nudge. Only `postPasteOnly` (split-word merge teach) asks qualify: those
+    /// were BLOCKED, so the owner's original words are already in the paste and
+    /// confirming just teaches a sounds-like for the future — nothing to edit.
+    ///
+    /// A paste-holding ask (any `postPasteOnly != true` — an applied correction
+    /// or a plausible KEPT proposal) must NEVER reach this surface. The post-paste
+    /// nudge's verdict handler enqueues the learning verdict but CANNOT edit the
+    /// host's already-pasted text (the keyboard has no reliable retro-edit into an
+    /// arbitrary host field). So picking "original" on an applied correction here
+    /// would flip the saved transcript (drained via `CorrectionInbox`) while the
+    /// paste keeps the TERM — the exact paste/transcript divergence. The ask-
+    /// before-paste HOLD deck is the sole surface that can honor the pick (it
+    /// splices BEFORE the clipboard handoff); if a race let the paste land before
+    /// the deck claimed the session, the ask stays reviewable on the transcript in
+    /// Jot rather than being adjudicated where it can't be honored. The publisher
+    /// emits homogeneous blobs (all teach OR all paste-holding — see
+    /// `CorrectionAsksPublisher`), so one non-teach ask disqualifies the blob.
+    private static func isPostPasteEligible(_ asks: CorrectionBridge.Asks) -> Bool {
+        !asks.asks.contains { $0.postPasteOnly != true }
+    }
+
     private func showCorrectionNudgeFromReady() {
         // Never raise the post-paste teach nudge while the pre-paste hold deck is up
         // (or already showing a nudge / warm-hold). The deck owns the asks pre-paste.
         guard !showCorrectionNudge, !showWarmHoldNudge, !showAskDeck else { return }
         let a = CorrectionBridge.readLatestAsks()
-        if let a, !a.asks.isEmpty {
+        if let a, !a.asks.isEmpty, Self.isPostPasteEligible(a) {
             DiagnosticsLog.record(source: "keyboard", category: .vocabularyGate,
                 message: "asks-ready", metadata: ["found": "\(a.asks.count)"])
             correctionAsks = a
@@ -520,7 +542,7 @@ final class KeyboardStreamingHub {
     func maybeShowCorrectionNudge(sessionID: UUID) {
         guard !showWarmHoldNudge else { return }
         let a = CorrectionBridge.readAsks(sessionID: sessionID)
-        if let a, !a.asks.isEmpty {
+        if let a, !a.asks.isEmpty, Self.isPostPasteEligible(a) {
             DiagnosticsLog.record(source: "keyboard", category: .vocabularyGate,
                 message: "nudge check", metadata: ["found": "\(a.asks.count)"])
             correctionAsks = a

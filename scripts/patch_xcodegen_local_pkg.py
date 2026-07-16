@@ -135,18 +135,41 @@ def patch_file(pbxproj_path: Path, explicit_products: list[str]) -> int:
         print(f"[patch] no orphan product deps match requested products — nothing to do")
         return 0
 
-    # If there is exactly one local-package ref, point all orphans at it.
-    # Otherwise we'd need a deterministic name-mapping — bail loudly.
-    if len(refs) > 1:
-        print(f"[patch] error: multiple local-package refs found ({list(refs)});"
-              f" deterministic mapping not implemented", file=sys.stderr)
-        return 2
-
-    (_ref_basename, (ref_uuid, ref_path)) = next(iter(refs.items()))
-    print(f"[patch] using local-pkg ref {ref_uuid} -> {ref_path}")
+    # Map each orphan product to its owning local package. With a single ref,
+    # everything maps there (the original behavior). With multiple refs, read
+    # each package's Package.swift and match declared product names — bail
+    # loudly only if a product resolves to zero or 2+ packages.
+    product_to_ref: dict[str, tuple[str, str]] = {}
+    if len(refs) == 1:
+        (_ref_basename, only_ref) = next(iter(refs.items()))
+        for (_uuid, name) in orphans:
+            product_to_ref[name] = only_ref
+    else:
+        # Package paths are relative to the directory containing the .xcodeproj.
+        project_dir = pbxproj_path.parent.parent
+        declared: dict[str, list[tuple[str, str]]] = {}
+        for (_basename, (ref_uuid, ref_path)) in refs.items():
+            manifest = (project_dir / ref_path / "Package.swift").resolve()
+            if not manifest.exists():
+                print(f"[patch] warning: no Package.swift at {manifest} for ref {ref_path}",
+                      file=sys.stderr)
+                continue
+            names = re.findall(r"\.library\(\s*name:\s*\"([^\"]+)\"", manifest.read_text())
+            for n in names:
+                declared.setdefault(n, []).append((ref_uuid, ref_path))
+        for (_uuid, name) in orphans:
+            owners = declared.get(name, [])
+            if len(owners) != 1:
+                print(f"[patch] error: product '{name}' maps to {len(owners)} local packages"
+                      f" ({[p for (_u, p) in owners]}); cannot patch deterministically",
+                      file=sys.stderr)
+                return 2
+            product_to_ref[name] = owners[0]
 
     changed_any = False
     for (uuid, name) in orphans:
+        ref_uuid, ref_path = product_to_ref[name]
+        print(f"[patch] mapping product {name} -> local-pkg ref {ref_uuid} ({ref_path})")
         new_text, changed = patch_product_dependency(text, uuid, name, ref_uuid, ref_path)
         if changed:
             text = new_text

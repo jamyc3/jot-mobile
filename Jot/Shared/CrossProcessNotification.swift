@@ -124,6 +124,16 @@ enum CrossProcessNotification {
         rawValue: "com.vineetu.jot.mobile.parakeet-upgrade-nudge-changed"
     )
 
+    /// Posted the moment the background Parakeet download lands AND the engine
+    /// auto-switch is applied (`AppGroup.useAppleDictationForEnglish` flipped to
+    /// false at a safe boundary). Lets a foreground app surface the "you're now
+    /// on Jot's engine" home confirmation without waiting for a scene-phase
+    /// change, and lets an open `UpgradeEngineView` refresh its state. Mirrors
+    /// the `parakeetUpgradeNudgeChanged` projection + notification pattern.
+    static let parakeetEngineActivated = Name(
+        rawValue: "com.vineetu.jot.mobile.parakeet-engine-activated"
+    )
+
     /// Posted when the Vocabulary-adoption nudge state flips. The app writes
     /// the `AppGroup.vocabNudgeShouldShow` boolean projection and posts this
     /// so the keyboard re-reads and renders (or hides) the nudge. Mirrors the

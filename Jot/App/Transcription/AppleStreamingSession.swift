@@ -131,8 +131,10 @@ actor AppleStreamingSession: StreamingSession {
     /// because every failure fell back to FluidAudio (fatal for the 4
     /// Apple-only languages, which have no FluidAudio fallback at all; see
     /// `LanguageChoice.isAppleOnly`). Reservation is a limited pool
-    /// (`maximumReservedLocales`); this evicts the oldest reserved locale
-    /// only when the pool is full and the target isn't already reserved.
+    /// (`maximumReservedLocales`); this evicts one already-reserved locale
+    /// (`reservedLocales` is an unordered Set, so `.first` is arbitrary, not
+    /// the oldest) only when the pool is full and the target isn't already
+    /// reserved.
     ///
     /// Shared by both Apple engines (`makeConfiguredTranscriber` below and
     /// `AppleDictationEngine.transcribe`) so the reserve/normalize logic

@@ -279,6 +279,22 @@ to whatever condition currently starts that block. When skipped, the stop-pass s
 the raw Apple transcript with `tokenTimings` still attached (paragraph segmentation still runs)
 — never a broken/garbled merge.
 
+> **AS-BUILT (2026-07-14): Korean vocab stays OFF, not ON.** The plan above
+> recommended Korean = eligible (spaces exist, so the merge's word-split doesn't
+> break). Review found that reasoning incomplete: the merge IS reachable on the
+> Apple path (Apple emits synthetic `tokenTimings`), and the CTC scorer
+> (`parakeet-ctc-110m`) is English/Latin-trained — so over Korean audio it can
+> false-positive-inject a Latin term into otherwise-correct Korean text. "Safe
+> no-op" was an unverified assumption, so `isVocabEligible` is `false` for
+> Korean (alongside the no-word-space CJK). **Follow-up trigger to reconsider:**
+> run an on-device Korean + Latin-seeded-term test and confirm no false-positive
+> injection before flipping Korean back on. Latin-American Spanish is likewise
+> kept off here to preserve shipped behavior (European Spanish keeps vocab on via
+> Parakeet); enabling LatAm-Spanish parity is a separate deliberate call. Net:
+> `isVocabEligible` is currently equivalent to `!isAppleOnly`, but written as an
+> explicit case list so a future no-word-space FluidAudio language (e.g. Thai)
+> is also skipped rather than wrongly treated as eligible.
+
 ## Downstream text pipeline
 
 - **`FillerWordCleaner` / `NumberNormalizer`** — already gated by `LanguageChoice.current.

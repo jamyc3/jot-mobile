@@ -2,6 +2,7 @@
 @preconcurrency import CoreML
 import FluidAudio
 import Foundation
+import JotTextPipeline
 import Speech
 import UIKit
 import os.log
@@ -618,6 +619,18 @@ final class TranscriptionService {
     /// FluidAudio/Parakeet stop-pass. Owns: bundled-model integrity check,
     /// prepare/load wait, manager guard, decoder state.
     private func fluidAudioStopPass(samples: [Float], label: String) async throws -> ASRResult {
+        // Root-cause guard (belt-and-suspenders): an `isAppleOnly` language has
+        // NO FluidAudio model at all, so running FluidAudio here would
+        // transcribe e.g. Japanese audio with whatever Parakeet variant is
+        // resident and emit confidently-wrong text instead of an honest
+        // failure. `stopPassTranscribe` already never falls back cross-engine,
+        // so this should be unreachable — it exists so no future call site can
+        // silently mistranscribe an Apple-only language.
+        guard !LanguageChoice.current.isAppleOnly else {
+            throw TranscriptionError.loadFailed(
+                "\(LanguageChoice.current.englishName) dictation runs only on Apple's on-device engine, which just failed. No fallback is available for this language."
+            )
+        }
         // 4.2.3(ii) consent guard: do NOT silently download a model via
         // the record-then-transcribe path. The Settings "Download" button
         // is the only sanctioned download trigger. If the user flipped
@@ -859,14 +872,15 @@ final class TranscriptionService {
             // duration); the two tasks touch disjoint models with no shared
             // mutable state, so there is no data race under Swift 6 strict
             // concurrency.
-            // Apple-only languages (Japanese/Korean/Mandarin/Cantonese) are
-            // excluded regardless of the vocab setting — `CtcKeywordSpotter`
-            // is an English/Latin-script scorer (see
-            // `reference_on_device_model_inventory`); running it over
-            // non-Latin-script audio would spot garbage and could corrupt
-            // the merge. There is no equivalent scorer for these languages.
+            // The no-word-space languages (Japanese/Mandarin/Cantonese) are
+            // excluded via `isVocabEligible`: the vocab spot+merge splits text
+            // on spaces to find word spans, which collapses a whole clause into
+            // one "word" for those scripts and breaks the merge. Korean and
+            // Latin-American Spanish ARE eligible (both space-delimited) — see
+            // `LanguageChoice.isVocabEligible` for the CTC-scorer caveat. This
+            // is the single, named gate — no scattered per-language checks.
             let vocabEnabledForThisRun = VocabularyStore.shared.isEnabled
-                && !LanguageChoice.current.isAppleOnly
+                && LanguageChoice.current.isVocabEligible
             // Snapshot the audio into a `let` so the concurrently-running
             // spot task captures an immutable value (no aliasing with the
             // TDT pass, which reads `samples` by value as well).
@@ -997,9 +1011,16 @@ final class TranscriptionService {
             // URL-bounce, wizard W5, Shortcuts intent) goes through this
             // method, so they all get paragraph segmentation for free.
             if let timings = result.tokenTimings {
+                // Bridge FluidAudio word timings into the engine-neutral
+                // TokenTiming the shared text pipeline consumes ($0 infers as
+                // FluidAudio's type; the package type is module-qualified).
                 transcriptText = ParagraphSegmenter.segment(
                     rescoredText: transcriptText,
-                    tokenTimings: timings
+                    tokenTimings: timings.map {
+                        JotTextPipeline.TokenTiming(
+                            token: $0.token, startTime: $0.startTime, endTime: $0.endTime
+                        )
+                    }
                 )
             }
             // English-only text cleanup. FillerWordCleaner (strips English
@@ -1133,6 +1154,14 @@ final class TranscriptionService {
     /// needed for an `@Observable` singleton.
     private(set) var isPreinstallingAppleAssets = false
 
+    /// The single in-flight Apple asset preinstall. Rapid re-picks (the user
+    /// scrolling through the language list, or toggling the engine) each call
+    /// `preinstallAppleAssets()`; without serialization those would spawn
+    /// overlapping `reserve`/`release`/`downloadAndInstall` cycles racing the
+    /// limited reservation pool. Each call cancels the prior task and
+    /// supersedes it, so the LATEST pick wins and only one install runs.
+    private var appleAssetPreinstallTask: Task<Void, Never>?
+
     /// Builds the live-preview streaming session for a new recording slice,
     /// per the engine selected by `useAppleEngine`. Apple's `SpeechAnalyzer`
     /// natively streams (volatile/finalized results as speech is recognized)
@@ -1186,10 +1215,25 @@ final class TranscriptionService {
     /// asset temporarily unavailable) is logged and left for the in-session
     /// install inside `make()` to retry as a fallback, now expected to be a
     /// fast no-op in the common case where this already succeeded.
-    func preinstallAppleAssets() async {
+    ///
+    /// Fire-and-forget + self-superseding: cancels any preinstall already in
+    /// flight (a stale earlier pick) and runs the latest, so overlapping picks
+    /// never spawn racing reserve/evict cycles against the reservation pool.
+    func preinstallAppleAssets() {
+        appleAssetPreinstallTask?.cancel()
+        appleAssetPreinstallTask = Task { [weak self] in
+            await self?.performApplePreinstall()
+        }
+    }
+
+    private func performApplePreinstall() async {
         isPreinstallingAppleAssets = true
         defer { isPreinstallingAppleAssets = false }
         do {
+            // A superseding cancel (a newer pick) lands here as a
+            // CancellationError from an `await` below — swallow it silently
+            // rather than logging a spurious asset-install failure.
+            try Task.checkCancellation()
             // `makeConfiguredTranscriber` now reserves the locale before
             // returning (REQUIRED on real iOS hardware — see its doc
             // comment); this call moved inside the `do` since it's async
@@ -1220,6 +1264,9 @@ final class TranscriptionService {
                     log.info("Apple engine: DictationTranscriber assets already installed")
                 }
             }
+        } catch is CancellationError {
+            // Superseded by a newer pick — not a failure.
+            log.info("Apple engine: asset pre-install superseded by a newer language pick")
         } catch {
             log.error("Apple engine: asset pre-install failed — \(error.localizedDescription, privacy: .public)")
             DiagnosticsLog.record(
@@ -1253,7 +1300,14 @@ final class TranscriptionService {
             // timings; filler + number passes are regex/lookup. Vocab is
             // intentionally absent — see doc comment.
             if let timings = result.tokenTimings {
-                text = ParagraphSegmenter.segment(rescoredText: text, tokenTimings: timings)
+                text = ParagraphSegmenter.segment(
+                    rescoredText: text,
+                    tokenTimings: timings.map {
+                        JotTextPipeline.TokenTiming(
+                            token: $0.token, startTime: $0.startTime, endTime: $0.endTime
+                        )
+                    }
+                )
             }
             // English-only cleanup (see batch path) — these passes are
             // English-oriented and would mangle a non-English preview.
@@ -1579,6 +1633,19 @@ final class TranscriptionService {
             .appendingPathComponent("Parakeet", isDirectory: true)
             .appendingPathComponent("parakeet-tdt-0.6b-v2", isDirectory: true)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Whether the English Parakeet 600M v2 weights are ready on THIS device —
+    /// either still bundled in the IPA (unstripped build) or already present in
+    /// the App-Support install dir (carried-forward or previously downloaded).
+    /// Independent of the currently selected language, unlike
+    /// `modelsExistOnDiskForSelectedVariant()`. Drives the Parakeet-upgrade
+    /// switch decision: `true` ⇒ the engine flip is instant; `false` (stripped
+    /// build, model never fetched) ⇒ the nudge queues a background download.
+    nonisolated static func parakeetV2ReadyOnDevice() -> Bool {
+        if bundled600mDirectory() != nil { return true }
+        let installed = MLModelConfigurationUtils.defaultModelsDirectory(for: .parakeetV2)
+        return AsrModels.modelsExist(at: installed, version: .v2)
     }
 
     /// Whether the active dictation model's weights are available on disk.

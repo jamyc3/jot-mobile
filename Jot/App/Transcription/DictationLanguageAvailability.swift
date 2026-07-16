@@ -30,24 +30,56 @@ enum DictationLanguageAvailability {
     /// supports on this device, from the most recent `resolve()`.
     private(set) static var appleCodes: Set<String> = []
 
-    /// Populate `cached`/`appleCodes` from the live Speech framework APIs.
-    /// Idempotent — always resolves against the same live locale set, so
-    /// calling it more than once (app launch + a picker's own `.task`) just
-    /// re-derives the same answer. Await once before reading `cached`/
-    /// `appleCodes` for the first time.
+    /// The `isAppleOnly` languages whose EXACT `appleLocaleIdentifier` resolves
+    /// to a real supported locale on this device (equivalence-aware, via the
+    /// same `supportedLocale(equivalentTo:)` check the reservation path uses),
+    /// from the most recent `resolve()`. Keyed on the full identifier — NOT the
+    /// reduced `isoCode` — so Cantonese (Hong Kong)=`zh-HK` and Cantonese
+    /// (Mainland China)=`yue-CN` are distinguished even though they share
+    /// isoCode "yue", and each row shows iff Apple can actually run it here.
+    private(set) static var appleOnlyAvailable: Set<LanguageChoice> = []
+
+    /// Populate `cached`/`appleCodes`/`appleOnlyAvailable` from the live Speech
+    /// framework APIs. Idempotent — always resolves against the same live
+    /// locale set, so calling it more than once (app launch + a picker's own
+    /// `.task`) just re-derives the same answer. Await once before reading the
+    /// cached values for the first time.
     static func resolve() async {
         let codes = await activeAppleLangCodes()
         appleCodes = codes
+        // Precompute the Apple-only rows' availability by exact-locale
+        // equivalence (async, so it can't live inside the sync `isAvailable`).
+        var appleOnly: Set<LanguageChoice> = []
+        for lang in LanguageChoice.allCases where lang.isAppleOnly {
+            if await appleSupportsExactLocale(lang) { appleOnly.insert(lang) }
+        }
+        appleOnlyAvailable = appleOnly
         cached = Set(LanguageChoice.allCases.filter { isAvailable($0, appleCodes: codes) })
+    }
+
+    /// Whether the ACTIVE Apple engine supports `lang`'s exact
+    /// `appleLocaleIdentifier` here, using Apple's own equivalence resolver
+    /// (`supportedLocale(equivalentTo:)`) — the SAME check
+    /// `AppleStreamingSession.resolveReservedLocale` runs before reserving, so
+    /// availability can't disagree with what the record path will actually do.
+    private static func appleSupportsExactLocale(_ lang: LanguageChoice) async -> Bool {
+        guard let identifier = lang.appleLocaleIdentifier else { return false }
+        let requested = Locale(identifier: identifier)
+        if TranscriptionService.appleEngineIsSpeechTranscriber {
+            return await SpeechTranscriber.supportedLocale(equivalentTo: requested) != nil
+        } else {
+            return await DictationTranscriber.supportedLocale(equivalentTo: requested) != nil
+        }
     }
 
     /// Language codes the ACTIVE Apple engine on this device actually
     /// supports — `SpeechTranscriber.supportedLocales` when `.isAvailable`
     /// (modern hardware), else `DictationTranscriber.supportedLocales` (the
     /// older/under-6GB-RAM fallback, broader but no `isAvailable` gate of its
-    /// own). Cantonese/Mandarin resolve through `Locale.language.languageCode`
-    /// the same way `LanguageChoice.fromSystemLocale` already does, so "yue"
-    /// and "zh" come out distinct.
+    /// own). Gates the NON-Apple-only languages (Latin/Cyrillic codes shared
+    /// with Parakeet). The Apple-only rows (CJK / Cantonese) are gated
+    /// separately by exact-locale equivalence in `appleSupportsExactLocale`,
+    /// not by this reduced code set.
     private static func activeAppleLangCodes() async -> Set<String> {
         let locales = TranscriptionService.appleEngineIsSpeechTranscriber
             ? await SpeechTranscriber.supportedLocales
@@ -60,8 +92,18 @@ enum DictationLanguageAvailability {
     /// Apple-only CJK ones has a FluidAudio model, but only on a device
     /// where Parakeet can actually run — see `TranscriptionService.parakeetUsable`).
     static func isAvailable(_ lang: LanguageChoice, appleCodes: Set<String>) -> Bool {
+        // Apple-only rows (no Parakeet model exists): gated on their EXACT
+        // `appleLocaleIdentifier` resolving to a supported locale here
+        // (precomputed by `resolve()`), not the reduced `isoCode` — so a shared
+        // isoCode (both Cantonese rows are "yue") can't make one row borrow the
+        // other's availability. Reads the resolved static set; callers await
+        // `resolve()` before filtering, so it is populated.
+        if lang.isAppleOnly {
+            return appleOnlyAvailable.contains(lang)
+        }
+        // Non-Apple-only languages: unchanged languageCode-based gating.
         let appleCanDo = appleCodes.contains(lang.isoCode)
-        let parakeetCanDo = !lang.isAppleOnly && TranscriptionService.parakeetUsable
+        let parakeetCanDo = TranscriptionService.parakeetUsable
         return appleCanDo || parakeetCanDo
     }
 
