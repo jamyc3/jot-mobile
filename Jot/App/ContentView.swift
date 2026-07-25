@@ -128,6 +128,20 @@ struct ContentView: View {
                     EmptyView()
                 }
             }
+            .navigationDestination(for: KeyboardRewriteRouter.OpenTranscriptTarget.self) { target in
+                // Keyboard recents-row open. Same detail view as the UUID push
+                // above; the target only adds "…and start the rewrite flow on
+                // arrival" for the row's Apple Intelligence button.
+                if let transcript = fetchTranscript(byID: target.id) {
+                    TranscriptDetailView(
+                        transcript: transcript,
+                        keyboardRewriteIntent: nil,
+                        openInRewrite: target.writingTools
+                    )
+                } else {
+                    EmptyView()
+                }
+            }
             .navigationDestination(for: KeyboardRewriteRouter.KeyboardRewriteTarget.self) { target in
                 let fetched = fetchTranscript(byID: target.id)
                 if let fetched {
@@ -205,6 +219,14 @@ struct ContentView: View {
             if let target = keyboardRewriteRouter.consumePending() {
                 navPath.append(target)
             }
+            // Cold-process counterpart of the `.onChange` below: on a launch
+            // FROM the keyboard's recents row, `onOpenURL` sets the pending
+            // target before this view's observers exist, so the change never
+            // fires. Consuming here (and there) is safe either way — whichever
+            // runs second sees nil.
+            if let openTarget = keyboardRewriteRouter.consumePendingOpenTranscript() {
+                navPath.append(openTarget)
+            }
             presentExternalKeyboardHeroIfPending()
         }
         .onChange(of: keyboardRewriteRouter.pendingTarget) { _, newTarget in
@@ -212,9 +234,9 @@ struct ContentView: View {
             navPath.append(newTarget)
             _ = keyboardRewriteRouter.consumePending()
         }
-        .onChange(of: keyboardRewriteRouter.pendingOpenTranscriptID) { _, newID in
-            guard let newID else { return }
-            navPath.append(newID)
+        .onChange(of: keyboardRewriteRouter.pendingOpenTranscript) { _, newTarget in
+            guard let newTarget else { return }
+            navPath.append(newTarget)
             _ = keyboardRewriteRouter.consumePendingOpenTranscript()
         }
         // External-keyboard hero — WARM-process path. The keyboard set the flag

@@ -7,14 +7,15 @@ import SwiftUI
 /// Points / Summary / Rewrite → Copy. The full-transcript selection is applied on
 /// this sheet's DISMISS (see `TranscriptDetailView.applyFullRangeSelection`).
 ///
-/// Pure guidance — no engine, no model, no network. The download remains available as
-/// a secondary link for users who want one-tap rewrites with their own saved prompts.
+/// Pure guidance — no engine, no model, no network.
+///
+/// The sheet used to end with a secondary "Download Jot's AI · 2.5 GB" link.
+/// Removed 2026-07-25 per owner direction ("remove the Jot AI thing — I don't
+/// think we're gonna use that anymore"): Apple Intelligence is the path we
+/// teach, and a 2.5 GB upsell under a "no download needed" headline worked
+/// against it. Jot's own model is still reachable from Settings → AI Rewrite.
 @MainActor
 struct AppleIntelligenceRewriteGuide: View {
-
-    /// Fires when the user taps "Download Jot's AI". The host dismisses this sheet and
-    /// presents AI Rewrite settings (chained via `onDismiss` so two sheets don't race).
-    let onDownloadJotAI: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -52,23 +53,6 @@ struct AppleIntelligenceRewriteGuide: View {
             step(4, "**Copy** the result to use it anywhere.")
 
             Spacer(minLength: 16)
-
-            VStack(spacing: 3) {
-                Text("Prefer one-tap rewrites in your own prompts?")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.jotMute)
-                Button {
-                    onDownloadJotAI()
-                    dismiss()
-                } label: {
-                    Text("Download Jot's AI · 2.5 GB")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.jotAccent)
-                }
-                .accessibilityLabel("Download Jot's AI, 2.5 gigabytes")
-            }
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, JotDesign.Spacing.pageMargin)
         .padding(.top, 8)

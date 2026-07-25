@@ -1,14 +1,21 @@
 import Foundation
+import JotVocabCore
 
 /// **Publishes the keyboard's correction asks after a saved dictation.**
-/// Reads the just-committed provenance, applies the handoff's ask policy
-/// (≤3 proposals, only those worth asking: a mapping already part-way to
-/// automatic (`prior > 0`) OR a low-margin `unsure` call; closest-to-automatic
-/// first), attaches a short spoken-context snippet per ask, and hands them to
-/// `CorrectionBridge` for the keyboard to read. Asks decay to zero as the system
-/// learns — confident one-off decisions are reviewable only on the transcript.
+/// Reads the just-committed provenance, runs the shared decision core
+/// (`JotVocabCore.AskPolicy` — ≤3 proposals, only those worth asking:
+/// applied corrections, mappings part-way to automatic, or the one-shot
+/// merge-teach lane; closest-to-automatic first), attaches a short spoken-
+/// context snippet per ask, and hands them to `CorrectionBridge` for the
+/// keyboard to read. Asks decay to zero as the system learns.
+///
+/// This type is now the app-side PLUMBING shell (design §1: decide in core,
+/// spend in plumbing). The decision logic lives in `AskPolicy`; what stays
+/// here is everything that touches a process boundary — slicing context
+/// snippets out of `publishedText`, serializing into `CorrectionBridge.Ask`,
+/// and *spending* the merge-teach one-shot (`CorrectionStore.noteMergeAsked`)
+/// after publish.
 enum CorrectionAsksPublisher {
-    static let maxAsks = 3
     static let contextWindow = 24
 
     /// Stages the keyboard asks into the App Group and (when `signalReady`) posts
@@ -34,106 +41,38 @@ enum CorrectionAsksPublisher {
             return false
         }
 
+        // Shared decision core. `AskPolicy.select` derives `prior` and the
+        // always-replace `granted` exclusion from `overrides` itself, applies
+        // the keyboard-suppression / merge-teach one-shot / mixed-payload rules,
+        // ranks closest-to-automatic first, and caps at `AskPolicy.maxAsks`.
+        // Pairs the owner has rejected (kept ≥ threshold) or "Stop asking"-ed
+        // are keyboard-only suppression — the transcript review reads neither.
         let overrides = await CorrectionStore.shared.snapshot()
-        // Pairs the owner has clearly rejected (kept the original ≥ threshold times)
-        // or tapped "Stop asking" on — keyboard-only suppression. The transcript
-        // review reads neither signal, so it keeps surfacing them for deliberate fix.
         let keyboardSuppressed = await CorrectionStore.shared.keyboardSuppressedPairs()
-        func pairKey(_ r: CorrectionProvenance.Record) -> String {
-            "\(Self.normalize(r.originalWord))|\(r.term.lowercased())"
-        }
-        func prior(_ r: CorrectionProvenance.Record) -> Int {
-            // Match the store's normalization exactly (lowercase + trim the same
-            // punctuation set) so `prior` doesn't silently read 0 on a punctuated
-            // original — which would drop its prior-desc ranking in the ask policy.
-            let ow = Self.normalize(r.originalWord)
-            let tm = r.term.lowercased()
-            return overrides.first { $0.originalWord == ow && $0.term.lowercased() == tm }?.net ?? 0
-        }
-
-        // Worth asking on the keyboard: an APPLIED correction (the gate changed
-        // your text — most worth a quick confirm) or a mapping part-way to
-        // automatic (prior > 0). ALL other KEPT blocks — including low-confidence
-        // (`unsure`) ones — stay on the transcript only and are NOT surfaced as
-        // keyboard asks.
-        //
-        // (R4, 2026-07-12) Previously `|| r.unsure` also asked about proposals the
-        // gate had BLOCKED (kept the original) when TDT confidence was middling.
-        // That was the "it asks about words that don't even match" nagging: the
-        // gate correctly rejected a non-matching term, yet the keyboard still
-        // asked "did you mean <term>?". A blocked-because-implausible guess should
-        // never become an ask — if it was really right, the transcript review
-        // still surfaces it. Only corrections we actually made, or mappings the
-        // owner is already training (prior > 0), are worth a keyboard confirm.
-        //
-        // EXCLUDE pairs the owner keeps rejecting (keyboardSuppressed) so the
-        // keyboard stops nagging — they remain reviewable on the transcript.
-        // Split into an explicitly-typed helper so the Swift type-checker doesn't
-        // choke on the compound predicate inside `.filter`.
-        // V2-3 one-shot teach lane: a merge-shaped BLOCKED proposal ("sri
-        // ram" → Sriram, blocked because its fragments are common words)
-        // gets exactly ONE teach ask per phrase EVER — surfaced post-paste
-        // (never holding the paste; see `postPasteOnly` below). Confirming
-        // writes the heard phrase as a sounds-like on the term.
         let mergeAsked = await CorrectionStore.shared.mergeAskedPairs()
-        func mergeTeachEligible(_ r: CorrectionProvenance.Record) -> Bool {
-            r.shape == "merge" && r.outcome == "kept" && !mergeAsked.contains(pairKey(r))
-        }
-        // V2-4: a pair the owner explicitly granted "Always replace" stops
-        // consuming ask budget — it auto-applies (visible in the transcript
-        // review, where one revert revokes the grant).
-        func granted(_ r: CorrectionProvenance.Record) -> Bool {
-            overrides.first {
-                $0.originalWord == Self.normalize(r.originalWord)
-                    && $0.term.lowercased() == r.term.lowercased()
-            }?.alwaysReplace == true
-        }
-        func worthAsking(_ r: CorrectionProvenance.Record) -> Bool {
-            if keyboardSuppressed.contains(pairKey(r)) { return false }
-            if granted(r) { return false }
-            // Diff-review fix: a merge-shaped BLOCKED record is eligible ONLY
-            // through the one-shot teach lane — never via prior>0 (which
-            // would resurrect a spent phrase as a paste-holding card and
-            // defeat both once-ever and post-paste-only).
-            if r.shape == "merge", r.outcome == "kept" {
-                return mergeTeachEligible(r)
-            }
-            return r.outcome == "applied" || prior(r) > 0
-        }
-        let candidates: [CorrectionProvenance.Record] = unresolved.filter(worthAsking)
-        let ranked: [CorrectionProvenance.Record] = candidates.sorted { prior($0) > prior($1) }
-        var selected: [CorrectionProvenance.Record] = Array(ranked.prefix(maxAsks))
-        // Diff-review fixes:
-        // (a) pair-dedupe merge teach asks — two occurrences of "sri ram" in
-        //     one dictation must produce ONE card, not two;
-        // (b) MIXED payloads: if any normal (paste-holding) ask is selected,
-        //     drop the merge teach asks from this publish WITHOUT spending
-        //     their one shot — the keyboard presents a held deck wholesale,
-        //     and a teach card must never ride a paste-holding deck.
-        var seenMergePairs: Set<String> = []
-        let hasNormalAsk = selected.contains { !($0.shape == "merge" && $0.outcome == "kept") }
-        selected = selected.filter { r in
-            guard r.shape == "merge", r.outcome == "kept" else { return true }
-            if hasNormalAsk { return false }
-            return seenMergePairs.insert(pairKey(r)).inserted
-        }
+        let selections = AskPolicy.select(
+            unresolved: unresolved,
+            overrides: overrides,
+            keyboardSuppressed: keyboardSuppressed,
+            mergeAsked: mergeAsked)
 
         var asks: [CorrectionBridge.Ask] = []
-        for r in selected {
+        for selection in selections {
+            let r = selection.record
             let (before, after) = context(of: r, in: publishedText)
-            // 3-option ask: surface the first alternate (the keyboard card
-            // caps at 3 buttons — original, term, one alternate).
-            let alt = r.alternates?.first
-            let isMergeTeach = mergeTeachEligible(r)
+            // 3-option ask: the selected alternate rides on the Selection
+            // (`altTerm`/`altFind`) so we don't re-derive it — the keyboard card
+            // caps at 3 buttons (original, term, one alternate).
             asks.append(CorrectionBridge.Ask(
                 recordKey: r.key, original: r.originalWord, term: r.term,
                 outcome: r.outcome, contextBefore: before, contextAfter: after,
                 publishedStart: r.publishedStart, publishedLength: r.publishedLength,
-                altTerm: alt?.term, altFind: alt?.find,
-                postPasteOnly: isMergeTeach ? true : nil))
-            if isMergeTeach {
-                // The single shot is spent at PUBLISH time (adjudicated or
-                // not) — bounded fatigue, round-2 amendment.
+                altTerm: selection.altTerm, altFind: selection.altFind,
+                postPasteOnly: selection.isMergeTeach ? true : nil))
+            if selection.isMergeTeach {
+                // Decide-in-core / spend-in-plumbing: AskPolicy MARKED this as
+                // the one-shot merge-teach card; the app spends its single shot
+                // here at PUBLISH time (adjudicated or not — bounded fatigue).
                 await CorrectionStore.shared.noteMergeAsked(
                     originalWord: r.originalWord, term: r.term)
             }
@@ -160,12 +99,6 @@ enum CorrectionAsksPublisher {
             metadata: ["asks": "\(asks.count)", "unresolved": "\(unresolved.count)",
                        "session": sessionID.uuidString, "signalReady": "\(signalReady)"])
         return true
-    }
-
-    /// Mirrors `CorrectionStore.normalize` so `prior` keys align — now the
-    /// literal same function (V2-2 shared normalization).
-    private static func normalize(_ s: String) -> String {
-        CorrectionKey.normalize(s)
     }
 
     /// ~`contextWindow` chars on each side of the published span (ellipsized).

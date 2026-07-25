@@ -100,6 +100,9 @@ struct HomeScreen: View {
     /// `DictationStats` state machine itself stays the source of truth; this
     /// flag is just a cache that lets the body invalidate cleanly.
     @State private var donationCardVisible: Bool = false
+    // "See donations" now opens the in-app Donations screen (features.md §6.7)
+    // instead of the external website — presented as a sheet from here.
+    @State private var showDonationsSheet = false
 
     /// Mirrors `DictationStats.shouldShowMacAppPromo` the same way
     /// `donationCardVisible` mirrors the donation card's own threshold —
@@ -258,6 +261,11 @@ struct HomeScreen: View {
         .animation(.easeInOut(duration: 0.3), value: donationCardVisible)
         .animation(.easeInOut(duration: 0.3), value: macAppPromoVisible)
         .animation(.easeInOut(duration: 0.3), value: engineSwitchedNoticeVisible)
+        // In-app Donations screen (the native charities list) — opened from the
+        // donation prompt's "See donations" instead of the external website.
+        .sheet(isPresented: $showDonationsSheet) {
+            DonationsView()
+        }
         // Floating selection-Cancel: pinned to the top so it's reachable
         // anywhere in a long list (the in-header Cancel scrolled away). Glass
         // so the list reads through it.
@@ -860,17 +868,17 @@ struct HomeScreen: View {
     /// "See donations" tapped. Optimistic transition to `.donated` (see
     /// `DictationStats.DonationCardState` doc — same reasoning as the Mac
     /// app: a false-positive is better UX than re-asking an actual donor).
-    /// Then open the donations page in Safari and hide the card.
+    /// Then open the in-app Donations screen (the native charities list —
+    /// features.md §6.7) and hide the card. Previously this bounced out to the
+    /// external website; keeping it in-app is the better experience.
     private func handleDonationCardOpen() {
         // Advance past the current milestone (also stamps the donated flag);
         // re-fires at the next milestone.
         DictationStats.acknowledgeDonationPrompt(donated: true)
-        if let url = URL(string: "https://jot-transcribe.com/donations/") {
-            UIApplication.shared.open(url)
-        }
         withAnimation(.easeInOut(duration: 0.3)) {
             donationCardVisible = false
         }
+        showDonationsSheet = true
     }
 
     // MARK: - Jot for Mac promo

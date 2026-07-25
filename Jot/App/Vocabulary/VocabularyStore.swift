@@ -1,4 +1,5 @@
 import Foundation
+import JotVocabCore
 import Observation
 import SwiftUI
 
@@ -89,12 +90,12 @@ final class VocabularyStore {
             terms = []
             return
         }
-        terms = Self.parse(data)
+        terms = VocabularyFile.parse(data)
     }
 
     func save() {
         guard let url = fileURL else { return }
-        let body = Self.serialize(terms)
+        let body = VocabularyFile.serialize(terms)
         do {
             try body.write(to: url, atomically: true, encoding: .utf8)
             lastSaveError = nil
@@ -212,44 +213,7 @@ final class VocabularyStore {
         save()
     }
 
-    // MARK: - Simple-format parser / serializer (identical to desktop)
-
-    /// Parse the plain-text format. Lines starting with `#` are treated
-    /// as comments. Empty lines are skipped. Terms with duplicate text
-    /// are preserved.
-    static func parse(_ body: String) -> [VocabTerm] {
-        var result: [VocabTerm] = []
-        let lines = body.components(separatedBy: .newlines)
-        for rawLine in lines {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.isEmpty || line.hasPrefix("#") { continue }
-
-            let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-            let text = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.isEmpty { continue }
-
-            let aliases: [String] = parts.count > 1
-                ? parts[1]
-                    .split(separator: ",")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                : []
-
-            result.append(VocabTerm(text: text, aliases: aliases))
-        }
-        return result
-    }
-
-    static func serialize(_ terms: [VocabTerm]) -> String {
-        var lines: [String] = []
-        for t in terms where !t.isBlank {
-            let trimmedText = t.text.trimmingCharacters(in: .whitespaces)
-            if t.aliases.isEmpty {
-                lines.append(trimmedText)
-            } else {
-                lines.append("\(trimmedText): \(t.aliases.joined(separator: ", "))")
-            }
-        }
-        return lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
-    }
+    // The simple-format parser/serializer moved verbatim into the package as
+    // `JotVocabCore.VocabularyFile` (byte-identical across apps and to
+    // FluidAudio's `loadFromSimpleFormat`); `load()`/`save()` call it directly.
 }

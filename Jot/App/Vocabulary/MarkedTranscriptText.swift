@@ -1,3 +1,4 @@
+import JotVocabCore
 import SwiftUI
 import UIKit
 

@@ -1,3 +1,4 @@
+import JotVocabCore
 import SwiftUI
 
 /// Vocabulary settings pane — list of user-curated terms that the

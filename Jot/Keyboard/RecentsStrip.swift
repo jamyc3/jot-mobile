@@ -32,11 +32,12 @@ struct RecentsStrip: View {
     let entries: [TranscriptHistoryMirror.Entry]
     let onInsertEntry: (TranscriptHistoryMirror.Entry) -> Void
 
-    /// Fired when the user taps the row-trailing "open in app" button.
-    /// Caller is expected to bounce to `jot://transcript?id=<uuid>` so
-    /// the main app pushes the transcript detail view. Distinct from
+    /// Fired when the user taps the row-trailing Apple Intelligence button.
+    /// Caller is expected to bounce to `jot://transcript?id=<uuid>&ai=1` so
+    /// the main app pushes the transcript detail view AND starts the rewrite
+    /// flow (Writing Tools selection on Apple Intelligence). Distinct from
     /// `onInsertEntry` (paste-at-cursor) so the row carries two clear
-    /// affordances: paste on the body, open in app on the trailing icon.
+    /// affordances: paste on the body, rewrite in Jot on the trailing icon.
     let onOpenInApp: (TranscriptHistoryMirror.Entry) -> Void
 
     /// "See all" header link — routes to `jot://history` via the
@@ -46,7 +47,7 @@ struct RecentsStrip: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Which touch affordance is currently held, driving the contextual header
-    /// hint ("Pastes here" / "Opens in Jot"). Set by the row-body / open-in-app
+    /// hint ("Pastes here" / "Rewrite in Jot"). Set by the row-body / rewrite
     /// button styles on press and cleared on release — or when a press turns
     /// into a scroll, since a `ButtonStyle`'s `isPressed` cancels then too.
     /// PURE affordance: no gesture or behavior change, just feedback.
@@ -147,7 +148,7 @@ struct RecentsStrip: View {
         // "Recent" / "See all").
         .overlay(alignment: .center) {
             if let pressHint {
-                Text(pressHint == .paste ? "Pastes here" : "Opens in Jot")
+                Text(pressHint == .paste ? "Pastes here" : "Rewrite in Jot")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Color.jotKeyboardStreamText.opacity(0.85))
                     .lineLimit(1)
@@ -217,16 +218,21 @@ struct RecentsStrip: View {
     ///
     /// - **Body zone** (timestamp + transcript text + optional sparkles):
     ///   paste-at-cursor. Visually dominant — this is the primary action.
-    /// - **Trailing zone** (`arrow.up.forward.app` button): open the
-    ///   transcript detail view in the main app. Distinct hit region with
+    /// - **Trailing zone** (`apple.writing.tools` button): open the transcript
+    ///   detail view in the main app **and start the rewrite flow** — on Apple
+    ///   Intelligence that means the transcript arrives already selected for
+    ///   system Writing Tools (features.md §7.10). Distinct hit region with
     ///   its own padding so a careless brush against the right edge doesn't
     ///   accidentally bounce the user out of the host app when they meant
     ///   to paste.
     ///
-    /// Apple's `arrow.up.forward.app` SF Symbol is the canonical "open
-    /// this in its own app" glyph (used in Messages link previews, Mail
-    /// detail handoffs, etc.). Deliberately NOT a coral `sparkles` — the
-    /// affordance is "view the transcript in Jot", not "do AI". The icon
+    /// This slot used to be a plain `arrow.up.forward.app` "open in app"
+    /// affordance (2026-07-25: replaced per owner direction — "that is kind
+    /// of useless, people are not using it; put AI there"). Apple's
+    /// `apple.writing.tools` SF Symbol is the same glyph the system edit
+    /// menu shows for Writing Tools, so the button names its destination
+    /// exactly; it is deliberately NOT `sparkles`, which the row body
+    /// already uses in coral to mark an entry that HAS a rewrite. The icon
     /// uses `jotKeyboardAccent` (the blue accent the rest of the keyboard
     /// already treats as the actionable color), so it reads as the row's
     /// secondary CTA without competing with the body for visual weight.
@@ -283,8 +289,8 @@ struct RecentsStrip: View {
             Button {
                 onOpenInApp(entry)
             } label: {
-                Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "apple.writing.tools")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.jotKeyboardAccent)
                     // Hit zone is intentionally wider than the glyph so the
                     // button is reachable on a cramped strip without
@@ -296,8 +302,8 @@ struct RecentsStrip: View {
             .buttonStyle(OpenInAppPressStyle(onPress: { pressed in
                 pressHint = pressed ? .open : nil
             }))
-            .accessibilityLabel("Open in Jot")
-            .accessibilityHint("Opens this transcript in the Jot app")
+            .accessibilityLabel("Rewrite in Jot")
+            .accessibilityHint("Opens this transcript in Jot, ready for Writing Tools")
             .accessibilityAddTraits(.isButton)
         }
     }
@@ -370,9 +376,9 @@ private struct RecentRowPressStyle: ButtonStyle {
     }
 }
 
-/// Open-in-app (↗) press feedback: a small blue rounded wash behind the glyph so
-/// it reads as a target distinct from the paste body. Reports press so the header
-/// hint can switch to "Opens in Jot".
+/// Rewrite-in-app press feedback: a small blue rounded wash behind the Writing
+/// Tools glyph so it reads as a target distinct from the paste body. Reports
+/// press so the header hint can switch to "Rewrite in Jot".
 private struct OpenInAppPressStyle: ButtonStyle {
     let onPress: (Bool) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

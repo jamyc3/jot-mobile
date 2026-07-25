@@ -1,4 +1,5 @@
 import Foundation
+import JotVocabCore
 import OSLog
 
 /// End-of-recording tail shared across the three dictation *entry-point*

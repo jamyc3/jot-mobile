@@ -127,6 +127,44 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// The language code handed to `FillerWordCleaner.clean(_:language:)`, or
+    /// `nil` for languages whose transcripts must not be filler-cleaned at all.
+    ///
+    /// `"en"` selects the full English chain (fillers + `NumberNormalizer`).
+    /// es/fr/de/it/pt select the per-language NON-LEXICAL hesitation lists the
+    /// shared pipeline ships (`jot-shared` §5) — fillers ONLY, **never**
+    /// `NumberNormalizer`: its spelled-cardinal rules are English-hardcoded and
+    /// mis-convert Romance output (French "six cents" = 600 → "6¢"; that exact
+    /// regression is why the Mac gates it the same way). Everything else
+    /// (Japanese, Polish, Russian, …) returns `nil`: no filler lists exist for
+    /// them, so their transcripts pass through untouched.
+    ///
+    /// Mirrors `LanguageChoice.fillerLanguageCode` in the Mac app
+    /// (`~/code/jot/Sources/Transcription/LanguageChoice.swift`) — the two must
+    /// agree, since both consume the same shared word lists.
+    var fillerLanguageCode: String? {
+        switch self {
+        case .english: return "en"
+        // Latin-American Spanish routes through Apple (which never reaches the
+        // cleanup chain), but the hesitation sounds are the same Spanish ones —
+        // map it correctly rather than leaving a hole if it ever routes to v3.
+        case .spanish, .spanishLatinAmerica: return "es"
+        case .french: return "fr"
+        case .german: return "de"
+        case .italian: return "it"
+        case .portuguese: return "pt"
+        // No hesitation list ships for these — pass through untouched.
+        case .romanian, .polish, .czech, .slovak, .slovenian, .croatian, .bosnian,
+             .russian, .ukrainian, .belarusian, .bulgarian, .serbian,
+             .danish, .dutch, .finnish, .greek, .hungarian, .swedish:
+            return nil
+        // Apple-only CJK — never reaches the Parakeet cleanup chain anyway.
+        case .japanese, .korean, .chineseMandarin, .cantoneseHongKong, .cantoneseMainland,
+             .chineseTraditional:
+            return nil
+        }
+    }
+
     /// Whether the CTC custom-vocabulary boost (keyword spot + merge) runs
     /// for this language. Two independent reasons force a skip, both covered
     /// here so the gate is a single named flag rather than scattered checks:

@@ -25,7 +25,7 @@ settings:
     # build; the sandbox is defense-in-depth, not a security boundary.
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     CURRENT_PROJECT_VERSION: "262"
-    MARKETING_VERSION: "2.0.1"
+    MARKETING_VERSION: "2.0.2"
     # Vineet's team — same one used for Mac Jot. Pinned so xcodegen
     # regeneration doesn't wipe the signing team out of Xcode every time.
     DEVELOPMENT_TEAM: "8VB2ULDN22"
@@ -64,13 +64,15 @@ packages:
   CoreMLLLM:
     url: https://github.com/john-rocky/CoreML-LLM
     exactVersion: "1.9.0"
-  # Shared deterministic text-cleanup pipeline (filler strip, number ITN,
-  # paragraph segmentation), extracted so iOS and the Mac app build from one
-  # source instead of drifting copies. Foundation-only, no ASR/CoreML deps.
-  # Path is relative to `Jot/project.yml`: `..` is the jot-mobile repo root
-  # and `../..` is the workspace root, so `../../jot-shared` is the sibling
-  # jot-shared repo. Main-app only — JotKeyboard/JotWatch never reference
-  # these components (Shared/ mentions are comments only).
+  # Shared jot-shared Swift package. Two Foundation-only products, no
+  # ASR/CoreML deps: `JotTextPipeline` (filler strip, number ITN, paragraph
+  # segmentation) and `JotVocabCore` (the vocabulary-correction brains — gate,
+  # correction/provenance stores, ask policy, common-words provider), both
+  # extracted so iOS and the Mac app build from ONE source instead of drifting
+  # copies. Path is relative to `Jot/project.yml`: `..` is the jot-mobile repo
+  # root and `../..` is the workspace root, so `../../jot-shared` is the sibling
+  # jot-shared repo. `JotTextPipeline` is main-app only; `JotVocabCore` is
+  # linked into JotKeyboard too (it serves the keyboard's common-word guard).
   JotTextPipeline:
     path: ../../jot-shared
 
@@ -167,55 +169,13 @@ targets:
       - path: Resources/Settings.bundle
         type: folder
         buildPhase: resources
-      # Common-word frequency list (top ~24k English words) for the vocabulary
-      # gate's common-word guard — stops a custom term overwriting an everyday
-      # word. See App/Vocabulary/{CommonWords,VocabularyGate}.swift.
-      - path: Resources/common-words.txt
-        buildPhase: resources
-      # Per-language common-word lists (top ~24k, wordfreq/MIT) so the guard
-      # works in every language the CTC vocab correction runs for — the
-      # Parakeet-v3 European set. Main app only (the keyboard stays English).
-      # See LanguageChoice.commonWordsResource.
-      - path: Resources/common-words-es.txt
-        buildPhase: resources
-      - path: Resources/common-words-fr.txt
-        buildPhase: resources
-      - path: Resources/common-words-de.txt
-        buildPhase: resources
-      - path: Resources/common-words-it.txt
-        buildPhase: resources
-      - path: Resources/common-words-pt.txt
-        buildPhase: resources
-      - path: Resources/common-words-ro.txt
-        buildPhase: resources
-      - path: Resources/common-words-ru.txt
-        buildPhase: resources
-      - path: Resources/common-words-uk.txt
-        buildPhase: resources
-      - path: Resources/common-words-bg.txt
-        buildPhase: resources
-      - path: Resources/common-words-sr.txt
-        buildPhase: resources
-      - path: Resources/common-words-da.txt
-        buildPhase: resources
-      - path: Resources/common-words-nl.txt
-        buildPhase: resources
-      - path: Resources/common-words-fi.txt
-        buildPhase: resources
-      - path: Resources/common-words-el.txt
-        buildPhase: resources
-      - path: Resources/common-words-hu.txt
-        buildPhase: resources
-      - path: Resources/common-words-sv.txt
-        buildPhase: resources
-      - path: Resources/common-words-pl.txt
-        buildPhase: resources
-      - path: Resources/common-words-cs.txt
-        buildPhase: resources
-      - path: Resources/common-words-sk.txt
-        buildPhase: resources
-      - path: Resources/common-words-sl.txt
-        buildPhase: resources
+      # Common-word frequency lists (English + the Parakeet-v3 European set)
+      # for the vocabulary gate's common-word guard now ship INSIDE the
+      # JotVocabCore package (Bundle.module), served by its
+      # BundledCommonWordsProvider — so the app no longer bundles its own
+      # copies (they were byte-identical; shipping both wasted ~5 MB). See
+      # LanguageChoice.commonWordsResource (still maps a language → the
+      # resource base name the provider loads).
       # Bundled product-help corpus (distilled from features.md, pre-embedded
       # with EmbeddingGemma) powering Ask's "how do I use Jot" lane. Regenerate
       # via scripts/make-help-corpus.sh when features.md changes;
@@ -322,6 +282,10 @@ targets:
       # keyboard/watch never reference these components.
       - package: JotTextPipeline
         product: JotTextPipeline
+      # Shared vocabulary-correction core (gate + stores + ask policy +
+      # common-words provider). Also linked into JotKeyboard (below).
+      - package: JotTextPipeline
+        product: JotVocabCore
       - sdk: AppIntents.framework
       # MLX stack for Qwen 3.5. Main-app-only — extensions stay MLX-free.
       - package: MLXSwiftLM
@@ -417,13 +381,13 @@ targets:
       - path: App/Design/Components/StatusPill.swift
       - path: App/Design/Components/TranscribingText.swift
       # Common-word guard for the keyboard's "Add to Vocabulary" ("..." popover):
-      # the bundled ~24k-word list lets the keyboard tell the user a selection is
-      # a common word BEFORE queueing it (same guard the main app applies).
-      # CommonWords loads `common-words.txt` from `Bundle.main`, so the asset
-      # must ride in the appex bundle too.
+      # lets the keyboard tell the user a selection is a common word BEFORE
+      # queueing it (same guard the main app applies). `CommonWords` is now a
+      # thin shim over JotVocabCore's BundledCommonWordsProvider, which serves
+      # the word list from the package's own resource bundle (Bundle.module,
+      # embedded in the appex) — so the keyboard no longer bundles its own
+      # `common-words.txt`. Requires the JotVocabCore dependency below.
       - path: App/Vocabulary/CommonWords.swift
-      - path: Resources/common-words.txt
-        buildPhase: resources
       - path: Resources/PrivacyInfo.xcprivacy
       # Fraunces must also be inside the keyboard extension bundle so the
       # streaming-strip / just-now-marker text rendered from the appex
@@ -469,17 +433,16 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.com.vineetu.jot.mobile.shared
-    # No `dependencies:` block. The keyboard no longer runs Apple
-    # Intelligence rewrite in-process — keyboard rewrite URL-bounces
-    # into the main app, where Qwen 3.5 on MLX handles the call. The
-    # keyboard target therefore needs zero framework or package
-    # dependencies beyond what UIKit / SwiftUI / AppIntents pull in
-    # transitively for the `Shared/` sources, and those are linked
-    # automatically by xcodebuild without an explicit entry. The MLX
-    # stack is NOT linked into the keyboard — it lives in the main-app
-    # target only (the keyboard's 60 MB ceiling can't host the ~2.5 GB
-    # LLM weights anyway). Apple FM remains linked into the main-app
-    # target only (for `CleanupService`).
+    # The keyboard links exactly ONE package product: JotVocabCore, the
+    # Foundation-only vocabulary core, for its common-word guard (via the
+    # `CommonWords` shim over BundledCommonWordsProvider). It pulls in no
+    # FluidAudio/CoreML/MLX — those stay main-app-only (the keyboard's 60 MB
+    # ceiling can't host the ~2.5 GB LLM weights anyway). Keyboard rewrite
+    # still URL-bounces into the main app (Qwen 3.5 on MLX); Apple FM stays
+    # main-app-only (for `CleanupService`).
+    dependencies:
+      - package: JotTextPipeline
+        product: JotVocabCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vineetu.jot.mobile.Jot.Keyboard

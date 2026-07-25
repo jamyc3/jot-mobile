@@ -1,3 +1,4 @@
+import JotVocabCore
 import SwiftData
 import SwiftUI
 import UIKit
@@ -49,15 +50,25 @@ struct TranscriptDetailView: View {
     let transcript: Transcript
     let keyboardRewriteIntent: KeyboardRewriteRouter.KeyboardRewriteTarget?
 
+    /// Arrived from the keyboard recents row's Apple Intelligence button
+    /// (`jot://transcript?id=…&ai=1`). Fires the view's own Rewrite action once
+    /// on appear, so the user lands straight on the selected-transcript /
+    /// Writing Tools state instead of having to tap ✨ again (features.md §5.2).
+    /// Unrelated to `keyboardRewriteIntent`, which is the keyboard's
+    /// prompt-already-chosen handoff waiting on a pasteback.
+    let openInRewrite: Bool
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
     init(
         transcript: Transcript,
-        keyboardRewriteIntent: KeyboardRewriteRouter.KeyboardRewriteTarget? = nil
+        keyboardRewriteIntent: KeyboardRewriteRouter.KeyboardRewriteTarget? = nil,
+        openInRewrite: Bool = false
     ) {
         self.transcript = transcript
         self.keyboardRewriteIntent = keyboardRewriteIntent
+        self.openInRewrite = openInRewrite
     }
 
     enum DetailTab: String, CaseIterable {
@@ -116,6 +127,10 @@ struct TranscriptDetailView: View {
     // `editError` surfaces inline copy when Save fails validation (Original
     // text can't be empty). The editor stays open so the user can fix it.
     @State private var isEditing = false
+    // Set when the user taps the edit-bar Apple Intelligence button, so the
+    // edit bar's center label swaps to the "Tap the selection, then Writing
+    // Tools" hint (features.md §9.3 / §3.7). Reset on each edit entry.
+    @State private var editWritingToolsActive = false
     @State private var editorText: String = ""
     @State private var editTargetTab: DetailTab = .original
 
@@ -229,9 +244,10 @@ struct TranscriptDetailView: View {
     @State private var transientNoticeTask: Task<Void, Never>?
 
     @State private var showAIGuide: Bool = false
-    /// Set by the guide's "Download Jot's AI" link; consumed in the guide's
-    /// `onDismiss` to open AI settings without a sheet-over-sheet race.
-    @State private var pendingAIDownload: Bool = false
+
+    /// One-shot guard for the `openInRewrite` arrival (the keyboard recents
+    /// row's Apple Intelligence button). `.task` can re-run on this view.
+    @State private var didAutoStartRewrite: Bool = false
 
     /// Writing Tools **selection mode** (Apple Intelligence engine only). Tapping
     /// the rewrite action swaps the read-mode text for a NON-editable
@@ -499,21 +515,15 @@ struct TranscriptDetailView: View {
             )
         }
         .sheet(isPresented: $showAIGuide, onDismiss: {
-            // "Download Jot's AI" inside the guide → leave selection mode and open
-            // settings after the guide dismisses (chained so two sheets don't
-            // race). Otherwise the user is staying in selection mode, so apply the
+            // The user is staying in selection / edit mode, so apply the
             // full-transcript selection now that they can see the highlight.
-            if pendingAIDownload {
-                pendingAIDownload = false
-                exitSelectionMode()
-                showAISettings = true
-            } else if selectionMode {
+            if selectionMode || isEditing {
                 applyFullRangeSelection()
             }
         }) {
             // features.md §7.10 — when Qwen isn't downloaded but the device has Apple
             // Intelligence, teach the free Writing Tools path instead of the download.
-            AppleIntelligenceRewriteGuide(onDownloadJotAI: { pendingAIDownload = true })
+            AppleIntelligenceRewriteGuide()
         }
         .sheet(isPresented: $showAISettings) {
             // Single canonical setup surface for AI Rewrite. Replaces the
@@ -540,7 +550,10 @@ struct TranscriptDetailView: View {
             // Default to Rewrite tab when a rewrite already exists — the
             // user almost always cares about their latest pass once they've
             // run one. Falls back to Original when no rewrite is saved.
-            if hasRewrite {
+            // Skipped in selection mode: SwiftUI does not guarantee this runs
+            // before the `.task` that auto-enters Writing Tools on an
+            // `openInRewrite` arrival, and that mode pins the tab to Original.
+            if hasRewrite, !selectionMode {
                 selectedTab = .rewrite
             }
             if correctionModel == nil {
@@ -563,6 +576,16 @@ struct TranscriptDetailView: View {
             if let intent = keyboardRewriteIntent, !didFireKeyboardIntent {
                 didFireKeyboardIntent = true
                 autoFireKeyboardRewrite(intent: intent)
+            }
+            // Keyboard recents row → Apple Intelligence button. Run the exact
+            // same action the in-app ✨ Rewrite pill runs, AFTER
+            // `refreshRewriteAvailability()` so its engine/model branch reads
+            // fresh state. On Apple Intelligence that means selection mode +
+            // the one-time guide; on Jot's AI it means the prompt picker or
+            // setup, same as tapping Rewrite here.
+            if openInRewrite, !didAutoStartRewrite {
+                didAutoStartRewrite = true
+                presentRewritePicker()
             }
         }
     }
@@ -1555,10 +1578,25 @@ struct TranscriptDetailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(showFindReplace ? "Hide find and replace" : "Find and replace")
 
+            // Apple Intelligence: select the whole transcript and point the user
+            // at the system Writing Tools (which rewrites in place while editing).
+            // Only shown when Apple Intelligence is the active rewrite engine.
+            if showEditWritingTools {
+                Button(action: editWritingToolsTapped) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Color.jotBlueTop)
+                        .frame(width: 36, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Rewrite with Apple Intelligence")
+            }
+
             Spacer(minLength: 6)
 
             // Center label can shrink/disappear; the side buttons must not.
-            Text(editBarCenterLabel)
+            editBarCenterLabel
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.jotMute)
                 .lineLimit(1)
@@ -1599,9 +1637,39 @@ struct TranscriptDetailView: View {
         )
     }
 
-    /// Center label of the EditBar.
-    private var editBarCenterLabel: String {
-        editTargetTab == .original ? "Editing Original" : "Editing Rewrite"
+    /// Center label of the EditBar. Swaps to the Writing Tools hint once the
+    /// user taps the edit-bar Apple Intelligence button.
+    @ViewBuilder
+    private var editBarCenterLabel: some View {
+        if editWritingToolsActive {
+            Self.writingToolsHint
+        } else {
+            Text(editTargetTab == .original ? "Editing Original" : "Editing Rewrite")
+        }
+    }
+
+    /// Shared "what to do next" line for both Writing Tools surfaces — the
+    /// reading pane's selection bar and the edit bar. The system's own
+    /// `apple.writing.tools` glyph is interpolated INTO the `Text`, so it
+    /// inherits whatever font the call site applies and the user is looking for
+    /// the identical mark that appears in the iOS edit menu.
+    private static var writingToolsHint: Text {
+        Text("Tap the selection, then \(Image(systemName: "apple.writing.tools")) Writing Tools")
+    }
+
+    /// Show the edit-bar Apple Intelligence button only when Apple Intelligence
+    /// is the active rewrite engine (features.md §3.7 / §7.10).
+    private var showEditWritingTools: Bool {
+        RewriteMode.current == .appleIntelligence
+    }
+
+    /// Edit-bar Apple Intelligence tap: select the whole transcript in the
+    /// editable editor and teach (once) / skip to the Writing Tools path. With
+    /// the text selected, the system Writing Tools rewrites it in place; Save
+    /// then persists the result (features.md §3.7 / §9.3).
+    private func editWritingToolsTapped() {
+        editWritingToolsActive = true
+        presentGuideOrSelect()
     }
 
     // MARK: - Selection-mode bar
@@ -1611,7 +1679,7 @@ struct TranscriptDetailView: View {
     /// read as siblings.
     private var selectionDoneBar: some View {
         HStack(spacing: 12) {
-            Text("Tap the selection, then Writing Tools")
+            Self.writingToolsHint
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Color.jotMute)
                 .lineLimit(1)
@@ -1655,7 +1723,23 @@ struct TranscriptDetailView: View {
         // italic runs from a prior edit session).
         editSessionToken += 1
         selectionMode = true
-        showAIGuide = true
+        presentGuideOrSelect()
+    }
+
+    /// The FIRST Apple-Intelligence use shows the one-time Writing Tools guide
+    /// (features.md §9.3); the full-transcript selection is applied on the
+    /// guide's dismiss. Every use after that skips the explainer and selects
+    /// immediately. The immediate selection is deferred one runloop so the
+    /// freshly-mounted selection/edit host can take first responder and render
+    /// the highlight (the same reason the guide path applies on dismiss).
+    /// Shared by the reading pane (selection mode) and the edit pane.
+    private func presentGuideOrSelect() {
+        if DictationStats.appleIntelligenceGuideSeen {
+            DispatchQueue.main.async { applyFullRangeSelection() }
+        } else {
+            DictationStats.appleIntelligenceGuideSeen = true
+            showAIGuide = true
+        }
     }
 
     /// Apply a full-transcript selection via the `editorSelection` binding —
@@ -2120,6 +2204,7 @@ struct TranscriptDetailView: View {
         editError = nil
         // Fresh edit session: dismiss any prior learn-it card and reset find state.
         replaceVocabOffer = nil
+        editWritingToolsActive = false
         showFindReplace = false
         findText = ""
         replaceText = ""

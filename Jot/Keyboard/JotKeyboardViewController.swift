@@ -3057,19 +3057,21 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         openContainingApp(url)
     }
 
-    /// Row-trailing "open in app" tap on the recents card. Brings the
-    /// main app to the foreground and pushes the transcript detail view
-    /// via `jot://transcript?id=<uuid>` (handled by `JotApp.onOpenURL`).
-    /// No dictation auto-start — the user wants to read or edit, not
-    /// record. Gated on Full Access for the same reasons as
-    /// `openHostHome()`: without FA, `extensionContext.open` is refused
-    /// and the bounce won't reach the app.
+    /// Row-trailing Apple Intelligence tap on the recents card. Brings the
+    /// main app to the foreground, pushes the transcript detail view, and
+    /// starts the rewrite flow via `jot://transcript?id=<uuid>&ai=1`
+    /// (handled by `JotApp.onOpenURL`). The `ai=1` marker is what separates
+    /// this from a plain view-in-app open — see `features.md §5.2`.
+    /// No dictation auto-start — the user wants to rewrite, not record.
+    /// Gated on Full Access for the same reasons as `openHostHome()`:
+    /// without FA, `extensionContext.open` is refused and the bounce won't
+    /// reach the app.
     private func openHistoryEntryInApp(_ entry: TranscriptHistoryMirror.Entry) {
         guard hasFullAccess else {
             openHostSettings()
             return
         }
-        guard let url = URL(string: "jot://transcript?id=\(entry.id.uuidString)") else { return }
+        guard let url = URL(string: "jot://transcript?id=\(entry.id.uuidString)&ai=1") else { return }
         openContainingApp(url)
     }
 

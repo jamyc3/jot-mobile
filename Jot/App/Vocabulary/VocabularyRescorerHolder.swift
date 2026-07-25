@@ -1,6 +1,16 @@
 import FluidAudio
 import Foundation
+import JotVocabCore
 import os.log
+
+// NOTE on the `TokenTiming` clash: both FluidAudio and JotVocabCore export a
+// top-level `TokenTiming`, and the module name `FluidAudio` is itself shadowed
+// by a same-named type — so `FluidAudio.TokenTiming` won't resolve and a bare
+// `TokenTiming` is ambiguous once both are imported. FluidAudio's is reached via
+// the `FluidAudioTokenTiming` alias (see FluidAudioTokenTiming.swift, a
+// FluidAudio-only file); the package's is written `JotVocabCore.TokenTiming`.
+// Every other package reference here is fully `JotVocabCore.`-qualified for
+// clarity.
 
 /// Owns the FluidAudio vocabulary-boosting stack. Separate from
 /// `VocabularyStore` (which owns the user's list + the file on disk)
@@ -296,7 +306,7 @@ public actor VocabularyRescorerHolder {
     /// output is byte-identical regardless of which path is taken.
     public func rescore(
         transcript: String,
-        tokenTimings: [TokenTiming],
+        tokenTimings: [FluidAudioTokenTiming],
         audioSamples: [Float]
     ) async throws -> String? {
         let spotResult = try await spot(audioSamples: audioSamples)
@@ -313,10 +323,10 @@ public actor VocabularyRescorerHolder {
     /// `recordProvenance` semantics.
     func rescoreWithProposals(
         transcript: String,
-        tokenTimings: [TokenTiming],
+        tokenTimings: [FluidAudioTokenTiming],
         audioSamples: [Float],
         recordProvenance: Bool = true
-    ) async throws -> (text: String, proposals: [VocabularyGate.Proposal])? {
+    ) async throws -> (text: String, proposals: [JotVocabCore.VocabularyGate.Proposal])? {
         let spotResult = try await spot(audioSamples: audioSamples)
         return await mergeWithProposals(
             transcript: transcript,
@@ -366,7 +376,7 @@ public actor VocabularyRescorerHolder {
     /// "not ready" early return.
     public func merge(
         transcript: String,
-        tokenTimings: [TokenTiming],
+        tokenTimings: [FluidAudioTokenTiming],
         spotResult: CtcKeywordSpotter.SpotKeywordsResult?
     ) async -> String? {
         (await mergeWithProposals(transcript: transcript, tokenTimings: tokenTimings, spotResult: spotResult))?.text
@@ -388,10 +398,10 @@ public actor VocabularyRescorerHolder {
     /// being published, and a concurrent shadow write would race it.
     func mergeWithProposals(
         transcript: String,
-        tokenTimings: [TokenTiming],
+        tokenTimings: [FluidAudioTokenTiming],
         spotResult: CtcKeywordSpotter.SpotKeywordsResult?,
         recordProvenance: Bool = true
-    ) async -> (text: String, proposals: [VocabularyGate.Proposal])? {
+    ) async -> (text: String, proposals: [JotVocabCore.VocabularyGate.Proposal])? {
         // Re-fetch the live handles. The split lets `spot(...)` run while
         // TDT decodes; by the time we merge, `vocabulary`/`rescorer` are
         // the same handles the spot used (a vocab rebuild between spot and
@@ -440,7 +450,7 @@ public actor VocabularyRescorerHolder {
             // ("when I say Jamie I mean Jamy") overrides the guard for that pair.
             // Snapshot fetched once here (off the gate's synchronous hot loop).
             // (docs/plans/adaptive-vocabulary-correction.md §3.2 / §0i / §0j)
-            let overrides = await CorrectionStore.shared.snapshot()
+            let overrides = await JotVocabCore.CorrectionStore.shared.snapshot()
             // Alias map for the gate's plausibility guard — a user alias
             // ("Vinny" for "Vineet") is the user vouching that the pair is
             // acoustically plausible, so the guard must measure against it.
@@ -452,15 +462,36 @@ public actor VocabularyRescorerHolder {
                     termAliases[t.text.lowercased(), default: []] += a
                 }
             }
-            let gated = VocabularyGate.apply(
+            // Seam 1: map FluidAudio's rescore output + token timings into the
+            // package's engine-neutral value types so the gate never imports
+            // FluidAudio (identical pattern to the JotTextPipeline TokenTiming
+            // bridge in TranscriptionService).
+            let neutralOutput = JotVocabCore.RescoreOutput(
+                text: output.text,
+                replacements: output.replacements.map {
+                    JotVocabCore.RescoreProposal(
+                        originalWord: $0.originalWord,
+                        replacementWord: $0.replacementWord,
+                        shouldReplace: $0.shouldReplace,
+                        replacementScore: $0.replacementScore,
+                        originalScore: $0.originalScore)
+                },
+                wasModified: output.wasModified)
+            let gated = JotVocabCore.VocabularyGate.apply(
                 originalTranscript: transcript,
-                output: output,
-                tokenTimings: tokenTimings,
+                output: neutralOutput,
+                tokenTimings: tokenTimings.map {
+                    JotVocabCore.TokenTiming(token: $0.token, confidence: $0.confidence)
+                },
+                // Seam 2/3: the app's package-resource-backed common-words
+                // provider (loud-fails a missing list) + the DiagnosticsLog sink.
+                commonWords: AppVocabCore.commonWords,
+                diagnostics: AppVocabCore.diagnostics,
                 overrides: overrides,
                 termAliases: termAliases,
                 // The common-word guard needs the dictation language so it checks
                 // the right list (an English list can't protect a Spanish word).
-                language: LanguageChoice.current,
+                commonWordsResource: LanguageChoice.current.commonWordsResource,
                 // Full term list for extension-alternate detection (3-option
                 // ask): "Claude" won the span but "Claude Code" also fits.
                 allTerms: vocabulary.terms.map(\.text)
@@ -475,7 +506,7 @@ public actor VocabularyRescorerHolder {
             // transforms (segmenter/filler/number/cleanup) shift the text, and
             // the provenance reconcile absorbs that drift by diffing from here.
             if recordProvenance {
-                await CorrectionProvenance.shared.record(gated.proposals, gatedText: gated.text)
+                await JotVocabCore.CorrectionProvenance.shared.record(gated.proposals, gatedText: gated.text)
             }
             return (gated.text, gated.proposals)
         }

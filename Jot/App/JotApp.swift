@@ -598,18 +598,24 @@ struct JotApp: App {
                         return
                     }
 
-                    // `jot://transcript?id=<uuid>` — keyboard's row-trailing
-                    // "open in app" affordance. Brings the main app to the
-                    // foreground and pushes the transcript detail view for
-                    // the given id. No dictation auto-start. Route via the
-                    // shared router so ContentView's `.onChange` observer
+                    // `jot://transcript?id=<uuid>[&ai=1]` — keyboard's
+                    // row-trailing affordance on a recents row. Brings the main
+                    // app to the foreground and pushes the transcript detail
+                    // view for the given id. No dictation auto-start. Route via
+                    // the shared router so ContentView's `.onChange` observer
                     // appends to `navPath`; same bridge the rewrite handoff
                     // uses, just for a "view" instead of a "rewrite" intent.
+                    //
+                    // `ai=1` (the Apple Intelligence button, features.md §5.2)
+                    // additionally asks the detail view to fire its own Rewrite
+                    // action on arrival, so the user lands on the selected
+                    // transcript / Writing Tools state in one tap.
                     if url.host == "transcript" {
                         if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
                            let idParam = comps.queryItems?.first(where: { $0.name == "id" })?.value,
                            let id = UUID(uuidString: idParam) {
-                            keyboardRewriteRouter.setPendingOpenTranscript(id: id)
+                            let wantsAI = comps.queryItems?.first(where: { $0.name == "ai" })?.value == "1"
+                            keyboardRewriteRouter.setPendingOpenTranscript(id: id, writingTools: wantsAI)
                         }
                         return
                     }

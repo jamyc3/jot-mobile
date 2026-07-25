@@ -3,6 +3,7 @@
 import FluidAudio
 import Foundation
 import JotTextPipeline
+import JotVocabCore
 import Speech
 import UIKit
 import os.log
@@ -1023,21 +1024,20 @@ final class TranscriptionService {
                     }
                 )
             }
-            // English-only text cleanup. FillerWordCleaner (strips English
-            // "um/uh") and NumberNormalizer (English-style inverse text
-            // normalization) are English-oriented regex/lookup passes; running
-            // them on a non-English v3 transcript would mangle it. The Mac app
-            // likewise skips this chain for v3 (it emits clean cased/punctuated
-            // text natively — `jot/features.md §30`). ParagraphSegmenter above is
-            // language-agnostic (pause-based), so it stays for every language.
-            if LanguageChoice.current.isEnglish {
-                // Strip simple filler words AFTER paragraph segmentation so the
-                // removed tokens don't change pause-measurement decisions.
-                transcriptText = FillerWordCleaner.clean(transcriptText)
-                // Normalize spelled numbers to digits (AP-style + idioms +
-                // time-of-day). Runs LAST so it sees the cleaned, segmented text.
-                transcriptText = NumberNormalizer.normalize(transcriptText)
-            }
+            // Language-aware text cleanup — same two-branch shape the Mac app
+            // uses (`Transcriber.applyLanguageCleanup`), so both consumers of
+            // the shared pipeline behave identically:
+            //
+            // - English: fillers + NumberNormalizer (the full chain).
+            // - es/fr/de/it/pt: the shared per-language NON-LEXICAL hesitation
+            //   lists ONLY. NumberNormalizer stays strictly English — its
+            //   spelled-cardinal rules mis-convert Romance output (French
+            //   "six cents" = 600 → "6¢").
+            // - Everything else: untouched (no filler list ships for it).
+            //
+            // ParagraphSegmenter above is language-agnostic (pause-based), so it
+            // stays for every language.
+            transcriptText = Self.applyLanguageCleanup(transcriptText)
             return transcriptText
         } catch {
             let inferenceEndedAt = Date()
@@ -1049,6 +1049,34 @@ final class TranscriptionService {
             signposter.endInterval("transcribe-inference", inferenceInterval)
             throw TranscriptionError.inferenceFailed(error.localizedDescription)
         }
+    }
+
+    /// Language-gated text cleanup, applied AFTER `ParagraphSegmenter` so the
+    /// removed filler tokens can never change pause-measurement decisions.
+    ///
+    /// Single source of truth for both Parakeet paths (batch + live preview) so
+    /// a preview can never show text the saved transcript won't match. The
+    /// branch table mirrors the Mac app's `Transcriber.applyLanguageCleanup`
+    /// exactly — both read `LanguageChoice.fillerLanguageCode` and both consume
+    /// the same shared word lists, so a language behaves identically on iPhone
+    /// and Mac.
+    ///
+    /// The Apple-engine paths (`appleStopPass`, and the Apple-only CJK
+    /// languages) never reach here: Apple emits cased, punctuated text with no
+    /// hesitation-token artifacts to strip, exactly as on the Mac.
+    private static func applyLanguageCleanup(_ text: String) -> String {
+        guard let fillerCode = LanguageChoice.current.fillerLanguageCode else {
+            return text
+        }
+        if fillerCode == "en" {
+            // Strip fillers first, then normalize spelled numbers to digits
+            // (AP-style + idioms + time-of-day) so the normalizer sees the
+            // cleaned, segmented text.
+            return NumberNormalizer.normalize(FillerWordCleaner.clean(text))
+        }
+        // Non-English: hesitation sounds ONLY. NumberNormalizer is deliberately
+        // absent — see `fillerLanguageCode`.
+        return FillerWordCleaner.clean(text, language: fillerCode)
     }
 
     // MARK: - Preview inference (batch-only streaming, Phase 0)
@@ -1309,12 +1337,9 @@ final class TranscriptionService {
                     }
                 )
             }
-            // English-only cleanup (see batch path) — these passes are
-            // English-oriented and would mangle a non-English preview.
-            if LanguageChoice.current.isEnglish {
-                text = FillerWordCleaner.clean(text)
-                text = NumberNormalizer.normalize(text)
-            }
+            // Same language-aware cleanup as the batch path — the preview must
+            // not diverge from the transcript the user ends up with.
+            text = Self.applyLanguageCleanup(text)
             return text
         } catch {
             log.debug("preview transcribe failed — \(error.localizedDescription, privacy: .public)")
