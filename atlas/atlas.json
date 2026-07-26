@@ -356,7 +356,8 @@
             "5.2"
           ],
           "image": "screens/keyboard/kb-recents-idle.png",
-          "captured": true
+          "captured": false,
+          "issue": "Screenshot is stale (captured 2026-06-21, before build 284): the row-trailing control is now the Apple Intelligence / Writing Tools button, not the ↗ open-in-app arrow. The fragment is current — re-shoot on a device running 284+ and set captured back to true."
         },
         {
           "id": "kb-streaming",
