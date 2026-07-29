@@ -3,6 +3,17 @@ set -euo pipefail
 
 # strip-models.sh — Build B ("strip-all") helper.
 #
+# ⚠️ RETIRED 2026-07-26 — no longer part of any build. Release builds now
+# exclude `Resources/Models` declaratively via `EXCLUDED_SOURCE_FILE_NAMES:
+# Models` on the Jot target's Release config (Jot/project.yml), so there is
+# nothing to stash and nothing to restore: Debug keeps the models for local
+# Cmd+R runs, Release never sees them. `testflight.sh` no longer calls this
+# script and asserts the archive is model-free instead.
+#
+# Kept only as a manual escape hatch (e.g. measuring a bundle-free Debug build).
+# If you run it by hand, run `restore` afterwards — an interrupted `stash`
+# leaves your working tree without models until you do.
+#
 # Moves the three bundled model directories out of Jot/Resources/Models so a
 # Release archive ships WITHOUT them (~46 MB app), then restores them so the
 # working tree is never left mutated. The dirs are gitignored and kept locally;

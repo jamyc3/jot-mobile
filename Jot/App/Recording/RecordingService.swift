@@ -717,8 +717,12 @@ final class RecordingService {
             }
         }
 
-        try configureSession()
+        try await configureSession()
 
+        // The engine is constructed only AFTER the session has settled and the
+        // input is genuinely ours. `AVAudioEngine` binds to the input hardware
+        // when its `inputNode` is first touched, so building it while another
+        // app still owns the mic binds it to a route that delivers nothing.
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let hardwareFormat = input.outputFormat(forBus: 0)
@@ -874,6 +878,18 @@ final class RecordingService {
         lastDeliberateSessionSwapAt = Date()
         do {
             try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: [.mixWithOthers])
+            // Re-activate, then WAIT for the hardware — the same two steps the
+            // cold path takes, and for the same reason. This swap previously set
+            // the category and resumed straight into capture, but
+            // `makeWarmIdleSessionMixable` (which performs the INVERSE swap)
+            // already establishes that "a category change alone isn't always
+            // applied to the hardware route until re-activation". Without the
+            // re-activation the session can still be running the mixable route,
+            // leaving the other app on the input; without the wait, the
+            // exclusive interruption hasn't landed yet. Either way the resumed
+            // engine records silence while the user is speaking.
+            try AVAudioSession.sharedInstance().setActive(true, options: [])
+            await awaitExclusiveInput(timeout: Self.exclusiveInputTimeout)
         } catch {
             let ns = error as NSError
             log.error("Warm-resume mixWithOthers restore failed — domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) desc=\(ns.localizedDescription, privacy: .public)")
@@ -1396,6 +1412,17 @@ final class RecordingService {
             // filtered out). The captured AUDIO seconds here is what exposes a
             // cold-start capture miss: a long wall-clock timer but <1s captured →
             // the mic didn't actually deliver frames (the audioTooShort failure).
+            // `capturedSec`/`samples` prove frames ARRIVED; they say nothing
+            // about whether those frames carried SIGNAL. A capture that is
+            // flowing-but-silent passes every gate we have — the channels/
+            // sampleRate preflight and `awaitFirstRoutedBuffer` both check
+            // arrival, not level — and then transcribes to an empty string that
+            // publishes as a "successful" 0-character transcript. `peak` is what
+            // separates "the mic gave us nothing" from "the user said nothing",
+            // and the session fields are what pin WHY (owner repro 2026-07-28:
+            // reproduces while music is playing, or just after it stops).
+            let session = AVAudioSession.sharedInstance()
+            let inputPort = session.currentRoute.inputs.first
             DiagnosticsLog.record(
                 source: "main-app",
                 category: .recordingOutcome,
@@ -1403,6 +1430,9 @@ final class RecordingService {
                 metadata: [
                     "capturedSec": String(format: "%.1f", seconds),
                     "samples": "\(samples.count)",
+                    "peak": String(format: "%.5f", Self.peakAmplitude(samples)),
+                    "otherAudioPlaying": "\(session.isOtherAudioPlaying)",
+                    "inputRoute": inputPort.map { "\($0.portType.rawValue)/\($0.portName)" } ?? "none",
                 ]
             )
             if shouldEnterWarmHold {
@@ -1624,7 +1654,96 @@ final class RecordingService {
 
     // MARK: - Session
 
-    private func configureSession() throws {
+    /// Largest absolute sample value in the capture — the cheapest honest
+    /// answer to "did the microphone actually give us anything?". A take held
+    /// by another app arrives as digital zero; even a silent room has a noise
+    /// floor several orders of magnitude above it.
+    static func peakAmplitude(_ samples: [Float]) -> Float {
+        var peak: Float = 0
+        for sample in samples {
+            let magnitude = abs(sample)
+            if magnitude > peak { peak = magnitude }
+        }
+        return peak
+    }
+
+    /// How long to wait for the audio hardware to actually become ours after
+    /// switching to the exclusive `.record` category. Costs NOTHING in the
+    /// common case (nothing else is playing → the very first check passes).
+    private static let exclusiveInputTimeout: TimeInterval = 0.5
+
+    /// Bounded wait for the microphone to actually become OURS after switching
+    /// to the exclusive `.record` category.
+    ///
+    /// **This is the root cause of "the first recording captures nothing, the
+    /// second works" (owner repro 2026-07-28: while music is playing, or just
+    /// after it stops).**
+    ///
+    /// `setCategory` + `setActive(true)` return as soon as the SESSION is
+    /// configured — they do not wait for the audio HARDWARE. When another app
+    /// is playing, `.record` (an exclusive category — `.mixWithOthers` is a
+    /// no-op on it) has to interrupt that app, and the interruption is
+    /// asynchronous. Until it lands, the input still belongs to the other app,
+    /// and every check we had passes anyway: `AVAudioEngine` starts cleanly,
+    /// the input format reports a valid channel count and sample rate, the tap
+    /// installs, and buffers arrive on schedule — carrying nothing. The user
+    /// speaks into a recording that captured silence.
+    ///
+    /// It works the second time because the FIRST attempt is what forced the
+    /// other app off the hardware. That is the "partial first attempt": we were
+    /// using attempt one to do the acquisition that should have happened before
+    /// we ever started capturing.
+    ///
+    /// `makeWarmIdleSessionMixable` documents the same hazard from the other
+    /// direction — "a category change alone isn't always applied to the
+    /// hardware route until re-activation".
+    ///
+    /// Fails OPEN: on timeout we start anyway rather than refuse to record. The
+    /// downstream no-audio guard then reports it honestly instead of publishing
+    /// an empty transcript, and the diagnostic below says which case fired.
+    private func awaitExclusiveInput(timeout: TimeInterval) async {
+        let session = AVAudioSession.sharedInstance()
+        let startedAt = Date()
+        var polls = 0
+        while Date().timeIntervalSince(startedAt) < timeout {
+            // `.record` is exclusive, so once the previously-playing app has
+            // genuinely yielded the hardware this reads false. While it is
+            // still true, the interruption is in flight and the input is not
+            // ours — starting the engine here is what produced empty buffers.
+            if !session.isOtherAudioPlaying,
+                session.isInputAvailable,
+                !session.currentRoute.inputs.isEmpty {
+                if polls > 0 {
+                    let waitedMS = Int(Date().timeIntervalSince(startedAt) * 1000)
+                    log.info("Input became exclusive after \(waitedMS, privacy: .public)ms — would have captured silence before this")
+                    DiagnosticsLog.record(
+                        source: "main-app",
+                        category: .recordingOutcome,
+                        message: "waited for exclusive mic",
+                        metadata: ["waitedMS": "\(waitedMS)", "polls": "\(polls)"]
+                    )
+                }
+                return
+            }
+            polls += 1
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        log.error(
+            "Input never became exclusive within \(timeout, privacy: .public)s — otherAudioPlaying=\(session.isOtherAudioPlaying, privacy: .public) inputAvailable=\(session.isInputAvailable, privacy: .public); starting anyway"
+        )
+        DiagnosticsLog.record(
+            source: "main-app",
+            category: .recordingOutcome,
+            message: "exclusive mic wait TIMED OUT — capture may be empty",
+            metadata: [
+                "otherAudioPlaying": "\(session.isOtherAudioPlaying)",
+                "inputAvailable": "\(session.isInputAvailable)",
+                "inputs": "\(session.currentRoute.inputs.map(\.portType.rawValue).joined(separator: ","))",
+            ]
+        )
+    }
+
+    private func configureSession() async throws {
         let session = AVAudioSession.sharedInstance()
         priorCategory = session.category
         priorMode = session.mode
@@ -1656,6 +1775,8 @@ final class RecordingService {
             log.info("configureSession — setCategory OK; now calling setActive(true)")
             try session.setActive(true, options: [])
             log.info("configureSession — setActive(true) OK")
+            // The hardware is NOT ours yet. See `awaitExclusiveInput`.
+            await awaitExclusiveInput(timeout: Self.exclusiveInputTimeout)
         } catch {
             // Explicit NSError diagnostics. `privacy: .public` so the actual
             // domain + code + description survive syslog privacy filtering —

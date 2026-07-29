@@ -181,26 +181,29 @@ elif [[ -n "${APP_STORE_CONNECT_USERNAME:-}" || -n "${APP_STORE_CONNECT_PASSWORD
 fi
 
 archive() {
-  # Models are NOT shipped in the app bundle by default. Since build 258 the
-  # on-device models (Parakeet 600M v2, CTC 110M scorer, EmbeddingGemma) live in
-  # shared Application Support — put there by the one-time carry-forward build
+  # Models are NOT shipped in the app bundle. Since build 258 the on-device
+  # models (Parakeet 600M v2, CTC 110M scorer, EmbeddingGemma) live in shared
+  # Application Support — put there by the one-time carry-forward build
   # (256/257) for existing users, downloaded on demand for fresh installs — so
-  # bundling them in the IPA is ~900 MB of dead weight. `strip-models.sh` moves
-  # the gitignored model dirs aside for the archive and restores them after
-  # (also on failure, via the EXIT trap). The gitignored dirs stay on disk.
+  # bundling them would add ~870 MB of dead weight to the IPA.
   #
-  # Escape hatch: set JOT_SHIP_MODELS=1 to bundle them — ONLY for re-cutting the
-  # bundled carry-forward build. Do NOT promote a stripped build to the App Store
-  # until the bundled carry-forward build (256/257) has shipped and soaked
-  # (docs/plans/model-externalization-sub-50mb.md; memory v2-strip-release-sequencing).
-  local models_stripped=0
+  # Nothing to do here: `EXCLUDED_SOURCE_FILE_NAMES: Models` on the Jot target's
+  # RELEASE config (Jot/project.yml) keeps the `Resources/Models` folder
+  # reference out of every Release build, while Debug keeps it so a local Cmd+R
+  # install works with no download. This replaced `scripts/strip-models.sh`,
+  # which moved the dirs aside mid-build and restored them after — correct when
+  # it ran, but it mutated the working tree and silently shipped an 807 MB IPA
+  # if it was ever skipped (as `bootstrap-testflight.local.sh` did).
+  #
+  # Escape hatch: JOT_SHIP_MODELS=1 clears the exclusion for this build — ONLY
+  # for re-cutting the bundled carry-forward build. Do NOT promote a stripped
+  # build to the App Store until the bundled carry-forward build (256/257) has
+  # shipped and soaked (docs/plans/model-externalization-sub-50mb.md; memory
+  # v2-strip-release-sequencing).
+  local model_args=()
   if [[ "${JOT_SHIP_MODELS:-0}" == "1" ]]; then
-    echo "JOT_SHIP_MODELS=1 — bundling on-device models into the app (large build)."
-  else
-    echo "Stripping bundled models (default; set JOT_SHIP_MODELS=1 to bundle)."
-    bash "$repo_root/scripts/strip-models.sh" stash
-    models_stripped=1
-    trap 'bash "$repo_root/scripts/strip-models.sh" restore' EXIT
+    echo "JOT_SHIP_MODELS=1 — bundling on-device models into the app (~870 MB larger)."
+    model_args=(EXCLUDED_SOURCE_FILE_NAMES=)
   fi
 
   bash "$repo_root/build.sh"
@@ -214,16 +217,19 @@ archive() {
     -archivePath "$archive_path" \
     -allowProvisioningUpdates \
     ${xcode_auth_args[@]+"${xcode_auth_args[@]}"} \
+    ${model_args[@]+"${model_args[@]}"} \
     DEVELOPMENT_TEAM="$team_id" \
     MARKETING_VERSION="$marketing_version" \
     CURRENT_PROJECT_VERSION="$build_number" \
     archive
 
-  # Archive done — the .xcarchive already holds the app, so restore the working
-  # tree now (export/upload operate on the archive, not the source).
-  if [[ "$models_stripped" == "1" ]]; then
-    bash "$repo_root/scripts/strip-models.sh" restore
-    trap - EXIT
+  # Guard: the whole point of the exclusion is that a shipping archive can never
+  # carry the models. Fail loudly rather than upload an 870 MB IPA by accident.
+  local archived_app
+  archived_app="$archive_path/Products/Applications/Jot.app"
+  if [[ "${JOT_SHIP_MODELS:-0}" != "1" && -d "$archived_app/Models" ]]; then
+    echo "error: archive contains Models/ — the Release exclusion did not apply." >&2
+    exit 1
   fi
 }
 

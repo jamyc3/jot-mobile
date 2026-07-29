@@ -127,6 +127,25 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// Primary language subtag for `VocabularyCorrector` (the model-free
+    /// vocabulary corrector), or `nil` when no frequency list ships.
+    ///
+    /// DERIVED from `commonWordsResource` on purpose: the corrector's safety
+    /// rests entirely on the common-word brake, so the code it is served under
+    /// and the list that brakes it must be the same decision. Two hand-written
+    /// tables would eventually disagree, and the failure mode is a language
+    /// running with the brake pointed at the wrong list.
+    ///
+    /// Being non-nil is NOT permission to run — `VocabularyCorrector.isServed`
+    /// still has to clear the code against its measured table, which is what
+    /// keeps Croatian/Serbian/Bosnian (they share the `sr` list), Slovenian and
+    /// Belarusian off. Fail closed.
+    var correctorLanguageCode: String? {
+        guard let resource = commonWordsResource else { return nil }
+        guard resource != "common-words" else { return "en" }
+        return String(resource.dropFirst("common-words-".count))
+    }
+
     /// The language code handed to `FillerWordCleaner.clean(_:language:)`, or
     /// `nil` for languages whose transcripts must not be filler-cleaned at all.
     ///

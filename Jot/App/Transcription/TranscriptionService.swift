@@ -42,6 +42,7 @@ final class TranscriptionService {
     enum TranscriptionError: LocalizedError {
         case busy
         case audioTooShort
+        case noAudioCaptured
         case loadFailed(String)
         case inferenceFailed(String)
         case audioFileUnreadable(String)
@@ -51,6 +52,11 @@ final class TranscriptionService {
             switch self {
             case .busy: return "A transcription is already in progress."
             case .audioTooShort: return "Recording is under one second — Parakeet needs at least 1 s of audio."
+            // Blames JOT, not the user. The owner hit this WHILE SPEAKING
+            // (2026-07-28) — the mic delivered nothing, which is our failure to
+            // capture, not their failure to talk. Any wording like "no sound
+            // was detected" reads as "you were silent" and is simply false here.
+            case .noAudioCaptured: return "Jot couldn't capture any audio. Another app may have had the microphone — please try again."
             case .loadFailed(let summary): return "Model load failed: \(summary)"
             case .inferenceFailed(let summary): return "Transcription failed: \(summary)"
             case .audioFileUnreadable(let summary): return "Could not read the audio file: \(summary)"
@@ -58,6 +64,13 @@ final class TranscriptionService {
             }
         }
     }
+
+    /// Peak amplitude below which a capture is treated as carrying no signal at
+    /// all (≈ −80 dBFS). A microphone that is genuinely recording never produces
+    /// a whole take this quiet — an input held by another process arrives as
+    /// digital zero — so this separates "the mic gave us nothing" from "the user
+    /// was quiet" without risking the latter.
+    private static let noAudioCapturedPeakThreshold: Float = 1e-4
 
     /// Process-wide singleton.
     ///
@@ -854,6 +867,53 @@ final class TranscriptionService {
         log.info(
             "Parakeet inference begin — source=\(label, privacy: .public) startedAt=\(Self.timestamp(inferenceStartedAt), privacy: .public) audioDurationS=\(audioDurationSeconds, privacy: .public) sampleCount=\(samples.count, privacy: .public)"
         )
+
+        // ── No-audio-captured guard (owner repro 2026-07-28: music playing, or
+        // just finished; first dictation yields nothing, the second works).
+        //
+        // NOT "the user was silent" — the owner was SPEAKING throughout. Jot
+        // failed to capture. Warm-idle holds the session as `.playAndRecord`
+        // + `.mixWithOthers` so other apps' audio isn't blocked, and capture
+        // swaps it to `.record`; that swap is asynchronous at the hardware
+        // layer, and we begin capturing immediately. The buffers that come back
+        // are real buffers carrying nothing.
+        //
+        // The capture gates upstream all test ARRIVAL, never LEVEL: the
+        // channels/sampleRate preflight runs once before any audio flows, and
+        // `awaitFirstRoutedBuffer` resolves on the first buffer regardless of
+        // what is in it. So when the input is handed to us dead — another app
+        // holding it, or a route still settling after other audio stopped —
+        // frames flow, every gate passes, and the engine faithfully transcribes
+        // silence to "". That empty string was then PUBLISHED as a successful
+        // transcript (`chars=0`), the keyboard flushed with nothing to paste,
+        // and the user got no error and no text: a whole dictation lost with no
+        // indication anything went wrong.
+        //
+        // An empty result from silent audio is a CAPTURE failure, not a
+        // transcription result, so it is surfaced as one. The threshold is
+        // deliberately far below any real microphone's noise floor — a silent
+        // room still reads orders of magnitude above it — so this cannot fail a
+        // genuinely quiet dictation. `peak` is recorded on every capture
+        // (`recordingOutcome`) so the real distribution is visible if it ever
+        // needs revisiting.
+        let peak = RecordingService.peakAmplitude(samples)
+        if peak < Self.noAudioCapturedPeakThreshold {
+            log.error(
+                "Silent capture — peak=\(peak, privacy: .public) over \(samples.count, privacy: .public) samples; failing instead of publishing an empty transcript"
+            )
+            DiagnosticsLog.record(
+                source: "main-app",
+                category: .recordingOutcome,
+                message: "silent capture — no signal reached the mic",
+                metadata: [
+                    "peak": String(format: "%.6f", peak),
+                    "samples": "\(samples.count)",
+                    "audioDurationS": String(format: "%.1f", audioDurationSeconds),
+                ]
+            )
+            signposter.endInterval("transcribe-inference", inferenceInterval)
+            throw TranscriptionError.noAudioCaptured
+        }
         do {
             // ── Concurrency: overlap the expensive CTC keyword-spot pass
             // with the TDT transcribe. The spot consumes ONLY the audio
@@ -976,6 +1036,10 @@ final class TranscriptionService {
             // runs only when both vocab is enabled AND timings are present —
             // byte-identical gating to the old serial `rescore` call.
             let resolvedSpot = await spotResult
+            // Did the ACOUSTIC path engage at all? Drives the model-free
+            // corrector fallback below — it must never second-guess a run the
+            // CTC spotter already had an opinion about.
+            var acousticProposals = 0
             if VocabularyStore.shared.isEnabled,
                 let timings = result.tokenTimings,
                 resolvedSpot != nil {
@@ -996,10 +1060,77 @@ final class TranscriptionService {
                 // Outer nil = merge timed out; inner nil = rescorer not ready.
                 if let merged, let rescored = merged {
                     transcriptText = rescored.text
+                    acousticProposals = rescored.proposals.count
                 } else if merged == nil {
                     self.log.error(
                         "vocabulary merge timed out after \(Self.vocabMergeTimeoutSeconds, privacy: .public)s; publishing raw transcript"
                     )
+                }
+            }
+
+            // ── Model-free vocabulary corrector (jot-shared §1) — FALLBACK ONLY.
+            //
+            // The acoustic scorer is `parakeet-ctc-110m`, which is
+            // English/Latin-trained (see `LanguageChoice.isVocabEligible`), and
+            // it is a ~99 MB on-demand download. So for most languages, and for
+            // EVERY user who hasn't fetched the model yet, the acoustic path
+            // above contributes nothing and the user's terms are silently inert.
+            //
+            // This pass fuzzy-matches the decoded text against those terms
+            // instead — no model, no download. Measured: recovers 34.1% of the
+            // terms the engine got wrong at 0.27 false applies/1000 words, and
+            // for a language with no acoustic checkpoint that is 0% → ~35%.
+            //
+            // It runs ONLY when the acoustic path produced no proposals at all.
+            // The spec is explicit that the acoustic path is preferred wherever
+            // the checkpoint is present, so English-with-the-model keeps exactly
+            // today's behaviour and this can only add where there was nothing.
+            //
+            // Gating, all four required: the master toggle, the existing
+            // per-language eligibility flag (CJK/LatAm-Spanish stay off — not
+            // silently flipped here), a frequency list for the language, and the
+            // corrector's OWN measured table, which fails closed on anything it
+            // has no measurement for.
+            if acousticProposals == 0,
+                VocabularyStore.shared.isEnabled,
+                LanguageChoice.current.isVocabEligible,
+                let correctorLanguage = LanguageChoice.current.correctorLanguageCode,
+                JotVocabCore.VocabularyCorrector.isServed(correctorLanguage) {
+                let terms = VocabularyStore.shared.terms
+                if !terms.isEmpty {
+                    let textForCorrector = transcriptText
+                    let overrides = await JotVocabCore.CorrectionStore.shared.snapshot()
+                    // Bounded + non-fatal, exactly like the merge above: a wedged
+                    // store actor can never block the publish.
+                    let corrected = await withTimeout(seconds: Self.vocabMergeTimeoutSeconds) {
+                        JotVocabCore.VocabularyCorrector.correct(
+                            transcript: textForCorrector,
+                            terms: terms,
+                            language: correctorLanguage,
+                            commonWords: AppVocabCore.commonWords,
+                            overrides: overrides,
+                            diagnostics: AppVocabCore.diagnostics)
+                    }
+                    if let corrected, !corrected.proposals.isEmpty {
+                        transcriptText = corrected.text
+                        DiagnosticsLog.record(
+                            source: "main-app",
+                            category: .vocabularyGate,
+                            message: "model-free corrector ran",
+                            metadata: [
+                                "language": correctorLanguage,
+                                "applied": "\(corrected.applied)",
+                                "proposals": "\(corrected.proposals.count)",
+                            ]
+                        )
+                        // Same provenance contract as the acoustic path: the
+                        // corrector's output text is the anchor baseline its
+                        // publishedStart offsets are valid for, and recording
+                        // here is what lets the keyboard's review cards and the
+                        // transcript review surface these corrections.
+                        await JotVocabCore.CorrectionProvenance.shared.record(
+                            corrected.proposals, gatedText: corrected.text)
+                    }
                 }
             }
 
@@ -2324,6 +2455,7 @@ extension TranscriptionService.TranscriptionError: CustomNSError {
     /// - 3: `inferenceFailed`
     /// - 4: `audioFileUnreadable`
     /// - 5: `audioFileConversionFailed`
+    /// - 6: `noAudioCaptured`
     public var errorCode: Int {
         switch self {
         case .busy: return 0
@@ -2332,6 +2464,9 @@ extension TranscriptionService.TranscriptionError: CustomNSError {
         case .inferenceFailed: return 3
         case .audioFileUnreadable: return 4
         case .audioFileConversionFailed: return 5
+        // APPENDED, never renumbered — the table above is a public contract
+        // referenced by logs and bug reports.
+        case .noAudioCaptured: return 6
         }
     }
 
@@ -2350,6 +2485,8 @@ extension TranscriptionService.TranscriptionError: CustomLocalizedStringResource
             return "Jot is already transcribing. Wait for the current transcription to finish, then try again."
         case .audioTooShort:
             return "Recording is under one second. Parakeet needs at least 1 second of audio."
+        case .noAudioCaptured:
+            return "Jot couldn't capture any audio. Another app may have had the microphone — please try again."
         case .loadFailed(let summary):
             return "Model not ready: \(summary)"
         case .inferenceFailed(let summary):

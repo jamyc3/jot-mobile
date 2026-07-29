@@ -340,6 +340,21 @@ targets:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG JOT_APP_HOST
         Release:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: JOT_APP_HOST
+          # The `Resources/Models` folder reference (~870 MB of CoreML weights)
+          # is a DEV SEED, not the models' home: `ModelCarryForward` copies them
+          # into Application Support on first launch and every loader reads from
+          # there. Shipping builds must not carry them — since build 258 the
+          # models arrive by carry-forward (existing users) or on-demand
+          # download (fresh installs), so bundling is pure dead weight and the
+          # App Store download would be ~807 MB instead of ~43 MB.
+          #
+          # Excluding them HERE, per configuration, is what makes that
+          # automatic: Debug keeps the seed (Cmd+R gives a fully-working app
+          # with no download), Release never sees it. This replaces the old
+          # `scripts/strip-models.sh` stash/restore dance, which mutated the
+          # working tree mid-build and shipped an 807 MB IPA if it was skipped.
+          # See docs/plans/model-externalization-sub-50mb.md.
+          EXCLUDED_SOURCE_FILE_NAMES: Models
 
   JotKeyboard:
     type: app-extension
