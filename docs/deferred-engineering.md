@@ -365,3 +365,57 @@ bundled v2; European is v3); the two legacy App-Support sweeps now compute their
 `sweepLegacyAppSupportWeights` are untouched.
 
 ---
+## 9. Verify the §7 casing fix on a real device (committed, NOT verified)
+
+**Why this is here.** The vocabulary CTC scorer (`parakeet-ctc-110m`) is a
+punctuation-and-capitalisation checkpoint, so token ids differ by casing. Verified against the
+bundled vocab itself (1024 tokens, 94 of them uppercase, plus sentence punctuation):
+
+```
+"OKTA"   -> ▁O K T A          "Okta" -> ▁O k t a          "okta" -> ▁o k t a
+"AWS"    -> ▁A W S            "NVIDIA" -> ▁N V I D I A
+```
+
+Three different id sequences for one word. The bare-uppercase letters exist in the vocab, but a
+P&C model renders letters lowercase mid-word and essentially never EMITS that run — so a term
+typed ALL CAPS is searched for as a sequence the model never produces. The Windows port measured
+this end to end: as-emitted 100%, all-lowercase 97%, **Title Case 68%, ALL CAPS 0%** — silently,
+with the UI still badging the term as valid. ALL CAPS is exactly the initialisms a vocabulary
+feature exists for.
+
+**What shipped.** `VocabularyRescorerHolder.casingSurfaces(for:)` feeds extra casing forms as
+FEED-TIME aliases (lowercase + Title Case, ≤2 extra per surface). The user's `vocabulary.txt` is
+never rewritten and the term's own spelling is still what gets pasted — casing must NEVER be
+normalized at input. The casing pass deliberately runs BEFORE the multi-word guard in
+`enrichedAliases`, which used to return early and skip single-word terms — i.e. skip `OKTA` and
+`AWS`, the whole point. Dedup there is ordinal, not case-insensitive, or the variants collapse and
+the 0%-recall bug silently returns.
+
+**What is NOT done — the reason for this entry.** Compile-verified only. Nobody has confirmed on
+a device that an ALL-CAPS term actually gets recognised now. Specifically unverified:
+
+1. **Recall actually improves.** Add `OKTA` (or `AWS`) as a term, say it, confirm the acoustic
+   path corrects it. Before the fix this was ~0%.
+2. **No new false applies.** More search surfaces = more chances to match. Watch the
+   `vocabularyGate` diagnostics for terms firing where they shouldn't.
+3. **Cost.** Windows measured 20.5 -> 73.7 ms of DP on 200 terms for their ≤5-form budget. Ours
+   adds ≤2 forms per surface, but the spot pass is already the slowest part of a dictation and
+   runs under a timeout scaled to audio length — confirm long dictations with big term lists do
+   not start losing the spot to that timeout.
+4. **Whether Title Case is worth keeping.** It measured 68% upstream. If it contributes nothing
+   here, dropping it halves the added surfaces.
+
+The model-free corrector (features.md §8.9) already rescues these terms case-insensitively, so
+the user-visible damage is capped meanwhile — which is precisely why this could be deferred
+rather than blocking.
+
+**Trigger to pull this forward.** Any report of a saved term not being recognised where the term
+is an initialism or otherwise unusually cased; or the next time the vocabulary spot pass is
+touched for any reason (verify in the same pass).
+
+**Estimated size.** An hour of device testing, not engineering. The code is written.
+
+**Status.** ⏳ Committed unverified 2026-07-29 at the owner's direction ("commit it for now we
+will visit it later"). Not yet in any TestFlight build.
+
+---

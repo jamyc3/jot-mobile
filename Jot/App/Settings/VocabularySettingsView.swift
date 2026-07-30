@@ -185,7 +185,10 @@ struct VocabularySettingsView: View {
         switch boostModelStatus {
         case .ready:         return "Boost model ready"
         case .downloading:   return "Downloading boost model…"
-        case .notDownloaded: return "Boost model not downloaded"
+        // NOT "not downloaded" as a bare negative — terms ARE being corrected
+        // without it now (features.md §8.9). The old label read as "this feature
+        // is off", which is no longer true.
+        case .notDownloaded: return "Terms working — boost model not downloaded"
         case .failed(let m): return "Boost unavailable — \(m)"
         }
     }
@@ -206,11 +209,16 @@ struct VocabularySettingsView: View {
         case .notDownloaded:
             // On a stripped build (or after an iCloud restore, which excludes
             // the model from backup) the scorer downloads once, on demand — it
-            // is NOT bundled anymore. Everything else in Jot works meanwhile;
-            // only vocabulary boosting waits on this ~99 MB download.
-            return "Vocabulary boosting needs a one-time ~99 MB model download. The rest of Jot works without it."
+            // is NOT bundled anymore.
+            //
+            // Boosting NO LONGER WAITS on it (features.md §8.9): terms are
+            // matched against the finished transcript with no model at all. The
+            // previous copy — "Vocabulary boosting needs a one-time ~99 MB model
+            // download" — became false the moment that shipped, and it told the
+            // user the feature was dead while it was in fact working.
+            return "Your terms are already being corrected. This one-time ~99 MB download also lets Jot recognise them while it listens, which catches more."
         case .failed:
-            return "The rest of Jot keeps working — only vocabulary boosting needs this model. Retry below; if it still fails, check your internet."
+            return "Your terms are still being corrected without this model — it only adds recognition while Jot listens. Retry below; if it still fails, check your internet."
         }
     }
 

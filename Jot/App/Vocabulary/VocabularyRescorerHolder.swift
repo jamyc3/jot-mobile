@@ -278,15 +278,78 @@ public actor VocabularyRescorerHolder {
     /// normalized "ramaanathan") that scores ~0.9 against any merged rendering.
     /// Injected at FEED time only — the user's vocabulary.txt is never rewritten.
     static func enrichedAliases(text: String, aliases: [String]?) -> [String]? {
-        let words = text.split(separator: " ")
-        guard words.count > 1 else { return aliases }
-        let merged = words.joined()
         var out = aliases ?? []
+
+        // §7 CASING — applies to EVERY term, single-word included. "OKTA",
+        // "AWS", "NVIDIA" are single words and are precisely the cases that
+        // scored 0%. This MUST run before the multi-word guard below, which
+        // used to return early and skip single-word terms entirely.
+        for surface in [text] + (aliases ?? []) {
+            for variant in Self.casingSurfaces(for: surface) {
+                // EXACT (ordinal) dedup — deliberately NOT the case-insensitive
+                // compare used for the merged form below. A case-insensitive
+                // check would collapse the very variants being added here and
+                // silently restore the 0%-recall bug.
+                if !out.contains(variant) { out.append(variant) }
+            }
+        }
+
+        let words = text.split(separator: " ")
+        guard words.count > 1 else { return out.isEmpty ? nil : out }
+        let merged = words.joined()
         let mergedLower = merged.lowercased()
         if !out.contains(where: { $0.lowercased() == mergedLower }) {
             out.append(merged)
         }
+        // Lowercase merged form too, for the same reason as above: the model
+        // renders most words lowercase mid-sentence.
+        if !out.contains(mergedLower) { out.append(mergedLower) }
         return out.isEmpty ? nil : out
+    }
+
+    /// **§7 — extra CASING forms to search for a given surface.**
+    ///
+    /// The CTC scorer is a punctuation-and-capitalisation checkpoint, so token
+    /// ids differ by casing. VERIFIED against our OWN bundled vocab
+    /// (`parakeet-ctc-110m`: 1024 tokens, 94 of them uppercase, plus sentence
+    /// punctuation — so it is the same class of model Windows measured):
+    ///
+    ///     "OKTA" → ▁O K T A        "Okta" → ▁O k t a        "okta" → ▁o k t a
+    ///     "AWS"  → ▁A W S          "NVIDIA" → ▁N V I D I A
+    ///
+    /// Three different id sequences for one word. The bare-uppercase letters do
+    /// exist in the vocab, but a P&C model renders letters lowercase mid-word
+    /// and will essentially never EMIT that run — so a term typed ALL CAPS is
+    /// searched for as a sequence the model never produces. Recall is ~0, with
+    /// no error and a UI badge still calling the term valid. Windows measured
+    /// as-emitted 100%, all-lowercase 97%, **Title Case 68%, ALL CAPS 0%** —
+    /// counter-intuitively lowercase is nearly harmless, and the killers are
+    /// exactly the initialisms a vocabulary feature exists for.
+    ///
+    /// So: search several forms, let the best-scoring occurrence win, and report
+    /// the user's own spelling. As-typed is always searched (it is the term
+    /// itself), so nothing can regress. Casing is NEVER normalized at input —
+    /// the term's spelling is what gets pasted into the user's text — which is
+    /// why these are injected as FEED-TIME aliases and `vocabulary.txt` is left
+    /// alone.
+    ///
+    /// Kept to ≤2 extra forms per surface (well inside the ~5-form / 12-query
+    /// per-term budget Windows used; their cost was 20.5 → 73.7 ms of DP on 200
+    /// terms). Note the model-free corrector is unaffected either way — it
+    /// matches on case-insensitive skeletons, so it already rescues these terms.
+    static func casingSurfaces(for text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        var out: [String] = []
+        let lower = text.lowercased()
+        if lower != text { out.append(lower) }
+        let title = text.split(separator: " ", omittingEmptySubsequences: false)
+            .map { word -> String in
+                guard let first = word.first else { return String(word) }
+                return first.uppercased() + word.dropFirst().lowercased()
+            }
+            .joined(separator: " ")
+        if title != text, title != lower { out.append(title) }
+        return out
     }
 
     /// Run the rescorer over a TDT-produced transcript. Returns the

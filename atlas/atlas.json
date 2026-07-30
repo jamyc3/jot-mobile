@@ -1,7 +1,7 @@
 {
   "app": "Jot",
   "generatedFrom": "Jot/features.md",
-  "note": "Join table between features.md sections and the visual mockup. Each screen lists the feature sections it demonstrates, its screenshot slot, and behavior/dimension annotations. captured:false => slot still needs a real screenshot. Dimensions come from JotDesign tokens (the real source of truth) \u2014 never hand-typed guesses.",
+  "note": "Join table between features.md sections and the visual mockup. Each screen lists the feature sections it demonstrates, its screenshot slot, and behavior/dimension annotations. captured:false => slot still needs a real screenshot. Dimensions come from JotDesign tokens (the real source of truth) — never hand-typed guesses.",
   "surfaces": [
     {
       "id": "1-home",
@@ -93,7 +93,7 @@
           ],
           "image": "",
           "captured": false,
-          "target": "One-time centered home popup shown once cumulative dictation crosses ~1 hour \u2014 same quiet-reminder style as the donation prompt, but never re-fires. \"Get Jot for Mac\" opens the Jot for Mac screen; \"Not now\" retires it for good."
+          "target": "One-time centered home popup shown once cumulative dictation crosses ~1 hour — same quiet-reminder style as the donation prompt, but never re-fires. \"Get Jot for Mac\" opens the Jot for Mac screen; \"Not now\" retires it for good."
         }
       ]
     },
@@ -189,7 +189,7 @@
           ],
           "image": "screens/ios/detail-speakers.png",
           "captured": false,
-          "behavior": "Speaker Notes (build 256). A multi-voice recording (headline case: a call recording shared in from another app) is split into per-speaker turns. A third Speakers tab joins Original/Rewrite only when a diarization result is persisted (V9 diarizationJSON). Each turn = label + m:ss\u2013m:ss range + selectable text; 'You' (owner, auto-recognized from past solo recordings) is accent-tinted, others are 'Speaker N' in first-appearance order. Read-only tab (Edit disabled). Run manually via the \u22ef overflow (Detect speakers), or automatically on shared-in audio."
+          "behavior": "Speaker Notes (build 256). A multi-voice recording (headline case: a call recording shared in from another app) is split into per-speaker turns. A third Speakers tab joins Original/Rewrite only when a diarization result is persisted (V9 diarizationJSON). Each turn = label + m:ss–m:ss range + selectable text; 'You' (owner, auto-recognized from past solo recordings) is accent-tinted, others are 'Speaker N' in first-appearance order. Read-only tab (Edit disabled). Run manually via the ⋯ overflow (Detect speakers), or automatically on shared-in audio."
         },
         {
           "id": "detail-action-bar",
@@ -199,7 +199,7 @@
           ],
           "image": "screens/ios/detail-action-bar.png",
           "captured": false,
-          "target": "PROPOSED: the primary action is renamed **Articulate \u2192 Rewrite**. The bar = Delete \u00b7 Edit \u00b7 Rewrite \u00b7 Copy; tapping Rewrite opens the prompt picker (now incl. Translate)."
+          "target": "PROPOSED: the primary action is renamed **Articulate → Rewrite**. The bar = Delete · Edit · Rewrite · Copy; tapping Rewrite opens the prompt picker (now incl. Translate)."
         },
         {
           "id": "detail-rewrite-progress",
@@ -237,7 +237,7 @@
           ],
           "image": "screens/ios/detail-translate.png",
           "captured": false,
-          "target": "PROPOSED, not built. Entry: action bar **Rewrite** (renamed from Articulate) \u2192 the Rewrite picker has a **Translate** option \u2192 opens THIS ephemeral sheet: language chips / More\u2026 \u2192 instant on-device translation (Apple Translation, already wired) \u2192 Copy / Share, nothing saved. Approve this and the picker/action-bar mockups, then build."
+          "target": "PROPOSED, not built. Entry: action bar **Rewrite** (renamed from Articulate) → the Rewrite picker has a **Translate** option → opens THIS ephemeral sheet: language chips / More… → instant on-device translation (Apple Translation, already wired) → Copy / Share, nothing saved. Approve this and the picker/action-bar mockups, then build."
         },
         {
           "id": "detail-find-replace",
@@ -395,7 +395,7 @@
           ],
           "image": "screens/keyboard/kb-actions-dense.png",
           "captured": false,
-          "target": "Denser \u2022\u2022\u2022 grid: 4\u00d72 = 8 smaller tiles. Row 1 (colored features): Add to Vocabulary \u00b7 AI Rewrite \u00b7 Translate \u00b7 Close. Row 2 (monochrome edit): Copy \u00b7 Paste \u00b7 Undo \u00b7 Redo. Brings back the edit actions; still fills the short pane with no scroll."
+          "target": "Denser ••• grid: 4×2 = 8 smaller tiles. Row 1 (colored features): Add to Vocabulary · AI Rewrite · Translate · Close. Row 2 (monochrome edit): Copy · Paste · Undo · Redo. Brings back the edit actions; still fills the short pane with no scroll."
         },
         {
           "id": "kb-translate",
@@ -406,7 +406,7 @@
           ],
           "image": "screens/keyboard/kb-translate.png",
           "captured": false,
-          "target": "Keyboard \u2022\u2022\u2022 \u2192 Translate = a guide (like AI Rewrite): teaches the system Translate (select \u2192 Translate menu \u2192 replaces in place). Keyboard can't link the Translation framework, so no engine here."
+          "target": "Keyboard ••• → Translate = a guide (like AI Rewrite): teaches the system Translate (select → Translate menu → replaces in place). Keyboard can't link the Translation framework, so no engine here."
         },
         {
           "id": "kb-status-banner",
@@ -416,7 +416,7 @@
           ],
           "image": "screens/keyboard/kb-status-banner.png",
           "captured": false,
-          "issue": "Adding a word to Vocabulary shows the SUCCESS confirmation (\u201cAdded \u2018\u2026\u2019 to your dictionary\u201d) in the RED error banner with an \u2715 icon, floating over the recents pane \u2014 should be success/green. It also does not appear instantly: it only surfaces after a follow-up action (e.g. pressing Enter).",
+          "issue": "Adding a word to Vocabulary shows the SUCCESS confirmation (“Added ‘…’ to your dictionary”) in the RED error banner with an ✕ icon, floating over the recents pane — should be success/green. It also does not appear instantly: it only surfaces after a follow-up action (e.g. pressing Enter).",
           "bug": "keyboard-vocab-banner"
         },
         {
@@ -467,7 +467,7 @@
           ],
           "image": "screens/keyboard/kb-upgrade-nudge.png",
           "captured": false,
-          "target": "One-time keyboard nudge after 5 dictations on Apple's default engine in a language Jot's own engine can actually run (never the 4 CJK languages or Latin-American Spanish, which are Apple-only), on a Parakeet-capable device (iPhone 14 Pro+ / iPad M1+, i.e. parakeetUsable): a Liquid-Glass strip in the top-strip slot \u2014 \"More accurate dictation available. Switch to Jot's own on-device engine.\" with Switch (deep-links to the upgrade sheet) / Not now (permanent decline). Twin of the warm-hold nudge; never co-shows with it."
+          "target": "One-time keyboard nudge after 5 dictations on Apple's default engine in a language Jot's own engine can actually run (never the 4 CJK languages or Latin-American Spanish, which are Apple-only), on a Parakeet-capable device (iPhone 14 Pro+ / iPad M1+, i.e. parakeetUsable): a Liquid-Glass strip in the top-strip slot — \"More accurate dictation available. Switch to Jot's own on-device engine.\" with Switch (deep-links to the upgrade sheet) / Not now (permanent decline). Twin of the warm-hold nudge; never co-shows with it."
         },
         {
           "id": "kb-vocab-nudge",
@@ -477,7 +477,7 @@
           ],
           "image": "screens/keyboard/kb-vocab-nudge.png",
           "captured": false,
-          "target": "One-time keyboard nudge when Vocabulary Boost is off and the user is high-intent (added custom terms that are going unused) or engaged (5+ dictations): a Liquid-Glass strip in the top-strip slot \u2014 \"Get names & jargon spelled right. Turn on Vocabulary so Jot learns your words.\" with Set up (deep-links to the Vocabulary screen; nothing auto-enables) / Not now (permanent decline). Sibling of the warm-hold + engine-upgrade nudges: priority warm-hold \u203a vocab \u203a Parakeet, only one shows at a time, and a quiet day separates any two."
+          "target": "One-time keyboard nudge when Vocabulary Boost is off and the user is high-intent (added custom terms that are going unused) or engaged (5+ dictations): a Liquid-Glass strip in the top-strip slot — \"Get names & jargon spelled right. Turn on Vocabulary so Jot learns your words.\" with Set up (deep-links to the Vocabulary screen; nothing auto-enables) / Not now (permanent decline). Sibling of the warm-hold + engine-upgrade nudges: priority warm-hold › vocab › Parakeet, only one shows at a time, and a quiet day separates any two."
         }
       ]
     },
@@ -508,7 +508,7 @@
           ],
           "image": "screens/ios/settings-language.png",
           "captured": false,
-          "target": "Native iOS pull-down opened from the Dictation \u2192 Language row. A 'Recent' (MRU) section pins the active language + most-recently-used on top; below it the full list is alphabetical by English name, each row 'English \u2014 native'. Spanish is offered twice \u2014 Spanish (European, es-ES) and Spanish (Latin America), which always uses Apple's engine (es-MX) for Latin-American accents. The Latin-American row shows the short native ('Espa\u00f1ol') so it doesn't wrap to three lines."
+          "target": "Native iOS pull-down opened from the Dictation → Language row. A 'Recent' (MRU) section pins the active language + most-recently-used on top; below it the full list is alphabetical by English name, each row 'English — native'. Spanish is offered twice — Spanish (European, es-ES) and Spanish (Latin America), which always uses Apple's engine (es-MX) for Latin-American accents. The Latin-American row shows the short native ('Español') so it doesn't wrap to three lines."
         },
         {
           "id": "settings-privacy",
@@ -536,7 +536,7 @@
           ],
           "image": "",
           "captured": false,
-          "target": "Reached from Settings \u2192 About \u2192 \"Jot for Mac\" (a permanent row). Pitches the Mac app and offers the easiest phone\u2192laptop handoff: \"Send to your Mac\" shares the download link (AirDrop / Messages / Mail), \"Open jot-transcribe.com\" opens the site. No accounts, on-device dictation."
+          "target": "Reached from Settings → About → \"Jot for Mac\" (a permanent row). Pitches the Mac app and offers the easiest phone→laptop handoff: \"Send to your Mac\" shares the download link (AirDrop / Messages / Mail), \"Open jot-transcribe.com\" opens the site. No accounts, on-device dictation."
         },
         {
           "id": "settings-acknowledgements",
@@ -564,7 +564,7 @@
           ],
           "image": "screens/settings/settings-upgrade-engine.png",
           "captured": false,
-          "target": "Medium-detent sheet reached from the keyboard upgrade nudge (jot://upgrade-engine) \u2014 a small state machine. If Jot's engine is already on the device, \"Use Jot's engine\" switches instantly with an in-sheet confirmation. On a stripped build where it isn't, \"Download & switch automatically\" queues a background, Wi-Fi download (usually while charging) and Jot switches over automatically when it lands \u2014 the sheet then shows \"Downloading\u2026\" with a Stop download option, and a one-time \"You're on Jot's engine\" note appears on the home screen (EngineSwitchedCard). Ineligible device, low disk, and a failed download each keep Apple honestly (failed offers Try again). \"Keep Apple\" is a permanent decline. Same no-pressure tone as the donation card."
+          "target": "Medium-detent sheet reached from the keyboard upgrade nudge (jot://upgrade-engine) — a small state machine. If Jot's engine is already on the device, \"Use Jot's engine\" switches instantly with an in-sheet confirmation. On a stripped build where it isn't, \"Download & switch automatically\" queues a background, Wi-Fi download (usually while charging) and Jot switches over automatically when it lands — the sheet then shows \"Downloading…\" with a Stop download option, and a one-time \"You're on Jot's engine\" note appears on the home screen (EngineSwitchedCard). Ineligible device, low disk, and a failed download each keep Apple honestly (failed offers Try again). \"Keep Apple\" is a permanent decline. Same no-pressure tone as the donation card."
         }
       ]
     },
@@ -642,7 +642,7 @@
         },
         {
           "id": "ai-engine-apple",
-          "title": "AI Engine \u2014 Apple Intelligence",
+          "title": "AI Engine — Apple Intelligence",
           "sections": [
             "6.3",
             "7.3"
@@ -652,7 +652,7 @@
         },
         {
           "id": "ai-engine-qwen",
-          "title": "AI Engine \u2014 Jot's AI",
+          "title": "AI Engine — Jot's AI",
           "sections": [
             "6.3",
             "7.5",
@@ -675,10 +675,23 @@
           "sections": [
             "8.1",
             "8.6",
-            "8.7"
+            "8.7",
+            "8.9"
           ],
           "image": "screens/ios/vocab-list.png",
           "captured": true
+        },
+        {
+          "id": "vocab-boost-pending",
+          "title": "Terms Working Before the Download",
+          "sections": [
+            "8.6",
+            "8.7",
+            "8.9"
+          ],
+          "image": "screens/ios/vocab-boost-pending.png",
+          "captured": false,
+          "behavior": "The state most new users see. Terms are corrected against the finished transcript with no model at all (§8.9), so boosting no longer WAITS on the ~99 MB download — the old copy said it did, which told the user the feature was dead while it was working. The download adds recognition while Jot listens."
         },
         {
           "id": "vocab-empty",
