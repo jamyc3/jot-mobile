@@ -1,0 +1,36 @@
+Jot iOS
+Required Notice: Copyright Vineet Sriram (https://jot-transcribe.com)
+
+License
+-------
+This repository was previously published without a license (all rights
+reserved by default). As of the commit that introduced this NOTICE, it is
+licensed under the PolyForm Noncommercial License 1.0.0 — see LICENSE.
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
+
+Third-party software
+--------------------
+Jot iOS depends on the following open-source packages; each remains under
+its own license:
+
+- FluidInference/FluidAudio — Apache License 2.0
+- ml-explore/mlx-swift, mlx-swift-lm — MIT
+- huggingface/swift-huggingface, swift-transformers — Apache License 2.0
+- john-rocky/CoreML-LLM — MIT
+- petrukha-ivan/swift-json-schema — Apache License 2.0
+- apple/swift-async-algorithms, swift-argument-parser — Apache License 2.0
+
+Vendored code (Vendor/):
+- Vendor/mlx-swift-structured — fork of petrukha-ivan/mlx-swift-structured,
+  Apache License 2.0 (LICENSE retained in place). It vendors the
+  mlc-ai/xgrammar source tree (Apache License 2.0; its LICENSE and NOTICE
+  are retained) including third-party components: dlpack (Apache-2.0),
+  googletest (BSD-3-Clause), cpptrace (MIT), picojson (BSD-2-Clause).
+
+Fonts:
+- Fraunces (Jot/Resources/Fonts/) — SIL Open Font License 1.1; see the
+  bundled OFL.txt, which travels with the font files.
+
+Model weights are not distributed in this repository; weights fetched or
+bundled at build/run time are covered by their own upstream terms
+(e.g. Gemma Terms of Use, Qwen license via MLX).
