@@ -110,6 +110,9 @@ struct TranscriptDetailView: View {
     @State private var selectedTab: DetailTab = .original
     @State private var pendingDeletion = false
     @State private var pendingDiscardRewrite = false
+    /// Set when the back chevron is tapped mid-edit with unsaved changes;
+    /// drives the Save / Discard / Keep Editing dialog.
+    @State private var pendingEditExit = false
     @State private var didCopy = false
     @State private var copyResetTask: Task<Void, Never>?
     @State private var copyHaptic = UIImpactFeedbackGenerator(style: .light)
@@ -250,12 +253,16 @@ struct TranscriptDetailView: View {
     @State private var didAutoStartRewrite: Bool = false
 
     /// Writing Tools **selection mode** (Apple Intelligence engine only). Tapping
-    /// the rewrite action swaps the read-mode text for a NON-editable
+    /// the in-app ✨ Rewrite action swaps the read-mode text for a NON-editable
     /// `InlineEditTextView` and pre-selects the whole transcript, so the user's
     /// next gesture is tap-selection → Writing Tools → whatever THEY choose. It
     /// is NOT edit mode: nothing is editable, there's no dirty state and no Save,
     /// so the pristine Original is structurally protected (Writing Tools on a
     /// read-only text view can only Copy its result, never replace in place).
+    /// The keyboard's ✨ arrival (`openInRewrite`) does NOT land here — it opens
+    /// edit mode instead so the rewrite can be saved; see
+    /// `enterWritingToolsEditMode`. Selection mode is still the fallback when
+    /// that transcript can't be edited right now.
     /// See `docs/plans/speaker-notes-productization.md` Part 2.
     @State private var selectionMode: Bool = false
     /// `nil` until `.onAppear` resolves the factory's client. Used to mirror
@@ -399,13 +406,13 @@ struct TranscriptDetailView: View {
         // a root-level NavigationStack modifier can be undone by that
         // disable. Putting the enable here ensures the gesture survives.
         //
-        // Gate on `!isEditing`: the back chevron and the SwiftUI
-        // simultaneousGesture both refuse to dismiss during edit mode,
-        // but UIKit's `interactivePopGestureRecognizer` lives one layer
-        // below SwiftUI and isn't bound by either guard. Letting it fire
-        // during edit mode would silently pop the view and discard the
-        // user's unsaved TextEditor changes.
-        .enableInteractivePopGesture(isEnabled: !isEditing)
+        // Gate on `!hasUnsavedEdits`: an untouched editor is safe to swipe
+        // out of, but UIKit's `interactivePopGestureRecognizer` lives one
+        // layer below SwiftUI and isn't bound by the chevron's guard.
+        // Letting it fire with unsaved changes would silently pop the view
+        // and discard them — and a pop gesture can't be interrupted by a
+        // dialog, so the swipe is refused and the chevron carries the ask.
+        .enableInteractivePopGesture(isEnabled: !hasUnsavedEdits)
         // Explicit left-edge swipe-to-back as a safety net. The system
         // `interactivePopGestureRecognizer` (re-enabled above) gets
         // swallowed on this view by the scrollable transcript card's
@@ -427,11 +434,13 @@ struct TranscriptDetailView: View {
                     let isRightwardSwipe = dx > 80
                     let isMostlyHorizontal = abs(dx) > 1.5 * abs(dy)
                     if isEdgeStart && isRightwardSwipe && isMostlyHorizontal {
-                        // Mirror the back-chevron's edit-mode lockout. A
-                        // swipe-back while editing would silently destroy
-                        // in-flight edits with no confirmation — refuse to
-                        // dismiss, force the user through Cancel/Save.
-                        guard !isEditing else { return }
+                        // Mirror the back-chevron's edit-mode policy. An
+                        // untouched editor swipes out like any read-mode
+                        // page; unsaved changes refuse the swipe (there's
+                        // no way to ask mid-gesture) and leave the user on
+                        // the chevron, which does ask.
+                        guard !hasUnsavedEdits else { return }
+                        if isEditing { exitEditMode() }
                         dismiss()
                     }
                 }
@@ -454,6 +463,36 @@ struct TranscriptDetailView: View {
             Button("Cancel", role: .cancel) {
                 pendingDeletion = false
             }
+        }
+        .confirmationDialog(
+            "Save your changes?",
+            isPresented: $pendingEditExit,
+            titleVisibility: .visible
+        ) {
+            Button("Save") {
+                // `saveEdit()` exits edit mode on success, and leaves
+                // `isEditing` true with an inline `editError` when it
+                // rejects the text (empty Original) — only leave the
+                // screen once the save actually took.
+                saveEdit()
+                if !isEditing { dismiss() }
+            }
+            Button("Discard Changes", role: .destructive) {
+                exitEditMode()
+                dismiss()
+            }
+            Button("Keep Editing", role: .cancel) {
+                pendingEditExit = false
+                // Presenting the sheet resigns the editor's first responder
+                // (`textViewDidEndEditing` → `editorFocused = false`), so
+                // without this the user is "still editing" but the keyboard is
+                // gone until they tap the text again. Next-runloop hop so the
+                // refocus lands after the dialog's dismissal settles — the
+                // same pattern `beginEdit()` uses for its initial focus.
+                DispatchQueue.main.async { editorFocused = true }
+            }
+        } message: {
+            Text("Your edits haven't been saved yet.")
         }
         .confirmationDialog(
             "Discard rewrite?",
@@ -550,10 +589,10 @@ struct TranscriptDetailView: View {
             // Default to Rewrite tab when a rewrite already exists — the
             // user almost always cares about their latest pass once they've
             // run one. Falls back to Original when no rewrite is saved.
-            // Skipped in selection mode: SwiftUI does not guarantee this runs
-            // before the `.task` that auto-enters Writing Tools on an
-            // `openInRewrite` arrival, and that mode pins the tab to Original.
-            if hasRewrite, !selectionMode {
+            // Skipped in selection AND edit mode: SwiftUI does not guarantee
+            // this runs before the `.task` that auto-enters Writing Tools on an
+            // `openInRewrite` arrival, and both of those pin the tab to Original.
+            if hasRewrite, !selectionMode, !isEditing {
                 selectedTab = .rewrite
             }
             if correctionModel == nil {
@@ -577,15 +616,21 @@ struct TranscriptDetailView: View {
                 didFireKeyboardIntent = true
                 autoFireKeyboardRewrite(intent: intent)
             }
-            // Keyboard recents row → Apple Intelligence button. Run the exact
-            // same action the in-app ✨ Rewrite pill runs, AFTER
-            // `refreshRewriteAvailability()` so its engine/model branch reads
-            // fresh state. On Apple Intelligence that means selection mode +
-            // the one-time guide; on Jot's AI it means the prompt picker or
-            // setup, same as tapping Rewrite here.
+            // Keyboard recents row → Apple Intelligence button. Runs AFTER
+            // `refreshRewriteAvailability()` so the engine/model branch reads
+            // fresh state. On Apple Intelligence this arrival opens EDIT mode
+            // with the transcript selected — the whole point of the tap is to
+            // rewrite the transcript, so the result has to be able to land in
+            // it (`enterWritingToolsEditMode`). On Jot's AI it runs the exact
+            // same action the in-app ✨ Rewrite pill runs: the prompt picker or
+            // setup.
             if openInRewrite, !didAutoStartRewrite {
                 didAutoStartRewrite = true
-                presentRewritePicker()
+                if RewriteMode.current == .appleIntelligence {
+                    enterWritingToolsEditMode()
+                } else {
+                    presentRewritePicker()
+                }
             }
         }
     }
@@ -594,15 +639,13 @@ struct TranscriptDetailView: View {
 
     private var topToolbar: some View {
         HStack(alignment: .center, spacing: 12) {
-            // While editing, the back chevron is disabled so the user must
-            // explicitly Cancel or Save — otherwise a swipe-back would
-            // silently discard their in-flight edits with no confirmation.
+            // Back stays live in edit mode — `back()` asks before it
+            // leaves whenever the editor holds unsaved changes.
             glassCircleButton(
                 systemImage: "chevron.backward",
-                accessibilityLabel: isEditing ? "Back disabled while editing" : "Back",
-                enabled: !isEditing
+                accessibilityLabel: "Back"
             ) {
-                dismiss()
+                back()
             }
 
             Spacer(minLength: 8)
@@ -1672,6 +1715,37 @@ struct TranscriptDetailView: View {
         presentGuideOrSelect()
     }
 
+    /// Keyboard recents ✨ arrival (`jot://transcript?id=…&ai=1`) while Apple
+    /// Intelligence is the engine: open the Original in EDIT mode with the whole
+    /// transcript selected and the Writing Tools hint showing. Editable is the
+    /// point — Writing Tools replaces the selection in place in an editable text
+    /// view (read-only `selectionMode` can only offer Copy), and Save then
+    /// persists it back onto the transcript.
+    ///
+    /// Falls back to read-only selection mode when `beginEdit()` declines (a
+    /// rewrite in flight, a keyboard rewrite locked on this transcript, or
+    /// empty text): the tap should still do the old thing rather than nothing.
+    ///
+    /// The fallback calls `enterSelectionMode()` DIRECTLY, not
+    /// `presentRewritePicker()`: the picker opens with an `isMagicEnabled`
+    /// guard, and `isMagicEnabled` is false under the same conditions that
+    /// make `beginEdit()` decline — so routing through it would silently do
+    /// nothing in exactly the case this fallback exists for. The engine is
+    /// already known to be Apple Intelligence on this path, so skipping the
+    /// picker's re-check loses nothing.
+    private func enterWritingToolsEditMode() {
+        // This entry point always targets the original transcript, and
+        // `beginEdit()` edits whatever tab is selected.
+        selectedTab = .original
+        beginEdit()
+        guard isEditing else {
+            enterSelectionMode()
+            return
+        }
+        // After `beginEdit()`, which clears the flag for a fresh edit session.
+        editWritingToolsTapped()
+    }
+
     // MARK: - Selection-mode bar
 
     /// Bottom bar shown in Writing Tools selection mode: a hint + a Done chip
@@ -2320,6 +2394,55 @@ struct TranscriptDetailView: View {
         }()
         exitEditMode()
         if let offer { withAnimation { replaceVocabOffer = offer } }
+    }
+
+    /// True while edit mode holds text that `saveEdit()` would actually
+    /// persist. Mirrors `saveEdit()`'s trim + no-op rules, so a
+    /// whitespace-only difference counts as "nothing changed" (Save would
+    /// no-op on it too) and Back just leaves.
+    ///
+    /// One deliberate divergence: the STORED side is trimmed here too, which
+    /// `saveEdit()` does not do. Some writers (`TranscriptStore.append` via the
+    /// keyboard insert / combine / share paths) persist text with surrounding
+    /// whitespace, and comparing untrimmed-stored vs trimmed-editor made such
+    /// a transcript read "dirty" the instant edit mode opened — a false
+    /// "Save your changes?" on an untouched editor. Saving such a transcript
+    /// genuinely rewrites it (to the trimmed form), but that is not a change
+    /// the USER made, and this predicate exists to protect user edits.
+    /// `saveEdit()`'s own untrimmed comparison stays as is — it is
+    /// load-bearing for the write/no-op decision.
+    private var hasUnsavedEdits: Bool {
+        guard isEditing else { return false }
+        let trimmed = editorText.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch editTargetTab {
+        // Unreachable (edit mode can't open on Speakers), and `saveEdit()`
+        // writes nothing there either.
+        case .speakers:
+            return false
+        case .original:
+            return trimmed != transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .rewrite:
+            // Empty means "clear my edit" — a change only if there is one.
+            if trimmed.isEmpty { return transcript.rewriteUserEdit != nil }
+            let stored = transcript.rewriteUserEdit ?? transcript.cleanedText ?? ""
+            return trimmed != stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    /// Back-chevron tap. Pops straight out from read mode and from an
+    /// untouched editor; with unsaved changes it asks first (Save /
+    /// Discard Changes / Keep Editing) and pops from the dialog instead.
+    private func back() {
+        guard isEditing else {
+            dismiss()
+            return
+        }
+        guard hasUnsavedEdits else {
+            exitEditMode()
+            dismiss()
+            return
+        }
+        pendingEditExit = true
     }
 
     /// Discards local edit state without persisting. The transcript fields

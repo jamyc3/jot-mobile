@@ -1,0 +1,254 @@
+[
+ {
+  "input": "It can host around 5,000 pages without issue.",
+  "stripped": "it can host around 5,000 pages without issue",
+  "ids": [
+   14,
+   50,
+   1032,
+   155,
+   316,
+   6,
+   6841,
+   5278,
+   257,
+   585
+  ],
+  "pieces": [
+   "▁it",
+   "▁can",
+   "▁host",
+   "▁around",
+   "▁5",
+   ",",
+   "000",
+   "▁pages",
+   "▁without",
+   "▁issue"
+  ]
+ },
+ {
+  "input": "Gemini 3.1 flashlight, not 3.5 flash.",
+  "stripped": "gemini 3.1 flashlight not 3.5 flash",
+  "ids": [
+   21493,
+   5643,
+   1046,
+   27028,
+   37,
+   5643,
+   1267,
+   5154
+  ],
+  "pieces": [
+   "▁gemini",
+   "▁3.",
+   "1",
+   "▁flashlight",
+   "▁not",
+   "▁3.",
+   "5",
+   "▁flash"
+  ]
+ },
+ {
+  "input": "I'm just asking so that we're sure.",
+  "stripped": "i'm just asking so that we're sure",
+  "ids": [
+   19,
+   13,
+   66,
+   70,
+   1416,
+   59,
+   16,
+   25,
+   13,
+   81,
+   468
+  ],
+  "pieces": [
+   "▁i",
+   "'",
+   "m",
+   "▁just",
+   "▁asking",
+   "▁so",
+   "▁that",
+   "▁we",
+   "'",
+   "re",
+   "▁sure"
+  ]
+ },
+ {
+  "input": "Use the front-end design skill.",
+  "stripped": "use the front-end design skill",
+  "ids": [
+   259,
+   5,
+   615,
+   0,
+   7647,
+   1532,
+   5369
+  ],
+  "pieces": [
+   "▁use",
+   "▁the",
+   "▁front",
+   "-",
+   "end",
+   "▁design",
+   "▁skill"
+  ]
+ },
+ {
+  "input": "I don't think even JWT is needed here!",
+  "stripped": "i don't think even jwt is needed here",
+  "ids": [
+   19,
+   107,
+   13,
+   31,
+   118,
+   125,
+   1695,
+   1466,
+   31,
+   15,
+   597,
+   176
+  ],
+  "pieces": [
+   "▁i",
+   "▁don",
+   "'",
+   "t",
+   "▁think",
+   "▁even",
+   "▁j",
+   "w",
+   "t",
+   "▁is",
+   "▁needed",
+   "▁here"
+  ]
+ },
+ {
+  "input": "What are the 2 options? Keep 5.5 not 5.4.",
+  "stripped": "what are the 2 options keep 5.5 not 5.4",
+  "ids": [
+   63,
+   27,
+   5,
+   294,
+   1537,
+   305,
+   316,
+   4,
+   1267,
+   37,
+   316,
+   4,
+   1585
+  ],
+  "pieces": [
+   "▁what",
+   "▁are",
+   "▁the",
+   "▁2",
+   "▁options",
+   "▁keep",
+   "▁5",
+   ".",
+   "5",
+   "▁not",
+   "▁5",
+   ".",
+   "4"
+  ]
+ },
+ {
+  "input": "Version 1.0.3 is good now, whatever.",
+  "stripped": "version 1.0.3 is good now whatever",
+  "ids": [
+   1587,
+   3592,
+   9084,
+   4,
+   1471,
+   15,
+   133,
+   82,
+   1553
+  ],
+  "pieces": [
+   "▁version",
+   "▁1.",
+   "0",
+   ".",
+   "3",
+   "▁is",
+   "▁good",
+   "▁now",
+   "▁whatever"
+  ]
+ },
+ {
+  "input": "The CDO stand up is at 10.",
+  "stripped": "the cdo stand up is at 10",
+  "ids": [
+   5,
+   10151,
+   293,
+   959,
+   57,
+   15,
+   29,
+   206
+  ],
+  "pieces": [
+   "▁the",
+   "▁cd",
+   "o",
+   "▁stand",
+   "▁up",
+   "▁is",
+   "▁at",
+   "▁10"
+  ]
+ },
+ {
+  "input": "a hundred times; really?",
+  "stripped": "a hundred times really",
+  "ids": [
+   9,
+   3793,
+   275,
+   150
+  ],
+  "pieces": [
+   "▁a",
+   "▁hundred",
+   "▁times",
+   "▁really"
+  ]
+ },
+ {
+  "input": "Okay (fine) do it.",
+  "stripped": "okay fine do it",
+  "ids": [
+   4422,
+   1209,
+   77,
+   14
+  ],
+  "pieces": [
+   "▁okay",
+   "▁fine",
+   "▁do",
+   "▁it"
+  ]
+ }
+]

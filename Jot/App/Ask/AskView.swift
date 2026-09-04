@@ -1350,7 +1350,11 @@ extension AskView {
 
 /// Wrapping HStack — lays out children left-to-right, wrapping to the next line
 /// when the available width is exceeded. SwiftUI's stock `HStack` doesn't wrap.
-private struct FlowLayout: Layout {
+/// Also used by the voice-teaching sheet's word-by-word sentence and the
+/// Vocabulary pane's sounds-like chips — both need the same "wrap a run of
+/// small views" behaviour, and a second copy would be the only other way to get
+/// it. Keep it dependency-free.
+struct FlowLayout: Layout {
     var spacing: CGFloat = 4
     var lineSpacing: CGFloat = 4
 

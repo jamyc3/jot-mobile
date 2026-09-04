@@ -187,18 +187,29 @@ struct KeyboardView: View {
     /// to recents and clear the published asks.
     let onCorrectionFinished: () -> Void
 
-    /// Ask-before-paste HOLD deck (Thread 2) — pre-paste review. Higher priority
-    /// than the post-paste correction nudge and the warm-hold nudge; while it shows
-    /// the controller is HOLDING the paste until the deck resolves.
-    let showAskDeck: Bool
-    let askDeckAsks: CorrectionBridge.Asks?
-    /// (recordKey, verdict) — owner picked a word in the hold deck.
-    let onAskDeckVerdict: (String, String) -> Void
-    /// (recordKey) — owner tapped "Stop asking" in the hold deck.
-    let onAskDeckStopAsking: (String) -> Void
+    /// Ask-before-paste HOLD deck — pre-paste review. Higher priority than the
+    /// post-paste correction nudge and the warm-hold nudge; while it shows, the
+    /// controller is HOLDING the paste until the deck resolves. Non-nil only while
+    /// the deck is REVIEWING, and it carries the deck's progress so the strip
+    /// resumes where the owner left off (see `AskDeckSnapshot`).
+    let askDeckSnapshot: AskDeckSnapshot?
+    /// True while a hold deck exists in ANY phase (reviewing, resolved, or
+    /// inserting). F1b: dictation is modal against a held paste — see
+    /// `speakButton`'s `.disabled`.
+    let askDeckBlocksDictation: Bool
+    /// (token, recordKey, verdict) — owner picked a word in the hold deck. Every
+    /// deck action carries the token of the deck the strip was rendered with, so
+    /// a stale surface's tap is fenced rather than applied to the live deck.
+    let onAskDeckVerdict: (AskDeckToken, String, String) -> Void
+    /// Owner tapped "Stop asking" in the hold deck.
+    let onAskDeckStopAsking: (AskDeckToken, String) -> Void
+    /// A card's 10s idle timeout elapsed — resolved for progress, no verdict.
+    let onAskDeckSkipCard: (AskDeckToken, String) -> Void
+    /// First card, zero engagement, idle timeout → skip the remaining cards.
+    let onAskDeckSkipAll: (AskDeckToken) -> Void
     /// Deck resolved (all cards answered/skipped, or skip-all) — the controller
     /// re-enters its flush and pastes the resolved text.
-    let onAskDeckFinished: () -> Void
+    let onAskDeckFinished: (AskDeckToken) -> Void
 
     let feedback: KeyboardFeedback
 
@@ -355,19 +366,29 @@ struct KeyboardView: View {
         // the app flags it (it only fires post-stop, so the strip is showing
         // recents — never the live stream — at that moment). One-shot, off the
         // shared App-Group boolean.
-        if showAskDeck, !recordingState.isRecording, let asks = askDeckAsks {
+        if let deck = askDeckSnapshot, !recordingState.isRecording {
             // Ask-before-paste HOLD deck — pre-paste, gates the paste. Wins over the
             // post-paste nudge and warm-hold nudge while a session is held.
             CorrectionReviewStrip(
-                asks: asks.asks,
-                totalUnresolved: asks.totalUnresolved,
+                asks: deck.asks,
+                totalUnresolved: deck.totalUnresolved,
                 reduceMotion: reduceMotion,
                 feedback: feedback,
-                onVerdict: onAskDeckVerdict,
-                onFinished: onAskDeckFinished,
-                holdMode: true,
-                onStopAsking: onAskDeckStopAsking
+                onVerdict: { _, _ in },     // hold mode routes through `deck` below
+                onFinished: {},
+                deck: AskDeckBinding(
+                    snapshot: deck,
+                    verdict: onAskDeckVerdict,
+                    stopAsking: onAskDeckStopAsking,
+                    skipCard: onAskDeckSkipCard,
+                    skipAll: onAskDeckSkipAll,
+                    finished: onAskDeckFinished
+                )
             )
+            // Re-key on the DECK, not on its progress: a new deck is a new surface
+            // (fresh appear animation), while answering a card must not remount the
+            // strip and restart its timers.
+            .id(deck.token)
             .transition(
                 reduceMotion
                     ? .opacity
@@ -754,10 +775,23 @@ struct KeyboardView: View {
         }
         .buttonStyle(.plain)
         .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        // F1b — the hold deck is MODAL for dictation. The three transports a
+        // dictation needs (the pending-paste slot, the clipboard handoff payload,
+        // the published asks blob) are each SINGLE-SLOT and cleared globally, so a
+        // second dictation started over a held paste overwrites the first one's
+        // transport and races its cleanup: the owner answers cards for a session
+        // whose text no longer exists. Queueing all three is a much larger
+        // redesign with no demand — the deck resolves in seconds.
         .disabled(hasFullAccess
                   && (recordingState.isInflightPostRecording
                       || recordingState.isArming
-                      || isStopRequestPending))
+                      || isStopRequestPending
+                      // The deck is modal for STARTING only. While a recording
+                      // is live (an app-side FAB/Siri start can coexist with a
+                      // reviewing deck), the CTA is the STOP control and must
+                      // never be disabled — the mic has to stay stoppable from
+                      // the surface the user is on.
+                      || (askDeckBlocksDictation && !recordingState.isRecording)))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18),
                    value: recordingState.isRecording)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18),

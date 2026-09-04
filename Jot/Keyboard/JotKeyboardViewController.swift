@@ -1,4 +1,7 @@
 import AppIntents
+// F3: the shared, Foundation-only paste-edit resolver/applier. One
+// implementation for the producer (main app) and this consumer.
+import JotVocabCore
 import SwiftUI
 import UIKit
 import OSLog
@@ -149,6 +152,15 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     private var inFlightPasteSessionID: UUID?
     private var inFlightPasteText: String?
     private var inFlightPasteConfirm: (() -> Void)?
+    /// Window state the corroborated-partial confirm arm needs (F4). Captured
+    /// at window-open from the insert's own read-back: when the paste is longer
+    /// than the host's context window the FULL-text presence check can never
+    /// match, so the arm instead asks whether the host callback is CONTINUOUS
+    /// with our insert — same tail, not shrunk, and soon enough to belong to
+    /// this insert. Cleared with the rest of the window.
+    private var inFlightPasteInsertedAt: Date?
+    private var inFlightPasteImmediateLen: Int = 0
+    private var inFlightPasteImmediateEvidence: PasteEvidence = .none
     /// Guards the success/failure finalize so exactly ONE of {textDidChange
     /// short-circuit, deferred settled-verify} runs the consume-payload body —
     /// never both (would double-consume / double-mark). Reset when a new
@@ -310,20 +322,16 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// `KeyboardStreamingHub`; non-nil whenever `showCorrectionNudge` is true.
     private var correctionAsks: CorrectionBridge.Asks? { hub.correctionAsks }
 
-    // MARK: - Ask-before-paste hold deck (Thread 2)
-
-    /// Sessions whose review deck has already run (resolved or skipped). The flush
-    /// gate skips holding for these so the re-entry pastes instead of re-holding.
-    private var deckHandledSessions: Set<UUID> = []
-    /// Per-session text to paste after the deck resolves (the default spliced with
-    /// the owner's verdicts). The flush prefers this over the raw handoff payload.
-    private var deckResolvedText: [UUID: String] = [:]
-    /// Per-session default (the handoff payload text), captured when the deck is
-    /// presented so the splice never depends on a second payload read.
-    private var deckDefaultText: [UUID: String] = [:]
-    /// Per-session verdicts collected in the deck (recordKey → "term"|"original"),
-    /// used to splice the final text on finish.
-    private var deckVerdicts: [UUID: [String: String]] = [:]
+    // MARK: - Ask-before-paste hold deck (F1)
+    //
+    // The deck's state used to be FOUR per-controller dictionaries here
+    // (handled-sessions / default text / verdicts / resolved text). They died
+    // with the controller while the hub's deck flag and the real pending paste
+    // lived on, so a keyboard dismissed mid-deck came back with no captured
+    // baseline and pasted the raw payload while the queued verdicts flipped the
+    // saved transcript. All of it now lives in ONE `ActiveDeck` on
+    // `KeyboardStreamingHub` (process-lifetime, generation-fenced); this
+    // controller only drives the proxy, which is correctly per-presentation.
 
     // MARK: - Haptic + audio feedback
 
@@ -418,6 +426,9 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         // streaming pane is NOT driven by this hook — it reads `recordingState`
         // live via `@Observable`.
         hub.onShouldRender = { [weak self] in self?.renderRootView() }
+        // Same last-appeared-wins rule, for a different reason: only this
+        // controller may drive the proxy insert for a resolved hold deck (F1).
+        hub.setActiveController(ObjectIdentifier(self))
         hub.refreshNow()
         startObservingPipelinePhase()
         startObservingHistoryMirrorUpdated()
@@ -468,9 +479,12 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         // clear pending here: assume-landed is the safe teardown stance (the
         // transcript also stays on UIPasteboard from publish as the floor if it
         // turns out it didn't truly land). Never re-offer this sessionID.
-        if inFlightPasteSessionID != nil, !inFlightPasteResolved {
+        if let openSession = inFlightPasteSessionID, !inFlightPasteResolved {
             ClipboardHandoff.markConsumed()
             clearPendingPasteSession()
+            // The payload is burned, so the deck can never paste — end it here
+            // rather than leaving it holding a session that no longer exists.
+            endDeck(sessionID: openSession)
             DiagnosticsLog.record(
                 source: "keyboard",
                 category: .pasteSuccess,
@@ -480,6 +494,15 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         }
         inFlightPasteResolved = true
         isAutoPasteInsertInFlight = false
+        // A deck claimed into `.inserting` whose insert this teardown just
+        // cancelled (dismissal inside the 30-400ms pre-insert poll window —
+        // `inFlightPasteSessionID` is still nil there, so the consume branch
+        // above did not run) must be handed BACK, or it is stranded in
+        // `.inserting` forever: the re-presented flush returns on that phase,
+        // and `hasActiveDeck` keeps Dictate disabled for the rest of the
+        // process. `returnAskDeckToResolved` no-ops for any other phase and
+        // for an already-cleared deck, so this is safe on every teardown.
+        if let deck = hub.activeDeck { hub.returnAskDeckToResolved(deck.token) }
         clearInFlightPasteWindow()
     }
 
@@ -704,14 +727,20 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
                 self.hub.clearCorrectionNudge()
                 CorrectionBridge.clearAsks()
             },
-            onAskDeckVerdict: { [weak self] key, verdict in
-                self?.handleAskDeckVerdict(recordKey: key, verdict: verdict)
+            onAskDeckVerdict: { [weak self] token, key, verdict in
+                self?.handleAskDeckVerdict(token, recordKey: key, verdict: verdict)
             },
-            onAskDeckStopAsking: { [weak self] key in
-                self?.handleAskDeckStopAsking(recordKey: key)
+            onAskDeckStopAsking: { [weak self] token, key in
+                self?.handleAskDeckStopAsking(token, recordKey: key)
             },
-            onAskDeckFinished: { [weak self] in
-                self?.handleAskDeckFinished()
+            onAskDeckSkipCard: { [weak self] token, key in
+                self?.handleAskDeckSkipCard(token, recordKey: key)
+            },
+            onAskDeckSkipAll: { [weak self] token in
+                self?.handleAskDeckSkipAll(token)
+            },
+            onAskDeckFinished: { [weak self] token in
+                self?.handleAskDeckFinished(token)
             }
         )
     }
@@ -753,8 +782,8 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         keyboardInputs.hasSelection = hasFullAccess && hostHasSelection
         keyboardInputs.showCorrectionNudge = showCorrectionNudge
         keyboardInputs.correctionAsks = correctionAsks
-        keyboardInputs.showAskDeck = hub.showAskDeck
-        keyboardInputs.askDeckAsks = hub.askDeckAsks
+        keyboardInputs.askDeckSnapshot = hub.askDeckSnapshot
+        keyboardInputs.askDeckBlocksDictation = hub.hasActiveDeck
     }
 
     /// Called when the Actions popover is about to open. Re-reads the
@@ -907,281 +936,183 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         hub.maybeShowCorrectionNudge(sessionID: sessionID)
     }
 
-    // MARK: - Ask-before-paste hold deck handlers (Thread 2)
+    // MARK: - Ask-before-paste hold deck handlers (F1 / F3 consumer)
 
-    /// Hold deck: owner picked a word. Record it for the splice AND enqueue the
-    /// learning verdict (identical to the post-paste teach path).
-    private func handleAskDeckVerdict(recordKey: String, verdict: String) {
-        guard let asks = hub.askDeckAsks else { return }
-        deckVerdicts[asks.sessionID, default: [:]][recordKey] = verdict
-        CorrectionBridge.enqueueVerdict(
-            .init(transcriptID: asks.transcriptID, recordKey: recordKey, verdict: verdict))
+    /// Hold deck: owner picked a word. Recorded ONCE in the hub's `ActiveDeck`
+    /// (which refuses a second answer for the same record) — the learning verdict
+    /// is NOT enqueued here. It goes out as one deduplicated batch at deck
+    /// resolution, because the bridge queue is first-event-wins on the app side
+    /// (`CorrectionInbox`) while the paste used the last value written: answering
+    /// the same card twice made those two disagree, which is the divergence this
+    /// deck exists to prevent.
+    private func handleAskDeckVerdict(_ token: AskDeckToken, recordKey: String, verdict: String) {
+        hub.answerAskDeck(token, recordKey: recordKey, choice: verdict, learning: verdict)
     }
 
-    /// Hold deck: owner tapped "Stop asking". Keep the original word in the pasted
-    /// text and enqueue a "suppress" verdict so the app stops asking this pair on the
-    /// keyboard (drained → `CorrectionStore.suppressBlock`). Transcript review is
-    /// unaffected.
-    private func handleAskDeckStopAsking(recordKey: String) {
-        guard let asks = hub.askDeckAsks else { return }
-        deckVerdicts[asks.sessionID, default: [:]][recordKey] = "original"
-        CorrectionBridge.enqueueVerdict(
-            .init(transcriptID: asks.transcriptID, recordKey: recordKey, verdict: "suppress"))
+    /// Hold deck: owner tapped "Stop asking". The ORIGINAL word stays in the
+    /// pasted text, and the app is told to stop asking this pair on the keyboard
+    /// (drained → `CorrectionStore.suppressBlock`). Transcript review is unaffected.
+    private func handleAskDeckStopAsking(_ token: AskDeckToken, recordKey: String) {
+        hub.answerAskDeck(token, recordKey: recordKey, choice: "original", learning: "suppress")
+    }
+
+    /// Hold deck: a card timed out. Resolved for progress, no verdict, no edit.
+    private func handleAskDeckSkipCard(_ token: AskDeckToken, recordKey: String) {
+        hub.skipAskDeckCard(token, recordKey: recordKey)
+    }
+
+    /// Hold deck: first card, no engagement, timed out → skip the rest.
+    private func handleAskDeckSkipAll(_ token: AskDeckToken) {
+        hub.skipAllAskDeckCards(token)
     }
 
     /// Hold deck resolved (all cards answered/skipped, or first-card skip-all).
-    /// Splice the verdicts into the staged text, mark the session handled, tear the
-    /// deck down, and RE-ENTER the flush — which now skips the gate and pastes the
-    /// resolved text through the one proven insert path.
-    private func handleAskDeckFinished() {
-        guard let asks = hub.askDeckAsks else {
-            hub.dismissAskDeck()
+    /// Resolve the final text, enqueue the verdict batch ONCE, move the deck to
+    /// `.resolved` (which takes the strip down), and RE-ENTER the flush — which
+    /// now takes F2's `.resolved` branch and pastes that exact text through the
+    /// one proven insert path.
+    private func handleAskDeckFinished(_ token: AskDeckToken) {
+        guard let deck = hub.askDeck(for: token.sessionID), deck.token == token else {
+            // Stale finish (a torn-down strip, or a ghost controller's copy).
+            // `resolveAskDeck` logs the fence; nothing else to do.
+            _ = hub.resolveAskDeck(token, text: "")
             return
         }
-        let session = asks.sessionID
-        let verdicts = deckVerdicts[session] ?? [:]
-        if let defaultText = deckDefaultText[session], !defaultText.isEmpty {
-            deckResolvedText[session] = applyVerdicts(defaultText, verdicts: verdicts, asks: asks.asks)
-        }
-        // else: no captured default (e.g. torn down mid-deck) — fall through; the
-        // re-entered flush pastes the live payload via the normal path.
-        deckHandledSessions.insert(session)
-        deckDefaultText[session] = nil
-        deckVerdicts[session] = nil
-        hub.dismissAskDeck()
+        // Double-finish fence up front: `resolveAskDeck` would refuse a
+        // non-`.reviewing` deck anyway, but without this a second finish
+        // performs the whole descriptor resolve just to discard it.
+        guard case .reviewing = deck.phase else { return }
+        let resolvedText = resolveDeckText(deck)
+        guard hub.resolveAskDeck(token, text: resolvedText) != nil else { return }
+        // ONE batch, deduplicated by record and in the owner's answer order.
+        for event in deck.verdictEvents { CorrectionBridge.enqueueVerdict(event) }
         flushPendingAutoPasteIfPossible()
     }
 
-    /// Splice the owner's hold-deck verdicts into the staged text. Only edits where
-    /// a verdict DISAGREES with what's in the published text. Resolution mirrors the
-    /// app's `CorrectionReviewModel.resolveSpan`: the gated word is located by a
-    /// WHOLE-WORD, punctuation-trimmed, case-insensitive match anchored at the
-    /// reconciled `publishedStart` character offset — `publishedLength` is gate-time
-    /// "display/diag only" (`CorrectionProvenance.Record:46`) and must NOT be used to
-    /// size the splice (the strict length+equality guard is exactly what dropped a
-    /// "Rama"→"Ramaa" replacement when the original carried a trailing "."). If the
-    /// anchor doesn't resolve a whole-word match, that edit is skipped (fail-safe —
-    /// corrupting the pasted text is worse than leaving the default).
-    private func applyVerdicts(_ defaultText: String,
-                               verdicts: [String: String],
-                               asks: [CorrectionBridge.Ask]) -> String {
-        struct Edit { let start: Int; let end: Int; let replacement: String }
-        let chars = Array(defaultText)
-        var edits: [Edit] = []
-        for ask in asks {
-            guard let v = verdicts[ask.recordKey], let anchor = ask.publishedStart else { continue }
-            // 3-option ask: "alt0" replaces the alternate's `find` phrase
-            // (winner + following words, e.g. "Claude code") with the longer
-            // term ("Claude Code") — same anchor, wider span.
-            let inText: String
+    /// **F3 consumer — apply the owner's picks to the text about to be pasted.**
+    ///
+    /// The producer (`CorrectionAsksPublisher`) resolved every paste-changing
+    /// choice against the exact string it handed us and shipped the span it
+    /// occupies (`baseEdit` / `altEdit`). So the work here is verification, not
+    /// searching: confirm the descriptor's verbatim substring still stands where
+    /// it claims in OUR copy of the baseline, then replace it. A descriptor
+    /// resolved against a different string can only fail closed.
+    ///
+    /// Two rules earn their own line:
+    ///
+    ///  * the no-op test is `replacement == span.text`, CASE-SENSITIVE. The
+    ///    previous splice compared case-INsensitively, which made every
+    ///    casing-only correction ("Claude code" → "Claude Code", "iphone" →
+    ///    "iPhone" — the canonical 3-option `alt0` shape) a guaranteed silent
+    ///    no-op while its verdict still flipped the saved transcript. That was
+    ///    not an intermittent race; it was 100% of casing picks.
+    ///  * an overlapping batch is rejected WHOLE. Applying half of it would put
+    ///    text in the host that matches neither what the owner picked nor what
+    ///    Jot proposed.
+    ///
+    /// Asks published before descriptors existed (an older app version against a
+    /// newer keyboard) fall back to resolving the span here — through the SAME
+    /// shared `PasteEditResolver` the producer uses, so the two can't drift.
+    private func resolveDeckText(_ deck: ActiveDeck) -> String {
+        let baseline = deck.baseline
+        guard !baseline.isEmpty else { return baseline }
+        let chars = Array(baseline)
+        var edits: [PasteEditResolver.Replacement] = []
+        var answered = 0, alreadyDesired = 0, unresolvable = 0, descriptors = 0
+
+        for ask in deck.asks.asks {
+            guard let answer = deck.answers[ask.recordKey] else { continue }
+            answered += 1
+
+            // Which span the pick edits, and what it becomes. `alt0` replaces the
+            // alternate's wider `find` phrase (winner + following words) with the
+            // longer term; everything else replaces the word standing in the text
+            // (applied → term, kept → original), one span serving both directions.
+            let descriptor: CorrectionBridge.EditSpan?
             let want: String
-            if v == "alt0", let altTerm = ask.altTerm, let altFind = ask.altFind {
-                inText = altFind
+            if answer.choice == "alt0", let altTerm = ask.altTerm {
+                descriptor = ask.altEdit
                 want = altTerm
             } else {
-                inText = (ask.outcome == "applied") ? ask.term : ask.original   // word now in text
-                want = (v == "term") ? ask.term : ask.original                  // chosen word
+                descriptor = ask.baseEdit
+                want = (answer.choice == "term") ? ask.term : ask.original
             }
-            let inCore = Self.trimGatedWord(inText)
-            let wantCore = Self.trimGatedWord(want)
-            guard !wantCore.isEmpty, wantCore.caseInsensitiveCompare(inCore) != .orderedSame else { continue }
-            // alt0's needle is `altFind` (winner word + following words), but the
-            // ask's contextAfter starts right after the PRIMARY span — i.e. INSIDE
-            // the altFind tail. Pass the primary word's length so corroboration
-            // searches the after-context from the right place (see
-            // `contextCorroborates`); nil for the plain original/term splice.
-            let primaryLenForAlt: Int? = (v == "alt0")
-                ? Self.trimGatedWord((ask.outcome == "applied") ? ask.term : ask.original).count
-                : nil
-            // Resolve the span to splice. `publishedStart` is diff-mapped from the
-            // gate-output text into `publishedText` (`CorrectionAsksPublisher`), and
-            // when AI Rewrite cleanup is ON `publishedText` is the cleaned text — an
-            // ambiguous diff can shift the anchor a char off its word, failing a
-            // strict exact-at-anchor match. Left unhandled the splice silently no-ops
-            // and the paste keeps the TERM while the saved transcript flips to the
-            // pick (they resolve against different texts) — the divergence. See
-            // `spliceRange` for the anchor-first, window-bounded recovery.
-            guard let (s, e) = Self.spliceRange(
-                of: inCore, anchoredAtChar: anchor, in: defaultText,
-                contextBefore: ask.contextBefore, contextAfter: ask.contextAfter,
-                primaryLengthInNeedle: primaryLenForAlt)
-            else { continue }
-            edits.append(Edit(start: s, end: e, replacement: wantCore))
+            let replacement = PasteEditResolver.trimGatedWord(want)
+            guard !replacement.isEmpty else { continue }
+
+            let span: PasteEditResolver.Span?
+            if let descriptor {
+                descriptors += 1
+                // Well-formedness first (a degenerate descriptor is an unvalidated
+                // insertion, invisible to overlap checking), then the verbatim
+                // substring against OUR baseline.
+                span = descriptor.isWellFormed
+                    ? PasteEditResolver.verify(start: descriptor.start, text: descriptor.text, in: chars)
+                    : nil
+            } else {
+                span = legacySpan(for: ask, choice: answer.choice, in: baseline)
+            }
+            guard let span else {
+                unresolvable += 1
+                continue
+            }
+            // Case-SENSITIVE: the span carries the baseline's own casing, so this
+            // is true only when the text already reads exactly as the owner asked.
+            if replacement == span.text {
+                alreadyDesired += 1
+                continue
+            }
+            edits.append(.init(start: span.start, end: span.end, text: replacement))
         }
+
+        let editsRequired = edits.count
+        let resolved = PasteEditResolver.apply(edits, to: chars)
+        if resolved == nil { unresolvable += editsRequired }
+
         DiagnosticsLog.record(
             source: "keyboard", category: .vocabularyGate,
-            message: "ask-before-paste: applied verdict splices",
-            metadata: ["requested": "\(verdicts.count)", "spliced": "\(edits.count)"])
-        guard !edits.isEmpty else { return defaultText }
-        var out = chars
-        // Apply LAST occurrence first so earlier splices don't shift later offsets.
-        for edit in edits.sorted(by: { $0.start > $1.start }) {
-            guard edit.start >= 0, edit.end <= out.count, edit.start < edit.end else { continue }
-            out.replaceSubrange(edit.start..<edit.end, with: Array(edit.replacement))
-        }
-        return String(out)
+            message: "ask-before-paste: resolved deck text",
+            metadata: [
+                "sessionID": deck.sessionID.uuidString,
+                "answered": "\(answered)",
+                "editsRequired": "\(editsRequired)",
+                // Equal-after-trim and "Stop asking" are SUCCESSES, not failures —
+                // the invariant is editsApplied == editsRequired && unresolvable == 0.
+                "editsApplied": "\(resolved == nil ? 0 : editsRequired)",
+                "alreadyDesired": "\(alreadyDesired)",
+                "unresolvable": "\(unresolvable)",
+                "descriptors": "\(descriptors)",
+                // Non-nil only when `apply` refused the batch — i.e. the
+                // producer's non-overlap validation and ours disagreed.
+                "overlapRejected": "\(resolved == nil && editsRequired > 0)",
+            ])
+        return resolved ?? baseline
     }
 
-    /// Trim the surrounding punctuation the gate/provenance may carry on a word
-    /// (e.g. "Rama." → "Rama") — same set as `CorrectionReviewModel.resolveSpan`.
-    private static func trimGatedWord(_ s: String) -> String {
-        s.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?\"'\u{2019}\u{201D})]}"))
-    }
-
-    /// Character range [start,end) of the whole-word occurrence of `word` to splice
-    /// for the ask anchored at `anchor` (offsets index `text`). Resolution, in
-    /// priority order:
-    ///
-    ///  1. STRICT anchor — a DIRECT `.anchored` match at `anchor` on the FULL text
-    ///     wins outright (parity with the transcript review's exact-at-offset
-    ///     resolution, `CorrectionReviewModel.resolveSpan`). A direct anchored test
-    ///     (not "scan, then look for a candidate that starts at the anchor") is
-    ///     immune to the enumeration order of overlapping matches.
-    ///  2. Otherwise a UNIQUE whole-word match WITHIN A BOUNDED WINDOW around the
-    ///     anchor, CORROBORATED by the ask's spoken context. The window (not a global
-    ///     scan) is load-bearing: cleanup shifts an anchor by small LOCAL deltas, so
-    ///     the true occurrence sits near it; a global search would splice a
-    ///     same-spelled word ELSEWHERE when cleanup DELETED the intended occurrence
-    ///     but an identical word survives — divergence in reverse. Zero or 2+
-    ///     in-window matches → fail safe. A lone survivor in a DIFFERENT clause is
-    ///     still wrong, so a fallback match must also be corroborated by the ask's
-    ///     `contextBefore`/`contextAfter` (see `contextCorroborates`). If cleanup
-    ///     truly removed the word we correctly do NOTHING (the paste can't show a
-    ///     word that no longer exists — inherent bound); a corroborated-but-still-
-    ///     wrong splice is the accepted floor.
-    ///
-    /// Matching uses `String.range(of:options:.caseInsensitive)` — NOT a fixed
-    /// needle.count char window — so variable-length Unicode case folds
-    /// (Straße↔STRASSE) resolve, matching the transcript resolver's semantics
-    /// (`CorrectionReviewModel.wholeWordRanges`). Whole-word boundaries use the SAME
-    /// `isLetter` rule as that resolver AND are always evaluated against the FULL
-    /// text by absolute offset (never a cropped window slice — a letter just outside
-    /// the window still blocks the match). The two sides MUST stay in `isLetter`
-    /// parity (changing one reintroduces divergence); the consequence — an
-    /// apostrophe reads as a separator (so "Don" can match inside "don't") and
-    /// adjacent CJK ideographs read as one word — is accepted symmetrically. In
-    /// practice the apostrophe case biases toward the fail-safe (a stray "don't"
-    /// near the anchor adds a second match → ambiguous → no splice).
-    private static func spliceRange(of word: String, anchoredAtChar anchor: Int,
-                                    in text: String,
-                                    contextBefore: String, contextAfter: String,
-                                    primaryLengthInNeedle: Int? = nil) -> (Int, Int)? {
-        let n = text.count
-        guard !word.isEmpty else { return nil }
-        // Out-of-range anchor (incl. one mapped to a removal point at/after the text
-        // end) fails safe, matching HEAD and the transcript resolver — an anchor with
-        // no character to sit on must not resurrect a splice.
-        guard anchor >= 0, anchor < n else { return nil }
-
-        func charOffset(_ idx: String.Index) -> Int { text.distance(from: text.startIndex, to: idx) }
-        func idx(_ off: Int) -> String.Index { text.index(text.startIndex, offsetBy: off) }
-        // Boundary test against the FULL text by absolute offset (an out-of-bounds
-        // side is a text edge → not a letter → boundary OK).
-        func isLetterAt(_ off: Int) -> Bool {
-            guard off >= 0, off < n else { return false }
-            return text[idx(off)].isLetter
+    /// Back-compat span resolution for an ask published WITHOUT F3 descriptors
+    /// (an older app version). Same shared implementation the producer runs —
+    /// the keyboard's own copy of this algorithm is gone, so the two cannot
+    /// drift apart again.
+    private func legacySpan(for ask: CorrectionBridge.Ask, choice: String,
+                            in baseline: String) -> PasteEditResolver.Span? {
+        guard let anchor = ask.publishedStart else { return nil }
+        let inText: String
+        let primaryLength: Int?
+        if choice == "alt0", let altFind = ask.altFind {
+            inText = altFind
+            // The ask's `contextAfter` starts right after the PRIMARY word — i.e.
+            // INSIDE the altFind tail — so after-side corroboration must search
+            // from there, not from the end of the whole match.
+            primaryLength = PasteEditResolver.trimGatedWord(
+                (ask.outcome == "applied") ? ask.term : ask.original).count
+        } else {
+            inText = (ask.outcome == "applied") ? ask.term : ask.original
+            primaryLength = nil
         }
-        func wholeWord(start: Int, end: Int) -> Bool {
-            !isLetterAt(start - 1) && !isLetterAt(end)
-        }
-
-        // 1. Strict anchor — direct anchored match on the full text.
-        let anchorIdx = idx(anchor)
-        if let r = text.range(of: word, options: [.caseInsensitive, .anchored],
-                              range: anchorIdx..<text.endIndex) {
-            let end = charOffset(r.upperBound)
-            if wholeWord(start: anchor, end: end) { return (anchor, end) }
-        }
-
-        // 2. Windowed unique + context-corroborated fallback.
-        // Radius = 2× the ask context window (`CorrectionAsksPublisher.contextWindow`
-        // = 24 chars): generous for local cleanup drift, well short of unrelated
-        // repeats. `+ 8` fold slack on `hi` so a variable-length case fold near the
-        // far edge (Straße→STRASSE, +1 char) still fits the window.
-        let radius = 48
-        let lo = max(0, anchor - radius)
-        let hi = min(n, anchor + word.count + radius + 8)
-        guard lo < hi else { return nil }
-        var matches: [(start: Int, end: Int)] = []   // GLOBAL char offsets
-        var searchLo = idx(lo)
-        let hiIdx = idx(hi)
-        while let r = text.range(of: word, options: [.caseInsensitive], range: searchLo..<hiIdx) {
-            let start = charOffset(r.lowerBound)
-            let end = charOffset(r.upperBound)
-            if wholeWord(start: start, end: end) { matches.append((start, end)) }
-            // Advance by ONE Character past the match START (not its end) so
-            // OVERLAPPING candidates are still enumerated for the ambiguity count.
-            searchLo = text.index(after: r.lowerBound)
-            if searchLo >= hiIdx { break }
-        }
-        guard matches.count == 1 else { return nil }   // zero or ambiguous → fail safe
-        let match = matches[0]
-        // For alt0 the after-context begins after the PRIMARY word inside the
-        // altFind match, not after the whole match — start the after-side
-        // corroboration search there (clamped into the match).
-        let afterSearchStart = primaryLengthInNeedle.map { min(match.start + $0, match.end) } ?? match.end
-        guard contextCorroborates(matchStart: match.start, matchEnd: match.end, in: text,
-                                  contextBefore: contextBefore, contextAfter: contextAfter,
-                                  afterSearchStart: afterSearchStart)
-        else { return nil }
-        return match
-    }
-
-    /// Whether a FALLBACK splice candidate (a lone in-window match that did NOT sit
-    /// exactly on the anchor) is corroborated by the ask's spoken context. Requires
-    /// at least one context word (from `contextBefore` within the 24 chars PRECEDING
-    /// the match, OR from `contextAfter` within the 24 chars FOLLOWING it) to appear,
-    /// case-insensitively. Genuine cleanup drift preserves the neighbouring words; a
-    /// same-spelled survivor in a different clause shares neither side. If both
-    /// contexts are empty (span at a text edge) there is nothing to corroborate
-    /// against → fall back to uniqueness-only (best available). Words shorter than 2
-    /// chars are ignored so a stray "a"/"I" can't rubber-stamp any neighbourhood.
-    private static func contextCorroborates(matchStart: Int, matchEnd: Int, in text: String,
-                                            contextBefore: String, contextAfter: String,
-                                            afterSearchStart: Int? = nil) -> Bool {
-        func words(_ s: String) -> [String] {
-            s.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "\u{2026}" })
-                .map { Self.trimGatedWord(String($0)) }
-                .filter { $0.count >= 2 }
-        }
-        let before = words(contextBefore)
-        let after = words(contextAfter)
-        if before.isEmpty && after.isEmpty { return true }   // edge span — uniqueness-only
-        let n = text.count
-        func idx(_ off: Int) -> String.Index { text.index(text.startIndex, offsetBy: off) }
-        func isLetterAt(_ off: Int) -> Bool {
-            guard off >= 0, off < n else { return false }
-            return text[idx(off)].isLetter
-        }
-        // WHOLE-WORD, case-insensitive presence of any context word inside
-        // [lo,hi) — boundaries checked by ABSOLUTE offset on the full text so a
-        // context word can't corroborate from inside a longer word ("he" must
-        // not match inside "breathe"), and a word straddling the neighbourhood
-        // edge can't fake a boundary.
-        func anyWholeWord(_ list: [String], from lo: Int, to hi: Int) -> Bool {
-            guard lo < hi, !list.isEmpty else { return false }
-            let hiIdx = idx(hi)
-            for w in list {
-                var searchLo = idx(lo)
-                while let r = text.range(of: w, options: [.caseInsensitive], range: searchLo..<hiIdx) {
-                    let s = text.distance(from: text.startIndex, to: r.lowerBound)
-                    let e = text.distance(from: text.startIndex, to: r.upperBound)
-                    if !isLetterAt(s - 1) && !isLetterAt(e) { return true }
-                    searchLo = text.index(after: r.lowerBound)
-                    if searchLo >= hiIdx { break }
-                }
-            }
-            return false
-        }
-        if anyWholeWord(before, from: max(0, matchStart - 24), to: matchStart) { return true }
-        // After-side: normally the 24 chars following the match; for alt0 the
-        // caller passes `afterSearchStart` = matchStart + primary-word length,
-        // because the ask's contextAfter begins after the PRIMARY span — inside
-        // the altFind tail — not after the whole match.
-        let aStart = afterSearchStart ?? matchEnd
-        let aEnd = min(n, max(matchEnd, aStart) + 24)
-        if anyWholeWord(after, from: aStart, to: aEnd) { return true }
-        return false
+        return PasteEditResolver.resolve(
+            needle: PasteEditResolver.trimGatedWord(inText), anchoredAt: anchor, in: baseline,
+            contextBefore: ask.contextBefore, contextAfter: ask.contextAfter,
+            primaryLengthInNeedle: primaryLength)
     }
 
     private var currentActionAvailability: KeyboardActionAvailability {
@@ -1249,6 +1180,9 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         inFlightPasteSessionID = nil
         inFlightPasteText = nil
         inFlightPasteConfirm = nil
+        inFlightPasteInsertedAt = nil
+        inFlightPasteImmediateLen = 0
+        inFlightPasteImmediateEvidence = .none
     }
 
     /// Cure §4-B confirm path, called from `textDidChange`. Confirms the in-flight
@@ -1264,13 +1198,78 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
               let pendingText = inFlightPasteText,
               !inFlightPasteResolved else { return }
 
-        // Presence check against the live proxy context. iOS windows
-        // `documentContextBeforeInput` (~last 300–1024 chars), and the inserted
-        // suffix sits at the caret, so `hasSuffix` holds even in a long field.
-        // `contains` is a tolerant fallback for a host that appended a trailing
-        // space/newline after our text within the same change.
+        // ARM 1 — FULL presence check against the live proxy context. iOS
+        // windows `documentContextBeforeInput` (~last 300–1024 chars), and the
+        // inserted suffix sits at the caret, so `hasSuffix` holds even in a long
+        // field. `contains` is a tolerant fallback for a host that appended a
+        // trailing space/newline after our text within the same change.
         let ctx = textDocumentProxy.documentContextBeforeInput ?? ""
-        guard ctx.hasSuffix(pendingText) || ctx.contains(pendingText) else { return }
+        let fullArm = ctx.hasSuffix(pendingText) || ctx.contains(pendingText)
+
+        // ARM 2 — CORROBORATED PARTIAL (F4). Arm 1 compares a string that can be
+        // LONGER than the window iOS is willing to expose: for a long dictation
+        // both `hasSuffix` and `contains` are structurally false however cleanly
+        // the paste landed, so arm 1 cannot fire at all and this whole fast path
+        // goes dark for exactly the payloads that need it most. Arm 2 covers
+        // only that windowed case, and never relaxes arm 1's comparator — it
+        // ADDS conjunctions instead. What is trusted here is still the CALLBACK
+        // (host-originated; the proxy cache cannot fire it), not the suffix.
+        //
+        // The arm's REAL time budget is ~350 ms: the deferred settled-verify
+        // fires then and closes the in-flight window either way, so a host
+        // callback later than that finds no window to confirm. Condition (6)'s
+        // `pasteConfirmMaxAge` is only the belt for a verify delayed under load.
+        let ctxTail = Self.trimmingTrailingWhitespace(
+            ctx, maxCharacters: Self.pasteConfirmTrailingSlack)
+        let callbackAge = inFlightPasteInsertedAt.map { Date().timeIntervalSince($0) } ?? .infinity
+        let partialArm =
+            // (1) windowed case only — never competes with or shadows arm 1
+            pendingText.count > ctx.count
+            // (2) the ENTIRE window is our tail and nothing else. Stricter than
+            //     arm 1's `contains`: over a window we cannot tell "the host
+            //     appended" from "the host replaced our text with something
+            //     ending the same way", so only trailing whitespace is tolerated.
+            && pendingText.hasSuffix(ctxTail)
+            // (3) enough exact tail agreement that coincidence is implausible
+            && ctxTail.count >= Self.pastePartialConfirmFloor
+            // (4) our OWN read right after insertText already showed this tail
+            && inFlightPasteImmediateEvidence.isPartial(atLeast: Self.pastePartialConfirmFloor)
+            // (5) the context has not receded since our insert
+            && ctx.count >= inFlightPasteImmediateLen
+            // (6) this callback belongs to THIS insert, not to a later edit
+            && callbackAge <= Self.pasteConfirmMaxAge
+
+        guard fullArm || partialArm else { return }
+
+        // Log ONLY the corroborated-partial arm. `finalizeSuccess` already
+        // writes a `.pasteLandedViaTextDidChange` entry for this very same
+        // event (the `confirm()` below runs it synchronously), so emitting on
+        // the full arm too would double-count every short-circuit success in
+        // the device-gate read. The full arm needs no extra entry — it is the
+        // pre-F4 behaviour and finalize's entry already covers it. The
+        // partial arm is the one thing F4 added, and its entry carries the
+        // calibration fields finalize does not. Hence the F4 gate read: if
+        // `arm=corroborated-partial` never appears, Option B contributed
+        // nothing and Option G is the entire fix.
+        guard partialArm && !fullArm else { confirm(); return }
+
+        DiagnosticsLog.record(
+            source: "keyboard",
+            category: .pasteLandedViaTextDidChange,
+            message: "textDidChange corroborated-partial confirm arm matched",
+            metadata: [
+                "arm": "corroborated-partial",
+                "pasteLen": "\(pendingText.count)",
+                "ctxLen": "\(ctx.count)",
+                "ctxTailLen": "\(ctxTail.count)",
+                "immediateLen": "\(inFlightPasteImmediateLen)",
+                "immediateEvidence": inFlightPasteImmediateEvidence.logLabel,
+                "immediateOverlap":
+                    "\(inFlightPasteImmediateEvidence.matchedLength(pasteLength: pendingText.count))",
+                "confirmFloor": "\(Self.pastePartialConfirmFloor)",
+                "callbackAgeMs": "\(Int((callbackAge.isFinite ? callbackAge : -0.001) * 1000))",
+            ]
+        )
 
         confirm()
     }
@@ -1707,6 +1706,7 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             "Pending session \(sessionID) — no projection within \(Int(Self.launchDeadline))s; treating as failed-to-launch and clearing."
         )
         clearPendingPasteSession()
+        endDeck(sessionID: sessionID)
         renderRootView()
     }
 
@@ -1736,6 +1736,694 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         armLaunchDeadline(for: session)
     }
 
+
+    /// The ONE proven insert path: re-sync the host proxy, poll it for a stable
+    /// input session, insert, then corroborate that the text actually survived.
+    /// Extracted so the fresh-payload path and F2's `.resolved` deck path share it
+    /// verbatim — the deck's text must land through exactly the same machinery,
+    /// not a second copy of it.
+    ///
+    /// `deck` is the token of the hold deck this insertion belongs to (nil for
+    /// ordinary traffic). It is what the terminal branches clear, and what keeps a
+    /// failed attempt recoverable: the deck goes back to `.resolved` so a later
+    /// flush re-drives the owner's picks rather than the raw payload.
+    /// TERMINAL cleanup for a deck AND its cross-process asks blob, in one
+    /// place. The blob is a single global slot, so the clear is session-guarded
+    /// — a path ending an OLD deck (supersession, stranded sweeps) must never
+    /// delete a NEWER session's just-published asks. Every deck-terminal site
+    /// routes through here so the two can't fall out of sync (Batch-2 review:
+    /// the asymmetry made nudge suppression hard to reason about).
+    private func endDeck(sessionID: UUID) {
+        hub.clearAskDeck(sessionID: sessionID)
+        CorrectionBridge.clearAsks(matching: sessionID)
+    }
+
+    /// Shared tail of the flush's `.resolved` and healed-`.inserting` branches:
+    /// gate on the active controller, claim the deck into `.inserting`, and
+    /// drive the proven insert path with the deck's held text.
+    private func insertResolvedDeckText(_ text: String, session: UUID, deck: ActiveDeck) {
+        // Only the controller iOS most recently presented may drive the
+        // insert. Ghost controllers keep live-looking proxies in this
+        // codebase; one of them pasting would put the text in a field
+        // the owner is not looking at.
+        guard hub.isActiveController(ObjectIdentifier(self)) else { return }
+        guard !text.isEmpty else {
+            // Can't happen (an empty payload never opens a deck), but a
+            // deck that somehow resolved to nothing must end, not spin.
+            endDeck(sessionID: session)
+            return
+        }
+        guard let claimed = hub.beginAskDeckInsertion(deck.token) else { return }
+        performAutoPasteInsertion(pasteText: claimed, pendingSessionID: session, deck: deck.token)
+    }
+
+    /// How strongly a host context window supports "the text we inserted is
+    /// present" (F4 of docs/plans/vocab-hold-deck-reliability.md; review
+    /// findings 9 + 10).
+    ///
+    /// iOS WINDOWS `documentContextBeforeInput` (~last 300–1024 chars). For a
+    /// long dictation `context.hasSuffix(pasteText)` is therefore structurally
+    /// false however cleanly the paste landed — and the single boolean the
+    /// verify used read that as "reverted", showing "Couldn't paste here" over
+    /// text sitting right there in the field. Splitting the read into three
+    /// explicit strengths lets each branch decide how much proof it needs.
+    ///
+    /// NOTHING here is evidence of ABSENCE: a nil window is a dropped input
+    /// connection, not a revert.
+    private enum PasteEvidence: Equatable {
+        /// Context nil or empty. Proves nothing in EITHER direction — every
+        /// string vacuously "ends with" an empty window (review finding 9), so
+        /// this can never be upgraded into success on its own.
+        case none
+        /// The whole `pasteText` fits inside the window and sits at the caret.
+        /// The strong signal the verify has always used.
+        case full
+        /// `pasteText` is LONGER than the window and the ENTIRE window equals
+        /// the corresponding tail of `pasteText`. Consistent with a landed long
+        /// paste — but also with a host that kept only our tail, so it needs
+        /// corroboration before it counts as survival.
+        case partial(overlapLength: Int)
+
+        /// True for windowed evidence carrying at least `floor` characters of
+        /// exact tail agreement. `full`/`none` deliberately answer false: they
+        /// have their own arms in the decision table.
+        func isPartial(atLeast floor: Int) -> Bool {
+            if case .partial(let overlapLength) = self { return overlapLength >= floor }
+            return false
+        }
+
+        /// Characters of the paste this window can account for — all of them
+        /// for `full`, the window for `partial`, zero for `none`. Diagnostics
+        /// only; the device gate calibrates the floor off this number.
+        func matchedLength(pasteLength: Int) -> Int {
+            switch self {
+            case .none: return 0
+            case .full: return pasteLength
+            case .partial(let overlapLength): return overlapLength
+            }
+        }
+
+        var logLabel: String {
+            switch self {
+            case .none: return "none"
+            case .full: return "full"
+            case .partial: return "partial"
+            }
+        }
+    }
+
+    /// Minimum characters of exact tail agreement before WINDOWED (`partial`)
+    /// evidence may count toward survival. 24 is a defensible starting point,
+    /// NOT a measured one: long enough that a coincidental tail match is
+    /// implausible for dictated prose, short enough to be reachable by every
+    /// host window we know of. The F4 device gate calibrates it — every
+    /// settled-verify decision logs its evidence kind and overlap so the real
+    /// distribution is readable in Diagnostics before this number is trusted.
+    private static let pasteEvidenceOverlapFloor = 24
+
+    /// Minimum characters of exact tail agreement before the `textDidChange`
+    /// CORROBORATED-PARTIAL arm may confirm a paste. Deliberately higher than
+    /// `pasteEvidenceOverlapFloor`: that floor only ever contributes to a
+    /// decision alongside other evidence, whereas this arm single-handedly
+    /// declares success and consumes the payload. The asymmetric cost sets the
+    /// number — too high and the arm never fires and we are exactly where we
+    /// were; too low and a swallowed paste is consumed with no banner and the
+    /// dictation is gone. Device-gate calibrated off the confirm-arm log.
+    private static let pastePartialConfirmFloor = 64
+
+    /// Belt, NOT the primary bound. The real budget for the corroborated-partial
+    /// arm is the deferred settled-verify, which fires ~350 ms after the insert
+    /// and closes the in-flight window whichever way it decides — so in practice
+    /// a callback older than ~350 ms never reaches the arm at all. This constant
+    /// only covers the case where that verify is itself delayed under main-queue
+    /// load, keeping a late, unrelated host change from being read as continuity
+    /// of our paste.
+    private static let pasteConfirmMaxAge: TimeInterval = 1.0
+
+    /// Trailing whitespace characters tolerated when testing "the entire window
+    /// is our tail". Hosts that append a space/newline after an insert are
+    /// common, and without this slack the corroborated-partial arm would
+    /// silently never fire in exactly those hosts. Anything beyond whitespace
+    /// fails the arm by design — see the comment at the arm itself.
+    private static let pasteConfirmTrailingSlack = 4
+
+    /// Classifies an already-read host context against the text we inserted.
+    /// Pure and static so the immediate read and the settled read are judged by
+    /// the same rules (and so the rules are readable without a live proxy).
+    private static func pasteEvidence(context: String?, pasteText: String) -> PasteEvidence {
+        // An empty paste can't be evidenced (and never reaches here — the flush
+        // rejects an empty payload); an empty/nil window proves nothing.
+        guard let context, !context.isEmpty, !pasteText.isEmpty else { return .none }
+        if pasteText.count <= context.count {
+            // The window is big enough to hold the whole insert, so the strong
+            // caret-adjacent suffix check is decisive either way.
+            return context.hasSuffix(pasteText) ? .full : .none
+        }
+        // Windowed: the most the host can expose is our tail. Require the
+        // ENTIRE window to be that tail — a shorter agreement is not evidence.
+        return pasteText.hasSuffix(context) ? .partial(overlapLength: context.count) : .none
+    }
+
+    /// Drops up to `maxCharacters` trailing whitespace/newline characters. The
+    /// corroborated-partial confirm arm needs this because a host that appends a
+    /// space after our insert must not break the "the entire window is our tail"
+    /// test — while an UNBOUNDED trim would let a host that appended a whole run
+    /// of its own whitespace pass as continuity of our paste.
+    private static func trimmingTrailingWhitespace(_ text: String,
+                                                   maxCharacters: Int) -> String {
+        var result = text
+        var dropped = 0
+        while dropped < maxCharacters, let last = result.last, last.isWhitespace {
+            result.removeLast()
+            dropped += 1
+        }
+        return result
+    }
+
+    private func performAutoPasteInsertion(pasteText: String, pendingSessionID: UUID,
+                                           deck: AskDeckToken?) {
+        magicFollowUpExpiresAt = Date().addingTimeInterval(ClipboardHandoff.freshnessWindow)
+
+        // RE-SYNC THE HOST PROXY BEFORE INSERTING — bounded reconnect-poll.
+        //
+        // The transcript arrives ~hundreds of ms after the user's Stop tap
+        // (record → transcribe → cross-process publish), not as part of a UI
+        // event. During that gap a custom / web-backed compose field (Slack,
+        // Claude) can re-mount its text view, leaving our `textDocumentProxy`
+        // pointed at a stale input connection: the pointer still looks valid
+        // and the caret still blinks, but a cold `insertText` silently
+        // no-ops. Native fields (Messages) keep the connection, which is why
+        // it pastes there but not in those apps.
+        //
+        // Issuing ANY `adjustTextPosition` forces the host to re-establish
+        // the input connection. iOS COALESCES that into the current UI cycle,
+        // so a synchronous nudge-then-insert still hits the stale link — we
+        // must yield AT LEAST one run-loop tick. The build-103→106 fix used a
+        // single fixed 12ms hop; the research (docs/plans/reliable-web-field-
+        // paste.md §1.3 / §4-A) shows a constant can't scale: a HEAVY
+        // re-mounted web field (Claude's 906-char draft) is still rehydrating
+        // its remote input session at +12ms, so the IPC drops while the proxy
+        // cache grows → silent false-success.
+        //
+        // CURE: after `adjustTextPosition(0)`, POLL the proxy for a STABLE
+        // input session — read `documentContextBeforeInput` (+ `hasText`)
+        // every ~30ms up to a ~400ms ceiling, and only insert once we see
+        // TWO CONSECUTIVE EQUAL reads (the host finished rehydrating). A fast
+        // / native field is stable on poll #1 (no added latency, no
+        // regression); a heavy web field gets the time its session needs. The
+        // poll is bounded (hard iteration ceiling, async — never a busy-wait /
+        // main-thread block) and on ceiling we insert anyway (best effort,
+        // then the deferred verify + clipboard floor catch a miss).
+        //
+        // `isAutoPasteInsertInFlight` guards the ENTIRE poll + insert +
+        // deferred-verify window (set true here, reset only when the verify
+        // resolves) so a second phase-change flush can't stack a duplicate
+    // insert → single paste, no retry band-aid.
+        guard !isAutoPasteInsertInFlight else {
+            // Another insert owns the proxy window. Release the deck's claim so
+            // it stays `.resolved` and a later flush re-drives it — leaving it
+            // `.inserting` would park the paste forever.
+            if let deck { hub.returnAskDeckToResolved(deck) }
+            return
+        }
+        isAutoPasteInsertInFlight = true
+
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: 0)
+
+        // Bounded reconnect-poll tunables.
+        let pollIntervalMs = 30
+        let pollCeilingMs = 400
+        let pollStartedAt = Date()
+
+        // The insert + verify body. Runs ONCE, after the poll settles (or hits
+        // the ceiling). `iterations`/`settleMs` are passed through for the
+        // POLL diagnostic. Factored into a local closure so the poll loop has a
+        // single exit point into the (unchanged) landed-detection logic below.
+        func performInsertAndVerify(iterations: Int, settleMs: Int) {
+            // The pending session may have been consumed/cleared by another
+            // path during the poll; re-validate before inserting. Release the
+            // in-flight guard on this early exit (no insert ran, no deferred
+            // verify scheduled).
+            guard let pending = self.readPendingPasteSession(),
+                  pending.id == pendingSessionID else {
+                self.isAutoPasteInsertInFlight = false
+                // Nothing inserted, nothing consumed — hand the deck back so a
+                // later flush can still paste the owner's picks.
+                if let deck { self.hub.returnAskDeckToResolved(deck) }
+                return
+            }
+
+            DiagnosticsLog.record(
+                source: "keyboard",
+                category: .pasteReconnectPoll,
+                message: "Reconnect-poll settled before insert",
+                metadata: [
+                    "sessionID": pendingSessionID.uuidString,
+                    "iterations": "\(iterations)",
+                    "settleMs": "\(settleMs)",
+                    "hitCeiling": "\(settleMs >= pollCeilingMs)",
+                ]
+            )
+
+            // Detect whether the insert LANDED by reading the proxy AFTER it.
+            // After a REAL insert the pre-caret context is non-nil (it now
+            // holds at least the text we just inserted); after a no-op into a
+            // still-disconnected proxy it stays nil. (`proxyHadContextBefore`
+            // covers the empty-field case where the field legitimately had no
+            // text before the caret — see build-105 empty-field double-paste.)
+            let beforeCtx = self.textDocumentProxy.documentContextBeforeInput
+            self.insertTrackedText(pasteText)
+            let afterCtx = self.textDocumentProxy.documentContextBeforeInput
+            let proxyHadContextBefore = (beforeCtx != nil)
+            let proxyHasContextAfter = (afterCtx != nil)
+            let landed = proxyHadContextBefore || proxyHasContextAfter
+
+            // [PASTE-DIAG] The REAL signal for custom/web fields (Claude
+            // Code): did the proxy's pre-caret buffer actually change? The
+            // `landed` nil-check can't tell a real insert from a no-op when
+            // there's stale context. `delta`>0 / `endsWith`=true → the resync
+            // reconnected and the text went in (an empty visible box is then
+            // a host-render limit); `delta`==0 → the insert no-op'd despite
+            // the resync (ours to fix). Lengths + a bool only — no content.
+            // Note: iOS windows `documentContextBeforeInput`, so `delta` can
+            // under-count a long paste; `endsWith` is the firmer signal.
+            let beforeLen = beforeCtx?.count ?? 0
+            let afterLen = afterCtx?.count ?? 0
+            // Same rules as the settled read (F4). `endsWithInserted` keeps its
+            // exact old meaning — the whole insert fits the window and sits at
+            // the caret — while `immediateEvidence` also carries the windowed
+            // case a long paste can only ever reach.
+            let immediateEvidence = Self.pasteEvidence(context: afterCtx, pasteText: pasteText)
+            let endsWithInserted = (immediateEvidence == .full)
+
+            guard landed else {
+                // Still no-op'd even after the re-sync — keep the transcript
+                // pending (don't burn it) so the settled `.idle` flush can
+                // try once more. Single insert per flush = no double-paste.
+                self.isAutoPasteInsertInFlight = false
+                // Same for the deck: the picks aren't lost, they're waiting for
+                // the next attempt.
+                if let deck { self.hub.returnAskDeckToResolved(deck) }
+                DiagnosticsLog.record(
+                    source: "keyboard",
+                    category: .pasteSkipProxyDisconnected,
+                    message: "Insert no-op'd after re-sync — proxy not connected; kept pending",
+                    metadata: [
+                        "sessionID": pendingSessionID.uuidString,
+                        "chars": "\(pasteText.count)",
+                        "beforeLen": "\(beforeLen)",
+                        "afterLen": "\(afterLen)",
+                        "delta": "\(afterLen - beforeLen)",
+                        "endsWith": "\(endsWithInserted)",
+                    ]
+                )
+                return
+            }
+
+            // The IMMEDIATE read-back says it landed — but on a web/custom
+            // field (Claude Code = WKWebView, Slack = React-Native) the proxy
+            // can update its OWN local pre-caret cache while the host's live
+            // document never commits the change (stale/detached connection) or
+            // re-renders it away. `delta`/`endsWith` are computed from that same
+            // possibly-stale cache and lie together — that is exactly why
+            // `pasteSuccess` shipped as a false positive four times.
+            //
+            // So DO NOT consume the payload or log `pasteSuccess` on the
+            // immediate read alone. Two corroborations narrow the window:
+            //   (B) the host's `textDidChange` input-delegate callback — when
+            //       it fires for our session with our text present, that is the
+            //       HOST talking back (the proxy cache can't fake it), so we
+            //       short-circuit straight to success (cure §4-B); and
+            //   (C) a deferred (~350ms) settled re-read as the FLOOR — gate
+            //       success on the inserted suffix still present AND `hasText`
+            //       (a separate UITextInput signal the local cache can't fake
+            //       on its own — Path D of bug-slack-silent-paste.md). This
+            //       runs when textDidChange never fires (many hosts skip it for
+            //       proxy-originated inserts — its absence proves nothing).
+            // Exactly ONE of {B, C} runs the finalize body — `inFlightPaste-
+            // Resolved` guards it so we never double-consume. The
+            // `isAutoPasteInsertInFlight` guard stays armed across the whole
+            // window so a second flush can't stack.
+            //
+            // Native fields (Messages/Notes = UITextView) commit synchronously
+            // into the same object the proxy reads, so the settled read still
+            // shows the suffix + hasText → classified success, no regression
+            // (incl. the >2000-char windowing case: the window always holds the
+            // freshly-inserted suffix regardless of how much precedes it).
+            let immediateAfterLen = afterLen
+
+            // Shared SUCCESS finalize. Runs from EITHER the textDidChange
+            // short-circuit (B) or the deferred settled-verify (C). Guarded by
+            // `inFlightPasteResolved` so only the first caller wins — the other
+            // becomes a no-op (no double-consume, no double just-now marker).
+            let finalizeSuccess: (_ viaTextDidChange: Bool, _ settledLen: Int) -> Void = { [weak self] viaTextDidChange, settledLen in
+                guard let self else { return }
+                guard !self.inFlightPasteResolved else { return }
+                self.inFlightPasteResolved = true
+                self.clearInFlightPasteWindow()
+                self.isAutoPasteInsertInFlight = false
+
+                // The pending session may have been consumed/cleared by another
+                // path. If so the work is already done — don't re-consume. The
+                // deck for it is terminal either way (every path that clears
+                // pending clears it too; this is the belt to that suspenders).
+                guard let pending = self.readPendingPasteSession(),
+                      pending.id == pendingSessionID else {
+                    self.endDeck(sessionID: pendingSessionID)
+                    return
+                }
+
+                DiagnosticsLog.record(
+                    source: "keyboard",
+                    category: viaTextDidChange ? .pasteLandedViaTextDidChange : .pasteSuccess,
+                    message: viaTextDidChange
+                        ? "Host textDidChange confirmed insert landed (short-circuit)"
+                        : "Inserted transcript into host (settled-verified)",
+                    metadata: [
+                        "chars": "\(pasteText.count)",
+                        "sessionID": pendingSessionID.uuidString,
+                        "beforeLen": "\(beforeLen)",
+                        "afterLen": "\(afterLen)",
+                        "delta": "\(afterLen - beforeLen)",
+                        "endsWith": "\(endsWithInserted)",
+                        "settledLen": "\(settledLen)",
+                    ]
+                )
+                // Phase 2 just-now marker (plan §4.3 / §13 risk 7) — stamp
+                // the keyboard's own state at the moment of insertion so the
+                // RecentsStrip's top row can render in the green just-now
+                // style for ~5s. Reading AppGroup.lastDictation after this
+                // returns nil because markConsumed() (below) clears it.
+                self.stampJustNowMarker(text: pasteText)
+                ClipboardHandoff.markConsumed()
+                self.clearPendingPasteSession()
+                self.freshPreview = nil
+                self.hasPasteboardContent = UIPasteboard.general.hasStrings
+                self.renderRootView()
+                // Post-paste correction quick-review: if the app published asks
+                // for this session, take over the strip slot to collect verdicts.
+                // Skip when the ask-before-paste deck already handled this session
+                // (the verdicts were collected pre-paste) — and clean up its state.
+                if deck != nil {
+                    // TERMINAL for the deck: its text is in the host. `endDeck`
+                    // also clears the App-Group asks blob (session-guarded).
+                    self.endDeck(sessionID: pendingSessionID)
+                } else {
+                    self.maybeShowCorrectionNudge(sessionID: pendingSessionID)
+                }
+            }
+
+            // Open the in-flight-paste window for the textDidChange (B) path.
+            // The override checks `inFlightPasteSessionID`/`inFlightPasteText`
+            // and, when its host change carries our text, calls
+            // `inFlightPasteConfirm` → finalizeSuccess(viaTextDidChange: true).
+            self.inFlightPasteResolved = false
+            self.inFlightPasteSessionID = pendingSessionID
+            self.inFlightPasteText = pasteText
+            // Continuity state for the corroborated-partial confirm arm: when
+            // our insert happened, how much context it left, and what our own
+            // read-back saw. The arm asks whether the host's callback is
+            // consistent with THIS insert — it never re-derives the answer from
+            // the callback alone.
+            self.inFlightPasteInsertedAt = Date()
+            self.inFlightPasteImmediateLen = afterLen
+            self.inFlightPasteImmediateEvidence = immediateEvidence
+            self.inFlightPasteConfirm = { [weak self] in
+                // settledLen unknown on the textDidChange path; read it live
+                // for the log only. `[weak self]` so the property storing this
+                // closure on `self` isn't a retain cycle keeping the keyboard
+                // alive (it's nil'd on resolve, but a torn-down keyboard before
+                // resolve must still dealloc).
+                guard let self else { return }
+                let liveLen = self.textDocumentProxy.documentContextBeforeInput?.count ?? -1
+                finalizeSuccess(true, liveLen)
+            }
+
+            // (C) Deferred settled-verify FLOOR. Always scheduled; if (B)
+            // already resolved, the `inFlightPasteResolved` guard inside
+            // finalize makes this a no-op (it only logs the VERIFY read).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self else { return }
+
+                let settledCtx = self.textDocumentProxy.documentContextBeforeInput
+                let settledLen = settledCtx?.count ?? -1
+                let settledEvidence = Self.pasteEvidence(context: settledCtx, pasteText: pasteText)
+                let stillEndsWith = (settledEvidence == .full)
+                let hasTextNow = self.textDocumentProxy.hasText
+                // A NIL settled context (`settledLen == -1`, `hasText == false`)
+                // means the host's INPUT CONNECTION went away after our insert —
+                // web fields (Claude Code) re-render and drop the proxy. That is
+                // NOT a revert: a genuine revert leaves a SHORTER but non-nil
+                // context. Treating the disconnect as failure false-flagged
+                // "couldn't paste" on every review re-entry even though the text
+                // landed (immediateLen>0). So a disconnected settle is
+                // INCONCLUSIVE — fall back to the immediate landed evidence.
+                let proxyDisconnected = (settledCtx == nil)
+                // Survived = the text is still there. Strong signal: the context
+                // still ends with what we inserted. Tolerant fallback: the
+                // context did NOT SHRINK (settledLen >= post-insert length) —
+                // absorbs a host autocorrect/keystroke mutating the inserted TAIL
+                // within the 350ms window. A genuine revert SHRINKS the context
+                // (non-nil, shorter) → still not-survived. Disconnect (nil) +
+                // confirmed-immediate-insert ⇒ trust the immediate read (the
+                // transcript is on the clipboard from publish as a silent floor
+                // either way, so a rare true-miss is still recoverable, but we
+                // no longer cry wolf + invite a double-paste on the common case).
+                //
+                // F4 decision table (plan §F4; review findings 9 + 10). `full`
+                // and `none` behave EXACTLY as before — a nil/empty window
+                // still falls to the `hasTextNow`/`settledLen` arm and still
+                // proves nothing on its own. The WINDOWED case is what F4 had
+                // to answer: iOS caps `documentContextBeforeInput`, so a paste
+                // longer than the window can never be `full` no matter how
+                // cleanly it landed, and the deck's review dwell widens the
+                // disconnect window that then trips this floor — "the text is
+                // right there but the banner says it failed". Partial evidence
+                // NEVER decides survival HERE: the windowed case is answered
+                // upstream, by the `textDidChange` corroborated-partial confirm
+                // arm (which resolves through `finalizeSuccess`, so this closure
+                // short-circuits), and by Option G downgrading this branch's
+                // banner copy. A disconnect with only partial evidence stays
+                // INCONCLUSIVE and is still classified not-survived: the banner
+                // + clipboard are a one-tap recovery, a false success is a
+                // silently lost dictation.
+                let contextDidNotShrink = (settledLen >= immediateAfterLen)
+                // REVIEW BLOCKER FIX: a "settled partial + non-shrink" pair is
+                // NOT independent corroboration — both derive from the same
+                // `documentContextBeforeInput` read, which the proxy's local
+                // cache can satisfy after a swallowed paste (Path D,
+                // bug-slack-silent-paste.md). `hasText` is the one signal in
+                // this block the cache can't fake, so no survival arm may
+                // bypass it — and with `hasTextNow` added, this pair is
+                // strictly subsumed by the `settled-no-shrink` arm. It
+                // therefore contributes NOTHING as a decision and exists only
+                // in the log metadata (settledOverlap) for floor calibration.
+                let survived = (hasTextNow && (stillEndsWith || contextDidNotShrink))
+                            || (proxyDisconnected && endsWithInserted)
+
+                // Which arm decided, in the same order `survived` evaluates
+                // them — the device gate reads this against the evidence kinds
+                // and overlaps to calibrate `pasteEvidenceOverlapFloor` and to
+                // catch a partial arm turning a swallowed paste into a success.
+                let decisionBranch: String
+                if hasTextNow && stillEndsWith {
+                    decisionBranch = "settled-full"
+                } else if hasTextNow && contextDidNotShrink {
+                    decisionBranch = "settled-no-shrink"
+                } else if proxyDisconnected && endsWithInserted {
+                    decisionBranch = "disconnect-immediate-full"
+                } else if proxyDisconnected {
+                    decisionBranch = "disconnect-inconclusive"
+                } else {
+                    decisionBranch = "settled-shrank"
+                }
+
+                // Option G — the honest floor. `disconnect-inconclusive` is the
+                // one not-survived branch with NO affirmative evidence of
+                // failure: the input connection went away and the paste was too
+                // long for the window to prove anything. The clipboard fallback
+                // still runs (it is the recovery, and consuming the payload is
+                // what prevents the double-paste class), but the banner must
+                // stop telling the owner a landed paste failed. Every other
+                // branch here has real evidence — a context that SHRANK, or a
+                // field with no text — and keeps the red copy unchanged.
+                let fallbackCopy: PasteFallbackCopy
+                if decisionBranch == "disconnect-inconclusive" {
+                    // Evidence-aware wording, decision UNCHANGED (still
+                    // not-survived; the payload is still consumed, the
+                    // clipboard floor still set). A strong immediate tail
+                    // match — far above the 24-char calibration floor; the
+                    // owner's real case matched all 499 chars the host
+                    // exposes — makes "it probably landed" the honest read,
+                    // while a weak/absent one keeps the neutral hedge. Only
+                    // the banner copy varies; a stale-cache false positive
+                    // here costs a slightly optimistic sentence, not a
+                    // consumed dictation.
+                    fallbackCopy = immediateEvidence.isPartial(atLeast: 128)
+                        ? .likelyLanded : .inconclusive
+                } else {
+                    fallbackCopy = .failed
+                }
+
+                DiagnosticsLog.record(
+                    source: "keyboard",
+                    category: .pasteVerifyDeferred,
+                    message: "Deferred landed-verify read-back",
+                    metadata: [
+                        "sessionID": pendingSessionID.uuidString,
+                        "immediateLen": "\(immediateAfterLen)",
+                        "settledLen": "\(settledLen)",
+                        "stillEndsWith": "\(stillEndsWith)",
+                        "hasText": "\(hasTextNow)",
+                        "alreadyResolved": "\(self.inFlightPasteResolved)",
+                        "pasteLen": "\(pasteText.count)",
+                        "settledEvidence": settledEvidence.logLabel,
+                        "settledOverlap": "\(settledEvidence.matchedLength(pasteLength: pasteText.count))",
+                        "immediateEvidence": immediateEvidence.logLabel,
+                        "immediateOverlap": "\(immediateEvidence.matchedLength(pasteLength: pasteText.count))",
+                        "overlapFloor": "\(Self.pasteEvidenceOverlapFloor)",
+                        "branch": decisionBranch,
+                        "survived": "\(survived)",
+                    ]
+                )
+
+                // (B) already classified this paste a success — nothing to do.
+                guard !self.inFlightPasteResolved else { return }
+
+                if survived {
+                    finalizeSuccess(false, settledLen)
+                    return
+                }
+
+                // FAILURE floor. Guard so a racing (B) doesn't also fire.
+                guard !self.inFlightPasteResolved else { return }
+                self.inFlightPasteResolved = true
+                self.clearInFlightPasteWindow()
+                self.isAutoPasteInsertInFlight = false
+
+                // The pending session may have been consumed/cleared by another
+                // path while we waited. If so, the work is already done — bail
+                // without re-consuming or re-pasting (but never leave the deck
+                // holding a session that no longer exists).
+                guard let pending = self.readPendingPasteSession(),
+                      pending.id == pendingSessionID else {
+                    self.endDeck(sessionID: pendingSessionID)
+                    return
+                }
+
+                // The immediate read lied: the host's live field did not
+                // keep the text. CONSUME the payload + clear pending so NO
+                // later flush (post-publish historyMirrorUpdated, a
+                // keyboard re-presentation, the launch-deadline backstop)
+                // can re-insert it — the 350ms in-flight guard only covers
+                // this window, so keeping it pending would DOUBLE-PASTE on
+                // a host that committed slower than 350ms (the exact
+                // double-paste class that burned builds 103-106). Recovery
+                // is the clipboard banner instead of an in-place retry:
+                // the transcript is already on UIPasteboard.general from
+                // publish (re-stamped with a 1-hour expiration), so the
+                // user taps once to paste. Silent false-success → VISIBLE
+                // one-tap recovery, with no double-paste risk.
+                // Windowed = the paste was longer than the host's context
+                // window and our own read-back matched its tail. `.full` can't
+                // reach here (it would have taken the disconnect-immediate-full
+                // arm), so this cleanly separates "too long to prove" from
+                // "nothing was ever visible".
+                let immediateWasWindowed = immediateEvidence.isPartial(atLeast: 1)
+                DiagnosticsLog.record(
+                    source: "keyboard",
+                    category: .pasteRevertedAfterLanding,
+                    // The inconclusive branch covers TWO shapes and the copy
+                    // must not assert the wrong one: a LONG paste the host
+                    // window could only ever evidence partially, and a SHORT
+                    // paste whose immediate read showed nothing at all before
+                    // the connection went away. Only the former is "exceeds
+                    // window"; say so only when the immediate evidence was
+                    // actually partial.
+                    message: fallbackCopy == .inconclusive
+                        ? (immediateWasWindowed
+                            ? "Settled read inconclusive (proxy disconnected, paste exceeds host window); consumed + neutral clipboard fallback (no retry, no double-paste)"
+                            : "Settled read inconclusive (disconnected before anything could be verified); consumed + neutral clipboard fallback (no retry, no double-paste)")
+                        : "Immediate read said landed but settled read disagrees; consumed + clipboard fallback (no retry, no double-paste)",
+                    metadata: [
+                        "sessionID": pendingSessionID.uuidString,
+                        "chars": "\(pasteText.count)",
+                        "settledLen": "\(settledLen)",
+                        "stillEndsWith": "\(stillEndsWith)",
+                        "hasText": "\(hasTextNow)",
+                        "settledEvidence": settledEvidence.logLabel,
+                        "settledOverlap": "\(settledEvidence.matchedLength(pasteLength: pasteText.count))",
+                        "immediateEvidence": immediateEvidence.logLabel,
+                        "immediateOverlap": "\(immediateEvidence.matchedLength(pasteLength: pasteText.count))",
+                        "overlapFloor": "\(Self.pasteEvidenceOverlapFloor)",
+                        "branch": decisionBranch,
+                        "copyVariant": fallbackCopy.logLabel,
+                    ]
+                )
+                ClipboardHandoff.markConsumed()
+                self.clearPendingPasteSession()
+                // TERMINAL for the deck too. Before F1 this branch consumed the
+                // payload and cleared pending WITHOUT touching deck state, so a
+                // deck outlived the very paste it was gating.
+                if deck != nil {
+                    self.endDeck(sessionID: pendingSessionID)
+                }
+                self.fallbackToClipboardWithBanner(text: pasteText, copy: fallbackCopy)
+            }
+        }
+
+        // Kick off the bounded reconnect-poll. `pollForStableSession` recurses
+        // via `asyncAfter` (NOT a busy-wait): it captures the prior read, and
+        // after each ~30ms tick compares the fresh read to it. Two consecutive
+        // equal reads → STABLE → insert. Hitting the ceiling → insert anyway
+        // (best effort; the verify + clipboard floor catch a miss). `iteration`
+        // is 1-based for the first comparison.
+        func pollForStableSession(previous: String?, previousHasText: Bool, iteration: Int) {
+            // Re-validate the in-flight guard / pending session each tick so a
+            // teardown mid-poll releases cleanly. Belt to the teardown's
+            // suspenders: if the flag dropped while a deck sits in
+            // `.inserting`, hand it back so it can paste on re-present
+            // instead of stranding (no-op for any other phase).
+            guard self.isAutoPasteInsertInFlight else {
+                if let deck = self.hub.activeDeck {
+                    self.hub.returnAskDeckToResolved(deck.token)
+                }
+                return
+            }
+            let elapsedMs = Int(Date().timeIntervalSince(pollStartedAt) * 1000)
+
+            let current = self.textDocumentProxy.documentContextBeforeInput
+            let currentHasText = self.textDocumentProxy.hasText
+
+            // STABLE when this read matches the previous one (both context and
+            // hasText unchanged). The FIRST comparison is the pre-poll read vs
+            // the read ~30ms later, so a native/fast host (whose context never
+            // keeps changing) is stable on poll #1 → minimal added latency, no
+            // regression. A heavy re-mounting web field whose context is still
+            // growing fails the equality and polls again until it settles.
+            let stable = (current == previous) && (currentHasText == previousHasText)
+
+            if stable || elapsedMs >= pollCeilingMs {
+                performInsertAndVerify(iterations: iteration, settleMs: elapsedMs)
+                return
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(pollIntervalMs)) {
+                pollForStableSession(previous: current, previousHasText: currentHasText, iteration: iteration + 1)
+            }
+        }
+        // First read is taken on the next tick (one run-loop hop after the
+        // `adjustTextPosition(0)` re-sync request, matching the original
+        // single-hop semantics), then compared against the tick after it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(pollIntervalMs)) {
+            pollForStableSession(
+                previous: self.textDocumentProxy.documentContextBeforeInput,
+                previousHasText: self.textDocumentProxy.hasText,
+                iteration: 1
+            )
+        }
+    }
+
     /// v7 flush logic. Match-fresh-payload happy-path FIRST (per design Q1
     /// user-decision §4.6.A), then sad-path TerminalSessionLog cleanup, then
     /// sad-path synthetic `.failed` cleanup. Running terminal cleanup before
@@ -1759,7 +2447,64 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             }
             return
         }
-        guard let session = readPendingPasteSession() else { return }
+        guard let session = readPendingPasteSession() else {
+            // No pending paste at all: any deck is holding a session whose paste
+            // can never happen. Ending it here is what keeps a stranded deck from
+            // blocking dictation for the rest of the process (F1b makes the deck
+            // modal, so a deck that outlives its session would be a dead end).
+            if let stranded = hub.activeDeck { endDeck(sessionID: stranded.sessionID) }
+            return
+        }
+
+        // SUPERSESSION. F1b stops the KEYBOARD starting a second dictation over a
+        // held paste, but the main app can still start one (the FAB), and that
+        // overwrites the single pending-paste slot. The deck's payload slot is
+        // gone with it, so the older deck is terminal.
+        if let stale = hub.activeDeck, stale.sessionID != session.id {
+            endDeck(sessionID: stale.sessionID)
+        }
+
+        // ── F2: phase-aware deck branch, BEFORE the freshness read ──
+        //
+        // Ordering is the whole fix. `readFresh()` drops a payload older than
+        // ClipboardHandoff.freshnessWindow (30s), and a worst-case deck (three
+        // cards × a 10s dwell) runs past that — so an expired payload never even
+        // reached the deck gate below and fell straight into the no-payload
+        // terminal cleanup: the owner answered every card and NOTHING pasted.
+        // A resolved deck already holds its exact text, captured at hold time
+        // from the payload; nothing about it can go stale, so no age check
+        // applies to it.
+        if let deck = hub.askDeck(for: session.id) {
+            switch deck.phase {
+            case .reviewing:
+                // The owner is still choosing. Insert nothing, consume nothing,
+                // clean up nothing — a re-entrant flush (phase change, keyboard
+                // re-presentation) must not paste the defaults out from under
+                // the cards they are tapping.
+                return
+            case .inserting(let held):
+                // Another pass is already driving the proxy for this deck —
+                // but only if one actually IS. `.inserting` with no local
+                // insert in flight means the claiming controller died between
+                // the claim and the insert without running its teardown
+                // hand-back (ghost controllers skipping `viewWillDisappear`
+                // are a documented reality here). Self-heal: hand the deck
+                // back and drive the insert from THIS pass, instead of
+                // returning forever on a phase nobody owns.
+                if isAutoPasteInsertInFlight { return }
+                hub.returnAskDeckToResolved(deck.token)
+                DiagnosticsLog.record(
+                    source: "keyboard", category: .pasteSuccess,
+                    message: "ask-deck: healed an orphaned .inserting claim",
+                    metadata: ["sessionID": session.id.uuidString]
+                )
+                insertResolvedDeckText(held, session: session.id, deck: deck)
+                return
+            case .resolved(let text):
+                insertResolvedDeckText(text, session: session.id, deck: deck)
+                return
+            }
+        }
 
         let payload = ClipboardHandoff.readFresh()
         let projection = PipelinePhaseProjection.read()
@@ -1788,422 +2533,44 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
                 )
                 ClipboardHandoff.markConsumed()
                 clearPendingPasteSession()
+                endDeck(sessionID: session.id)
                 renderRootView()
                 return
             }
-            // ── Ask-before-paste gate (Thread 2) ──
-            // If the app staged correction asks for this session and the review deck
-            // hasn't run yet, HOLD the paste: present the deck and return WITHOUT
-            // inserting or consuming anything (so teardown mid-deck can neither drop
-            // nor double the text — pending stays intact + the clipboard floor
-            // survives). The deck re-enters this flush on resolution with the chosen
-            // text in `deckResolvedText` (and `deckHandledSessions` set so this gate
-            // is skipped the second time).
-            if !deckHandledSessions.contains(session.id),
-               let staged = CorrectionBridge.readAsks(sessionID: session.id),
+            // ── Ask-before-paste gate ──
+            // If the app staged correction asks for this session, HOLD the paste:
+            // open the deck and return WITHOUT inserting or consuming anything (so
+            // teardown mid-deck can neither drop nor double the text — pending
+            // stays intact + the clipboard floor survives). Resolution re-enters
+            // this flush and takes the F2 branch above.
+            //
+            // No "already handled" set is needed any more: every terminal path
+            // that clears the deck also clears the pending session (successful
+            // paste, clipboard fallback, terminal-log cleanup, launch deadline,
+            // teardown-consume), so a session can never arrive here twice.
+            if let staged = CorrectionBridge.readAsks(sessionID: session.id),
                !staged.asks.isEmpty,
                // V2-3: teach-only asks (split-word merge class) must NEVER
                // hold the paste — if EVERY staged ask is post-paste-only,
                // skip the hold entirely; they surface via the post-paste
                // teach strip instead (`maybeShowCorrectionNudge`).
                staged.asks.contains(where: { $0.postPasteOnly != true }) {
-                // MUST: a re-entrant flush (phase-change / re-present) can land WHILE
-                // the deck is open and before the session is "handled" — bail BEFORE
-                // touching any state so we never wipe the verdicts the user is mid-way
-                // through picking (which would paste the unspliced defaults).
-                if hub.showAskDeck { return }
-                // One deck at a time — drop any prior session's deck state so these
-                // dictionaries can't grow over the keyboard-process lifetime (incl.
-                // a session whose re-entry later sad-pathed without cleanup).
-                deckResolvedText = deckResolvedText.filter { $0.key == session.id }
-                deckDefaultText = deckDefaultText.filter { $0.key == session.id }
-                deckVerdicts = deckVerdicts.filter { $0.key == session.id }
-                deckHandledSessions = deckHandledSessions.filter { $0 == session.id }
-                deckDefaultText[session.id] = payload.text
-                deckVerdicts[session.id] = [:]
+                // The baseline is captured HERE, once, from the payload we just
+                // read — the resolution never depends on a second (possibly
+                // expired) transport read, and it is the exact string the
+                // producer resolved its edit descriptors against.
+                let token = hub.beginAskDeck(staged, baseline: payload.text)
                 DiagnosticsLog.record(
                     source: "keyboard", category: .vocabularyGate,
                     message: "ask-before-paste: holding for review deck",
-                    metadata: ["sessionID": session.id.uuidString, "asks": "\(staged.asks.count)"])
-                hub.presentAskDeck(staged)
+                    metadata: ["sessionID": session.id.uuidString,
+                               "asks": "\(staged.asks.count)",
+                               "generation": "\(token.generation)"])
                 return
             }
 
-            magicFollowUpExpiresAt = Date().addingTimeInterval(ClipboardHandoff.freshnessWindow)
-
-            // RE-SYNC THE HOST PROXY BEFORE INSERTING — bounded reconnect-poll.
-            //
-            // The transcript arrives ~hundreds of ms after the user's Stop tap
-            // (record → transcribe → cross-process publish), not as part of a UI
-            // event. During that gap a custom / web-backed compose field (Slack,
-            // Claude) can re-mount its text view, leaving our `textDocumentProxy`
-            // pointed at a stale input connection: the pointer still looks valid
-            // and the caret still blinks, but a cold `insertText` silently
-            // no-ops. Native fields (Messages) keep the connection, which is why
-            // it pastes there but not in those apps.
-            //
-            // Issuing ANY `adjustTextPosition` forces the host to re-establish
-            // the input connection. iOS COALESCES that into the current UI cycle,
-            // so a synchronous nudge-then-insert still hits the stale link — we
-            // must yield AT LEAST one run-loop tick. The build-103→106 fix used a
-            // single fixed 12ms hop; the research (docs/plans/reliable-web-field-
-            // paste.md §1.3 / §4-A) shows a constant can't scale: a HEAVY
-            // re-mounted web field (Claude's 906-char draft) is still rehydrating
-            // its remote input session at +12ms, so the IPC drops while the proxy
-            // cache grows → silent false-success.
-            //
-            // CURE: after `adjustTextPosition(0)`, POLL the proxy for a STABLE
-            // input session — read `documentContextBeforeInput` (+ `hasText`)
-            // every ~30ms up to a ~400ms ceiling, and only insert once we see
-            // TWO CONSECUTIVE EQUAL reads (the host finished rehydrating). A fast
-            // / native field is stable on poll #1 (no added latency, no
-            // regression); a heavy web field gets the time its session needs. The
-            // poll is bounded (hard iteration ceiling, async — never a busy-wait /
-            // main-thread block) and on ceiling we insert anyway (best effort,
-            // then the deferred verify + clipboard floor catch a miss).
-            //
-            // `isAutoPasteInsertInFlight` guards the ENTIRE poll + insert +
-            // deferred-verify window (set true here, reset only when the verify
-            // resolves) so a second phase-change flush can't stack a duplicate
-            // insert → single paste, no retry band-aid.
-            guard !isAutoPasteInsertInFlight else { return }
-            isAutoPasteInsertInFlight = true
-
-            textDocumentProxy.adjustTextPosition(byCharacterOffset: 0)
-
-            let pendingSessionID = session.id
-            // After the hold deck resolves, paste the spliced text; otherwise the
-            // raw handoff payload (the common no-asks case).
-            let pasteText = deckResolvedText[session.id] ?? payload.text
-
-            // Bounded reconnect-poll tunables.
-            let pollIntervalMs = 30
-            let pollCeilingMs = 400
-            let pollStartedAt = Date()
-
-            // The insert + verify body. Runs ONCE, after the poll settles (or hits
-            // the ceiling). `iterations`/`settleMs` are passed through for the
-            // POLL diagnostic. Factored into a local closure so the poll loop has a
-            // single exit point into the (unchanged) landed-detection logic below.
-            func performInsertAndVerify(iterations: Int, settleMs: Int) {
-                // The pending session may have been consumed/cleared by another
-                // path during the poll; re-validate before inserting. Release the
-                // in-flight guard on this early exit (no insert ran, no deferred
-                // verify scheduled).
-                guard let pending = self.readPendingPasteSession(),
-                      pending.id == pendingSessionID else {
-                    self.isAutoPasteInsertInFlight = false
-                    return
-                }
-
-                DiagnosticsLog.record(
-                    source: "keyboard",
-                    category: .pasteReconnectPoll,
-                    message: "Reconnect-poll settled before insert",
-                    metadata: [
-                        "sessionID": pendingSessionID.uuidString,
-                        "iterations": "\(iterations)",
-                        "settleMs": "\(settleMs)",
-                        "hitCeiling": "\(settleMs >= pollCeilingMs)",
-                    ]
-                )
-
-                // Detect whether the insert LANDED by reading the proxy AFTER it.
-                // After a REAL insert the pre-caret context is non-nil (it now
-                // holds at least the text we just inserted); after a no-op into a
-                // still-disconnected proxy it stays nil. (`proxyHadContextBefore`
-                // covers the empty-field case where the field legitimately had no
-                // text before the caret — see build-105 empty-field double-paste.)
-                let beforeCtx = self.textDocumentProxy.documentContextBeforeInput
-                self.insertTrackedText(pasteText)
-                let afterCtx = self.textDocumentProxy.documentContextBeforeInput
-                let proxyHadContextBefore = (beforeCtx != nil)
-                let proxyHasContextAfter = (afterCtx != nil)
-                let landed = proxyHadContextBefore || proxyHasContextAfter
-
-                // [PASTE-DIAG] The REAL signal for custom/web fields (Claude
-                // Code): did the proxy's pre-caret buffer actually change? The
-                // `landed` nil-check can't tell a real insert from a no-op when
-                // there's stale context. `delta`>0 / `endsWith`=true → the resync
-                // reconnected and the text went in (an empty visible box is then
-                // a host-render limit); `delta`==0 → the insert no-op'd despite
-                // the resync (ours to fix). Lengths + a bool only — no content.
-                // Note: iOS windows `documentContextBeforeInput`, so `delta` can
-                // under-count a long paste; `endsWith` is the firmer signal.
-                let beforeLen = beforeCtx?.count ?? 0
-                let afterLen = afterCtx?.count ?? 0
-                let endsWithInserted = (afterCtx ?? "").hasSuffix(pasteText)
-
-                guard landed else {
-                    // Still no-op'd even after the re-sync — keep the transcript
-                    // pending (don't burn it) so the settled `.idle` flush can
-                    // try once more. Single insert per flush = no double-paste.
-                    self.isAutoPasteInsertInFlight = false
-                    DiagnosticsLog.record(
-                        source: "keyboard",
-                        category: .pasteSkipProxyDisconnected,
-                        message: "Insert no-op'd after re-sync — proxy not connected; kept pending",
-                        metadata: [
-                            "sessionID": pendingSessionID.uuidString,
-                            "chars": "\(pasteText.count)",
-                            "beforeLen": "\(beforeLen)",
-                            "afterLen": "\(afterLen)",
-                            "delta": "\(afterLen - beforeLen)",
-                            "endsWith": "\(endsWithInserted)",
-                        ]
-                    )
-                    return
-                }
-
-                // The IMMEDIATE read-back says it landed — but on a web/custom
-                // field (Claude Code = WKWebView, Slack = React-Native) the proxy
-                // can update its OWN local pre-caret cache while the host's live
-                // document never commits the change (stale/detached connection) or
-                // re-renders it away. `delta`/`endsWith` are computed from that same
-                // possibly-stale cache and lie together — that is exactly why
-                // `pasteSuccess` shipped as a false positive four times.
-                //
-                // So DO NOT consume the payload or log `pasteSuccess` on the
-                // immediate read alone. Two corroborations narrow the window:
-                //   (B) the host's `textDidChange` input-delegate callback — when
-                //       it fires for our session with our text present, that is the
-                //       HOST talking back (the proxy cache can't fake it), so we
-                //       short-circuit straight to success (cure §4-B); and
-                //   (C) a deferred (~350ms) settled re-read as the FLOOR — gate
-                //       success on the inserted suffix still present AND `hasText`
-                //       (a separate UITextInput signal the local cache can't fake
-                //       on its own — Path D of bug-slack-silent-paste.md). This
-                //       runs when textDidChange never fires (many hosts skip it for
-                //       proxy-originated inserts — its absence proves nothing).
-                // Exactly ONE of {B, C} runs the finalize body — `inFlightPaste-
-                // Resolved` guards it so we never double-consume. The
-                // `isAutoPasteInsertInFlight` guard stays armed across the whole
-                // window so a second flush can't stack.
-                //
-                // Native fields (Messages/Notes = UITextView) commit synchronously
-                // into the same object the proxy reads, so the settled read still
-                // shows the suffix + hasText → classified success, no regression
-                // (incl. the >2000-char windowing case: the window always holds the
-                // freshly-inserted suffix regardless of how much precedes it).
-                let immediateAfterLen = afterLen
-
-                // Shared SUCCESS finalize. Runs from EITHER the textDidChange
-                // short-circuit (B) or the deferred settled-verify (C). Guarded by
-                // `inFlightPasteResolved` so only the first caller wins — the other
-                // becomes a no-op (no double-consume, no double just-now marker).
-                let finalizeSuccess: (_ viaTextDidChange: Bool, _ settledLen: Int) -> Void = { [weak self] viaTextDidChange, settledLen in
-                    guard let self else { return }
-                    guard !self.inFlightPasteResolved else { return }
-                    self.inFlightPasteResolved = true
-                    self.clearInFlightPasteWindow()
-                    self.isAutoPasteInsertInFlight = false
-
-                    // The pending session may have been consumed/cleared by another
-                    // path. If so the work is already done — don't re-consume.
-                    guard let pending = self.readPendingPasteSession(),
-                          pending.id == pendingSessionID else { return }
-
-                    DiagnosticsLog.record(
-                        source: "keyboard",
-                        category: viaTextDidChange ? .pasteLandedViaTextDidChange : .pasteSuccess,
-                        message: viaTextDidChange
-                            ? "Host textDidChange confirmed insert landed (short-circuit)"
-                            : "Inserted transcript into host (settled-verified)",
-                        metadata: [
-                            "chars": "\(pasteText.count)",
-                            "sessionID": pendingSessionID.uuidString,
-                            "beforeLen": "\(beforeLen)",
-                            "afterLen": "\(afterLen)",
-                            "delta": "\(afterLen - beforeLen)",
-                            "endsWith": "\(endsWithInserted)",
-                            "settledLen": "\(settledLen)",
-                        ]
-                    )
-                    // Phase 2 just-now marker (plan §4.3 / §13 risk 7) — stamp
-                    // the keyboard's own state at the moment of insertion so the
-                    // RecentsStrip's top row can render in the green just-now
-                    // style for ~5s. Reading AppGroup.lastDictation after this
-                    // returns nil because markConsumed() (below) clears it.
-                    self.stampJustNowMarker(text: pasteText)
-                    ClipboardHandoff.markConsumed()
-                    self.clearPendingPasteSession()
-                    self.freshPreview = nil
-                    self.hasPasteboardContent = UIPasteboard.general.hasStrings
-                    self.renderRootView()
-                    // Post-paste correction quick-review: if the app published asks
-                    // for this session, take over the strip slot to collect verdicts.
-                    // Skip when the ask-before-paste deck already handled this session
-                    // (the verdicts were collected pre-paste) — and clean up its state.
-                    if self.deckHandledSessions.contains(pendingSessionID) {
-                        self.deckResolvedText[pendingSessionID] = nil
-                        self.deckDefaultText[pendingSessionID] = nil
-                        self.deckVerdicts[pendingSessionID] = nil
-                        self.deckHandledSessions.remove(pendingSessionID)
-                        // Symmetry with the teach path's onCorrectionFinished — clear
-                        // the App-Group asks blob now they're resolved pre-paste.
-                        CorrectionBridge.clearAsks()
-                    } else {
-                        self.maybeShowCorrectionNudge(sessionID: pendingSessionID)
-                    }
-                }
-
-                // Open the in-flight-paste window for the textDidChange (B) path.
-                // The override checks `inFlightPasteSessionID`/`inFlightPasteText`
-                // and, when its host change carries our text, calls
-                // `inFlightPasteConfirm` → finalizeSuccess(viaTextDidChange: true).
-                self.inFlightPasteResolved = false
-                self.inFlightPasteSessionID = pendingSessionID
-                self.inFlightPasteText = pasteText
-                self.inFlightPasteConfirm = { [weak self] in
-                    // settledLen unknown on the textDidChange path; read it live
-                    // for the log only. `[weak self]` so the property storing this
-                    // closure on `self` isn't a retain cycle keeping the keyboard
-                    // alive (it's nil'd on resolve, but a torn-down keyboard before
-                    // resolve must still dealloc).
-                    guard let self else { return }
-                    let liveLen = self.textDocumentProxy.documentContextBeforeInput?.count ?? -1
-                    finalizeSuccess(true, liveLen)
-                }
-
-                // (C) Deferred settled-verify FLOOR. Always scheduled; if (B)
-                // already resolved, the `inFlightPasteResolved` guard inside
-                // finalize makes this a no-op (it only logs the VERIFY read).
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                    guard let self else { return }
-
-                    let settledCtx = self.textDocumentProxy.documentContextBeforeInput
-                    let settledLen = settledCtx?.count ?? -1
-                    let stillEndsWith = (settledCtx ?? "").hasSuffix(pasteText)
-                    let hasTextNow = self.textDocumentProxy.hasText
-                    // A NIL settled context (`settledLen == -1`, `hasText == false`)
-                    // means the host's INPUT CONNECTION went away after our insert —
-                    // web fields (Claude Code) re-render and drop the proxy. That is
-                    // NOT a revert: a genuine revert leaves a SHORTER but non-nil
-                    // context. Treating the disconnect as failure false-flagged
-                    // "couldn't paste" on every review re-entry even though the text
-                    // landed (immediateLen>0). So a disconnected settle is
-                    // INCONCLUSIVE — fall back to the immediate landed evidence.
-                    let proxyDisconnected = (settledCtx == nil)
-                    // Survived = the text is still there. Strong signal: the context
-                    // still ends with what we inserted. Tolerant fallback: the
-                    // context did NOT SHRINK (settledLen >= post-insert length) —
-                    // absorbs a host autocorrect/keystroke mutating the inserted TAIL
-                    // within the 350ms window. A genuine revert SHRINKS the context
-                    // (non-nil, shorter) → still not-survived. Disconnect (nil) +
-                    // confirmed-immediate-insert ⇒ trust the immediate read (the
-                    // transcript is on the clipboard from publish as a silent floor
-                    // either way, so a rare true-miss is still recoverable, but we
-                    // no longer cry wolf + invite a double-paste on the common case).
-                    let survived = (hasTextNow && (stillEndsWith || settledLen >= immediateAfterLen))
-                                || (proxyDisconnected && endsWithInserted)
-
-                    DiagnosticsLog.record(
-                        source: "keyboard",
-                        category: .pasteVerifyDeferred,
-                        message: "Deferred landed-verify read-back",
-                        metadata: [
-                            "sessionID": pendingSessionID.uuidString,
-                            "immediateLen": "\(immediateAfterLen)",
-                            "settledLen": "\(settledLen)",
-                            "stillEndsWith": "\(stillEndsWith)",
-                            "hasText": "\(hasTextNow)",
-                            "alreadyResolved": "\(self.inFlightPasteResolved)",
-                        ]
-                    )
-
-                    // (B) already classified this paste a success — nothing to do.
-                    guard !self.inFlightPasteResolved else { return }
-
-                    if survived {
-                        finalizeSuccess(false, settledLen)
-                        return
-                    }
-
-                    // FAILURE floor. Guard so a racing (B) doesn't also fire.
-                    guard !self.inFlightPasteResolved else { return }
-                    self.inFlightPasteResolved = true
-                    self.clearInFlightPasteWindow()
-                    self.isAutoPasteInsertInFlight = false
-
-                    // The pending session may have been consumed/cleared by another
-                    // path while we waited. If so, the work is already done — bail
-                    // without re-consuming or re-pasting.
-                    guard let pending = self.readPendingPasteSession(),
-                          pending.id == pendingSessionID else { return }
-
-                    // The immediate read lied: the host's live field did not
-                    // keep the text. CONSUME the payload + clear pending so NO
-                    // later flush (post-publish historyMirrorUpdated, a
-                    // keyboard re-presentation, the launch-deadline backstop)
-                    // can re-insert it — the 350ms in-flight guard only covers
-                    // this window, so keeping it pending would DOUBLE-PASTE on
-                    // a host that committed slower than 350ms (the exact
-                    // double-paste class that burned builds 103-106). Recovery
-                    // is the clipboard banner instead of an in-place retry:
-                    // the transcript is already on UIPasteboard.general from
-                    // publish (re-stamped with a 1-hour expiration), so the
-                    // user taps once to paste. Silent false-success → VISIBLE
-                    // one-tap recovery, with no double-paste risk.
-                    DiagnosticsLog.record(
-                        source: "keyboard",
-                        category: .pasteRevertedAfterLanding,
-                        message: "Immediate read said landed but settled read disagrees; consumed + clipboard fallback (no retry, no double-paste)",
-                        metadata: [
-                            "sessionID": pendingSessionID.uuidString,
-                            "chars": "\(pasteText.count)",
-                            "settledLen": "\(settledLen)",
-                            "stillEndsWith": "\(stillEndsWith)",
-                            "hasText": "\(hasTextNow)",
-                        ]
-                    )
-                    ClipboardHandoff.markConsumed()
-                    self.clearPendingPasteSession()
-                    self.fallbackToClipboardWithBanner(text: pasteText)
-                }
-            }
-
-            // Kick off the bounded reconnect-poll. `pollForStableSession` recurses
-            // via `asyncAfter` (NOT a busy-wait): it captures the prior read, and
-            // after each ~30ms tick compares the fresh read to it. Two consecutive
-            // equal reads → STABLE → insert. Hitting the ceiling → insert anyway
-            // (best effort; the verify + clipboard floor catch a miss). `iteration`
-            // is 1-based for the first comparison.
-            func pollForStableSession(previous: String?, previousHasText: Bool, iteration: Int) {
-                // Re-validate the in-flight guard / pending session each tick so a
-                // teardown mid-poll releases cleanly.
-                guard self.isAutoPasteInsertInFlight else { return }
-                let elapsedMs = Int(Date().timeIntervalSince(pollStartedAt) * 1000)
-
-                let current = self.textDocumentProxy.documentContextBeforeInput
-                let currentHasText = self.textDocumentProxy.hasText
-
-                // STABLE when this read matches the previous one (both context and
-                // hasText unchanged). The FIRST comparison is the pre-poll read vs
-                // the read ~30ms later, so a native/fast host (whose context never
-                // keeps changing) is stable on poll #1 → minimal added latency, no
-                // regression. A heavy re-mounting web field whose context is still
-                // growing fails the equality and polls again until it settles.
-                let stable = (current == previous) && (currentHasText == previousHasText)
-
-                if stable || elapsedMs >= pollCeilingMs {
-                    performInsertAndVerify(iterations: iteration, settleMs: elapsedMs)
-                    return
-                }
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(pollIntervalMs)) {
-                    pollForStableSession(previous: current, previousHasText: currentHasText, iteration: iteration + 1)
-                }
-            }
-            // First read is taken on the next tick (one run-loop hop after the
-            // `adjustTextPosition(0)` re-sync request, matching the original
-            // single-hop semantics), then compared against the tick after it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(pollIntervalMs)) {
-                pollForStableSession(
-                    previous: self.textDocumentProxy.documentContextBeforeInput,
-                    previousHasText: self.textDocumentProxy.hasText,
-                    iteration: 1
-                )
-            }
+            performAutoPasteInsertion(
+                pasteText: payload.text, pendingSessionID: session.id, deck: nil)
             return
         }
 
@@ -2258,6 +2625,8 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         if TerminalSessionLog.contains(sessionID: session.id) {
             keyboardLog.info("Pending session \(session.id) appears in terminal log; clearing.")
             clearPendingPasteSession()
+            // Session-scoped: a deck for a DIFFERENT session is untouched.
+            endDeck(sessionID: session.id)
             renderRootView()
             return
         }
@@ -2270,6 +2639,7 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
            projection.phase == .failed {
             keyboardLog.info("Pending session \(session.id) — projection synthesizes .failed (likely dead writer); clearing.")
             clearPendingPasteSession()
+            endDeck(sessionID: session.id)
             renderRootView()
             return
         }
@@ -2480,7 +2850,12 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         recordingState.applyPipelineProjection(nil)
         hub.clearStreamingPartialForNewSession()
         recordingState.updateLoadingVariantLabel("")
+        // Read the stranded session BEFORE clearing pending — the hold deck for
+        // it is terminal too (its paste is never coming), and deck cleanup is
+        // session-scoped so a deck for anything else is left alone.
+        let strandedSession = readPendingPasteSession()?.id
         clearPendingPasteSession()
+        if let strandedSession { endDeck(sessionID: strandedSession) }
         pipelineStaleDeadlineTask?.cancel()
         pipelineStaleDeadlineTask = nil
         deadAppWatchdogTask?.cancel()
@@ -2674,7 +3049,20 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
         // mid-arm would fall to `.start` here while the record reads `.stop` — a
         // divergence between the local mirror and the record-based start decision.
         if recordingState.isArming { return .noop(reason: "arming") }
+        // STOP is decided before the deck guard below: an APP-initiated
+        // dictation (FAB / DictateIntent / Siri) can be live while a deck is
+        // still reviewing, and the keyboard must stay able to stop the mic
+        // from the surface the user is on — the deck is modal for STARTING,
+        // never for stopping.
         if recordingState.isRecording { return .stop }
+        // F1b — a held paste is MODAL for STARTING a dictation. The
+        // pending-paste slot, the handoff payload and the asks blob are each
+        // single-slot and cleared globally, so a second dictation would
+        // overwrite the transport the open deck is still gating and then race
+        // its cleanup. The SwiftUI CTA is also `.disabled` for this; the guard
+        // is defense-in-depth against optimistic-UI lag, same as the states
+        // above.
+        if hub.hasActiveDeck { return .noop(reason: "ask-deck-open") }
         return .start
     }
 
@@ -2970,13 +3358,60 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     /// double-paste on a host that committed slower than the 350ms verify window
     /// (the build-103..106 double-paste class). The clipboard banner IS the
     /// recovery; in-place retry is the held Option 2, gated on the on-device probe.
-    private func fallbackToClipboardWithBanner(text: String) {
+    /// Copy for the clipboard fallback banner. Two variants, because the verify
+    /// has two very different reasons to land here (F4 / option G):
+    ///
+    /// - `.failed` — we have AFFIRMATIVE evidence the host did not keep the
+    ///   text: a non-nil settled context that SHRANK, or a field reporting no
+    ///   text at all. Saying "couldn't paste" is accurate, and the red chip is
+    ///   the right urgency.
+    /// - `.inconclusive` — the host's input connection went away and the paste
+    ///   was longer than the window iOS exposes, so we have no proof either
+    ///   way and the text has most likely landed. Calling that a failure was
+    ///   the visible bug: the owner watched a correct paste get a red error.
+    ///   Neutral copy tells the truth (the clipboard is there if it didn't) and,
+    ///   because `KeyboardView.bannerSeverity` derives severity from substrings,
+    ///   wording free of "couldn't"/"can't"/"cannot"/"failed"/"error" renders as
+    ///   the calm warning chip rather than the red alarm — no view change needed.
+    private enum PasteFallbackCopy {
+        case failed
+        case inconclusive
+        case likelyLanded
+
+        var message: String {
+            switch self {
+            case .failed:
+                return "Couldn't paste here — saved to clipboard, tap to paste"
+            case .inconclusive:
+                return "Also saved to clipboard — tap to paste if it didn't land"
+            case .likelyLanded:
+                // Owner device feedback (2026-08-31): a long paste that clearly
+                // landed (his immediate read matched the host window's entire
+                // 499 chars) still drew the `.inconclusive` line, which he read
+                // as "could not paste". When the immediate evidence is strong,
+                // say what is almost certainly true — the clipboard remains the
+                // quiet safety net, not the headline.
+                return "Looks pasted — copied to clipboard too, just in case"
+            }
+        }
+
+        var logLabel: String {
+            switch self {
+            case .failed: return "failed"
+            case .inconclusive: return "inconclusive"
+            case .likelyLanded: return "likely-landed"
+            }
+        }
+    }
+
+    private func fallbackToClipboardWithBanner(text: String,
+                                               copy: PasteFallbackCopy = .failed) {
         UIPasteboard.general.setItems(
             [[UTType.utf8PlainText.identifier: text]],
             options: [.expirationDate: Date(timeIntervalSinceNow: 3600)]
         )
         self.hasPasteboardContent = UIPasteboard.general.hasStrings
-        surfaceDictationStatusBanner("Couldn't paste here — saved to clipboard, tap to paste")
+        surfaceDictationStatusBanner(copy.message)
     }
 
     /// Opens the keyboard's containing app via custom URL scheme.

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jot · Noise Robustness — what breaks dictation and what fixes it</title>
+<style>
+  :root{
+    --paper:#F7F4EE; --paper-2:#FCFAF6; --ink:#17130E; --ink-2:#6E655A; --ink-3:#948A7C;
+    --accent:#256F6A; --accent-soft:#2A807A; --warn:#B4472F; --warn-soft:#C9613F;
+    --good:#3E7D5A; --rule:#E6DFD3; --card:#FFFFFF; --shadow:0 1px 2px rgba(20,16,10,.05),0 8px 30px rgba(20,16,10,.06);
+    --serif:"Iowan Old Style","Charter","Palatino Linotype",Palatino,Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+    font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  .wrap{max-width:880px;margin:0 auto;padding:0 24px}
+  a{color:var(--accent);text-underline-offset:3px}
+  h1,h2,h3{font-family:var(--serif);font-weight:600;letter-spacing:-.01em;line-height:1.12}
+  /* header */
+  header.top{position:sticky;top:0;z-index:20;background:rgba(247,244,238,.82);
+    backdrop-filter:saturate(1.4) blur(12px);border-bottom:1px solid var(--rule)}
+  .top .wrap{display:flex;align-items:center;gap:20px;height:56px}
+  .brand{font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:-.01em}
+  .brand .dot{color:var(--accent)}
+  nav.secs{margin-left:auto;display:flex;gap:22px;font-size:13.5px;color:var(--ink-2)}
+  nav.secs a{color:var(--ink-2);text-decoration:none}
+  nav.secs a:hover{color:var(--accent)}
+  @media(max-width:720px){nav.secs{display:none}}
+  /* hero */
+  .hero{padding:76px 0 40px}
+  .eyebrow{font-family:var(--mono);font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:22px}
+  .hero h1{font-size:clamp(34px,6vw,54px);margin:0 0 22px}
+  .hero .dek{font-size:21px;line-height:1.5;color:var(--ink-2);max-width:40ch;font-family:var(--serif)}
+  .hero .dek b{color:var(--ink);font-weight:600}
+  /* verdict strip */
+  .verdicts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:52px 0 8px}
+  @media(max-width:720px){.verdicts{grid-template-columns:repeat(2,1fr)}}
+  .vd{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:18px 16px;box-shadow:var(--shadow)}
+  .vd .mk{font-size:20px;line-height:1}
+  .vd .lb{font-family:var(--serif);font-weight:600;font-size:15.5px;margin:10px 0 4px}
+  .vd .sb{font-size:13px;color:var(--ink-2);line-height:1.4}
+  .vd.bad{border-color:#E2C6BC}.vd.bad .mk{color:var(--warn)}
+  .vd.meh .mk{color:var(--ink-3)}
+  .vd.hope{border-color:#C3DAD5}.vd.hope .mk{color:var(--accent)}
+  /* sections */
+  section{padding:52px 0;border-top:1px solid var(--rule)}
+  section:first-of-type{border-top:none}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:12px}
+  section h2{font-size:clamp(26px,4vw,34px);margin:0 0 18px}
+  p{margin:0 0 18px;max-width:62ch}
+  p.lead{font-size:19px;color:var(--ink);font-family:var(--serif);line-height:1.5}
+  strong{font-weight:640}
+  .muted{color:var(--ink-2)}
+  /* chart */
+  .chart{background:var(--card);border:1px solid var(--rule);border-radius:16px;
+    padding:26px 26px 20px;box-shadow:var(--shadow);margin:26px 0}
+  .chart h3{font-size:19px;margin:0 0 4px}
+  .chart .cap{font-size:13.5px;color:var(--ink-2);margin:0 0 22px}
+  .bar{display:grid;grid-template-columns:132px 1fr 58px;align-items:center;gap:12px;margin:9px 0}
+  .bar .bl{font-size:13.5px;text-align:right;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .bl small{display:block;color:var(--ink-3);font-size:11px}
+  .track{position:relative;height:22px;background:#EFEAE0;border-radius:6px;overflow:hidden}
+  .fill{position:absolute;left:0;top:0;bottom:0;border-radius:6px}
+  .fill.base{background:var(--accent)}
+  .fill.ok{background:#8FB3A6}
+  .fill.warn{background:var(--warn-soft)}
+  .fill.bad{background:var(--warn)}
+  .bar .vv{font-family:var(--mono);font-size:13.5px;text-align:right;color:var(--ink)}
+  .baseline-note{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);margin-top:16px;padding-top:14px;border-top:1px dashed var(--rule)}
+  .swatch{width:11px;height:11px;border-radius:3px;display:inline-block}
+  /* grouped */
+  .grp{display:grid;grid-template-columns:118px 1fr;gap:12px;align-items:center;margin:12px 0}
+  .grp .gl{font-size:14px}
+  .grp .pair{display:grid;gap:6px}
+  .prow{display:grid;grid-template-columns:74px 1fr 50px;align-items:center;gap:10px;font-size:12.5px}
+  .prow .pl{color:var(--ink-2)}
+  /* table */
+  .twrap{overflow-x:auto;margin:24px 0;border:1px solid var(--rule);border-radius:14px}
+  table{border-collapse:collapse;width:100%;font-size:14px;background:var(--card)}
+  th,td{padding:11px 14px;text-align:right;border-bottom:1px solid var(--rule);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  thead th{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);background:var(--paper-2)}
+  tbody tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono)}
+  tr.base td{background:#F0F5F3;font-weight:600}
+  .up{color:var(--warn);font-weight:600}.dn{color:var(--good);font-weight:600}
+  /* roadmap */
+  .road{display:grid;gap:16px;margin:26px 0}
+  .step{display:grid;grid-template-columns:44px 1fr;gap:18px;background:var(--card);
+    border:1px solid var(--rule);border-radius:16px;padding:22px 24px;box-shadow:var(--shadow)}
+  .step .n{font-family:var(--serif);font-size:26px;color:var(--accent);line-height:1}
+  .step.dead .n{color:var(--ink-3)}
+  .step h3{font-size:19px;margin:0 0 6px}
+  .step .tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+    text-transform:uppercase;padding:3px 8px;border-radius:6px;margin-left:10px;vertical-align:middle}
+  .tag.dev{background:#E7F0EE;color:var(--accent)}
+  .tag.lab{background:#F3EAE0;color:#9A6a2a}
+  .tag.cheap{background:#EAF1EC;color:var(--good)}
+  .tag.dead{background:#F0E7E3;color:var(--warn)}
+  .step p{margin:0;font-size:15px;color:var(--ink-2)}
+  .step p b{color:var(--ink)}
+  /* callout */
+  .call{background:linear-gradient(180deg,#FbF9F4,#F4F0E8);border:1px solid var(--rule);
+    border-left:3px solid var(--accent);border-radius:12px;padding:20px 24px;margin:24px 0}
+  .call p{margin:0;max-width:none}
+  .call .q{font-family:var(--serif);font-size:18px;line-height:1.5}
+  /* citations */
+  .cites{font-size:13.5px;color:var(--ink-2);line-height:1.7}
+  .cites a{word-break:break-word}
+  details{margin:14px 0;border:1px solid var(--rule);border-radius:12px;background:var(--card)}
+  summary{cursor:pointer;padding:16px 20px;font-family:var(--serif);font-weight:600;font-size:16px}
+  details[open] summary{border-bottom:1px solid var(--rule)}
+  details .body{padding:16px 20px}
+  footer{padding:48px 0 72px;border-top:1px solid var(--rule);color:var(--ink-3);font-size:13px}
+  footer b{color:var(--ink-2)}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="brand">Jot<span class="dot">.</span> noise lab</div>
+  <nav class="secs">
+    <a href="#real">Real audio</a>
+    <a href="#how-bad">How bad</a>
+    <a href="#fixes">The fixes</a>
+    <a href="#models">Models</a>
+    <a href="#works">What works</a>
+    <a href="#method">Method</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="eyebrow">On-device speech research · July 2026</div>
+    <h1>Why background noise breaks dictation — and what actually fixes it.</h1>
+    <p class="dek">Running water, an exhaust fan, wind on a walk. We put every obvious fix through a controlled benchmark on real Jot recordings. The headline: <b>almost everything you'd try to "clean up" the audio makes transcription worse.</b> Here's the evidence, and the path that doesn't.</p>
+  </div>
+
+  <div class="verdicts">
+    <div class="vd bad"><div class="mk">✕</div><div class="lb">Denoisers</div><div class="sb">Every one hurt — the strongest nearly doubled errors.</div></div>
+    <div class="vd meh"><div class="mk">–</div><div class="lb">Filters &amp; model swaps</div><div class="sb">High-pass, newer model, even Whisper: no help.</div></div>
+    <div class="vd hope"><div class="mk">→</div><div class="lb">Better capture</div><div class="sb">Fix the mic path, not the audio after. Device-side.</div></div>
+    <div class="vd hope"><div class="mk">→</div><div class="lb">Noise-train the model</div><div class="sb">The one artifact-free way to genuinely improve.</div></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- METHOD SUMMARY -->
+  <section id="setup">
+    <div class="kicker">The benchmark</div>
+    <h2>How we measured it</h2>
+    <p class="lead">36 real English clips from Jot's own recordings became the test set — each with Jot's clean-room transcript as the "known-good" reference.</p>
+    <p>We synthesized three noises — <strong>running water</strong> (broadband hiss), an <strong>exhaust fan</strong> (steady broadband + motor hum), and <strong>wind</strong> (low rumble with gusts) — and mixed them into every clip at two loudness levels: <strong>10&nbsp;dB</strong> (moderate) and <strong>5&nbsp;dB</strong> (harsh). Then we ran each version through the exact transcriber Jot ships (Parakeet TDT 0.6B, on-device via CoreML) and measured the <strong>word error rate</strong> against the clean-audio result. Higher = further from what Jot would have written in a quiet room.</p>
+    <div class="call"><p class="q">Every number below was produced on a Mac in an afternoon, on the owner's real voice — not a paper's dataset. The whole bench re-runs in minutes, so any fix can be A/B'd before a line of app code is written.</p></div>
+  </section>
+
+  <!-- REAL AUDIO -->
+  <section id="real">
+    <div class="kicker">Finding 0 · real recordings</div>
+    <h2>First, the owner's own kitchen and bathroom.</h2>
+    <p class="lead">Two real recordings: one talking over a running exhaust fan, one over running water. No synthesis — actual room, actual phone, actual voice.</p>
+    <p>The reassuring headline: at this everyday noise level, <strong>Jot is already good</strong> — about 90% right on both, with only the proper name ("Vineet Sriram") wobbling. But run the "fixes" over them and watch what happens.</p>
+
+    <div class="verdicts" style="grid-template-columns:repeat(2,1fr);margin:28px 0">
+      <div class="vd"><div class="mk" style="color:var(--accent)">🌀</div><div class="lb">Exhaust fan · 20s</div><div class="sb">Baseline <b style="font-family:var(--mono)">10%</b> error. Steady, mild — the friendliest case.</div></div>
+      <div class="vd"><div class="mk" style="color:var(--accent)">💧</div><div class="lb">Running water · 13s</div><div class="sb">Baseline <b style="font-family:var(--mono)">9%</b> error. Got "with water running" exactly right.</div></div>
+    </div>
+
+    <p>Here's the same water sentence — <strong>"…this is the audio with water running"</strong> — through the recognizer four ways:</p>
+
+    <div class="chart" style="padding-top:22px">
+      <div style="display:grid;gap:14px">
+        <div><div style="font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--good);margin-bottom:4px">Do nothing — correct ✓</div>
+          <div style="font-family:var(--serif);font-size:17px">"…this is the audio <b>with water running</b>. Let's see how it goes."</div></div>
+        <div style="border-top:1px solid var(--rule);padding-top:14px"><div style="font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn);margin-bottom:4px">RNNoise — invents words</div>
+          <div style="font-family:var(--serif);font-size:17px;color:var(--ink-2)">"…this one is the audio with <b style="color:var(--warn)">Water Damn</b>. Let's see how it goes."</div></div>
+        <div style="border-top:1px solid var(--rule);padding-top:14px"><div style="font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn);margin-bottom:4px">Whisper — hallucinates</div>
+          <div style="font-family:var(--serif);font-size:17px;color:var(--ink-2)">"…this is the audio with <b style="color:var(--warn)">waffle gun on it</b>. Let's see how it goes."</div></div>
+        <div style="border-top:1px solid var(--rule);padding-top:14px"><div style="font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn);margin-bottom:4px">DeepFilterNet full — collapses (9% → 74%)</div>
+          <div style="font-family:var(--serif);font-size:17px;color:var(--ink-2)">"My name is <b style="color:var(--warn)">Venez Viryan</b>. Let's see how it's going to." <span class="muted">— half the sentence gone</span></div></div>
+      </div>
+    </div>
+
+    <p><strong>The clean baseline was the only version that got it right.</strong> Every attempt to "help" either invented words or destroyed the sentence.</p>
+
+    <div class="twrap"><table>
+      <thead><tr><th>Fix</th><th>Fan (10% base)</th><th>Water (9% base)</th></tr></thead>
+      <tbody>
+        <tr class="base"><td>Do nothing</td><td class="num">10%</td><td class="num">9%</td></tr>
+        <tr><td>Skip-silence (VAD)</td><td class="num dn">6%</td><td class="num">9%</td></tr>
+        <tr><td>High-pass filter</td><td class="num">10%</td><td class="num">9%</td></tr>
+        <tr><td>DeepFilterNet (mild)</td><td class="num dn">0%</td><td class="num up">17%</td></tr>
+        <tr><td>Denoiser (anlmdn)</td><td class="num">10%</td><td class="num up">13%</td></tr>
+        <tr><td>Denoiser (afftdn)</td><td class="num dn">0%</td><td class="num up">26%</td></tr>
+        <tr><td>RNNoise</td><td class="num dn">3%</td><td class="num up">22%</td></tr>
+        <tr><td>DeepFilterNet (full)</td><td class="num dn">0%</td><td class="num up">74%</td></tr>
+        <tr><td>Whisper (other model)</td><td class="num dn">3%</td><td class="num up">22%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted">Two short clips, so single words swing the percentages — read this as illustration, not statistics (the systematic weight is in the sections below). But the pattern is unmistakable: on the fan, gentle denoising happened to fix the name; on the water, the <em>same</em> tools ranged from mildly worse to catastrophic. A fix you can't trust to not <em>occasionally destroy a sentence</em> is not a fix you can ship on by default — which is exactly what the controlled bench shows at scale.</p>
+  </section>
+
+  <!-- HOW BAD -->
+  <section id="how-bad">
+    <div class="kicker">Finding 1</div>
+    <h2>Broadband noise is the enemy. Rumble barely matters.</h2>
+    <p>The three noises are not equal. Water and the fan spread energy <em>across the speech band</em> and smother it. Wind sits mostly <em>below</em> speech, where the model already ignores it. The owner's lived experience — "I turned on the water and the transcription was pretty bad" — shows up exactly.</p>
+
+    <div class="chart">
+      <h3>Errors added by noise, vs a quiet room</h3>
+      <p class="cap">Parakeet TDT 0.6B · word error rate vs clean transcript · lower is better</p>
+
+      <div class="bar"><div class="bl">Water <small>harsh · 5 dB</small></div><div class="track"><div class="fill bad" style="width:72.5%"></div></div><div class="vv">58%</div></div>
+      <div class="bar"><div class="bl">Water <small>moderate · 10 dB</small></div><div class="track"><div class="fill warn" style="width:32.3%"></div></div><div class="vv">26%</div></div>
+      <div class="bar"><div class="bl">Exhaust fan <small>harsh · 5 dB</small></div><div class="track"><div class="fill warn" style="width:42.9%"></div></div><div class="vv">34%</div></div>
+      <div class="bar"><div class="bl">Exhaust fan <small>moderate · 10 dB</small></div><div class="track"><div class="fill warn" style="width:19.4%"></div></div><div class="vv">16%</div></div>
+      <div class="bar"><div class="bl">Wind <small>harsh · 5 dB</small></div><div class="track"><div class="fill ok" style="width:3.5%"></div></div><div class="vv">3%</div></div>
+      <div class="bar"><div class="bl">Wind <small>moderate · 10 dB</small></div><div class="track"><div class="fill ok" style="width:2.1%"></div></div><div class="vv">2%</div></div>
+
+      <div class="baseline-note"><span class="swatch" style="background:var(--warn)"></span> broadband (water/fan) &nbsp;·&nbsp; <span class="swatch" style="background:#8FB3A6"></span> low rumble (wind) — nearly harmless</div>
+    </div>
+    <p class="muted">Note: the synthetic wind here is a clean low-frequency hiss. Real wind buffeting a phone mic while walking adds broadband turbulence and pops, so treat "wind is harmless" as a floor, not the last word — it deserves a real-recording re-test.</p>
+  </section>
+
+  <!-- THE FIXES -->
+  <section id="fixes">
+    <div class="kicker">Finding 2 · the main event</div>
+    <h2>The fixes don't fix it. Most make it worse.</h2>
+    <p class="lead">The intuitive move — scrub the noise out before the recognizer sees it — backfires, badly.</p>
+    <p>Here is every fix applied to the same <strong>moderate running-water</strong> clips. The teal bar is <strong>doing nothing</strong>. Read it as a finish line: everything to its right is <em>worse than not trying</em>.</p>
+
+    <div class="chart">
+      <h3>Running water · 10 dB — every fix vs doing nothing</h3>
+      <p class="cap">word error rate · teal = baseline (no processing) · red = worse than baseline</p>
+
+      <div class="bar"><div class="bl">Do nothing <small>baseline</small></div><div class="track"><div class="fill base" style="width:32.3%"></div></div><div class="vv">26%</div></div>
+      <div class="bar"><div class="bl">High-pass filter</div><div class="track"><div class="fill ok" style="width:34.6%"></div></div><div class="vv">28%</div></div>
+      <div class="bar"><div class="bl">DeepFilterNet <small>mild</small></div><div class="track"><div class="fill ok" style="width:35.0%"></div></div><div class="vv">28%</div></div>
+      <div class="bar"><div class="bl">Skip-silence <small>VAD</small></div><div class="track"><div class="fill ok" style="width:35.1%"></div></div><div class="vv">28%</div></div>
+      <div class="bar"><div class="bl">Denoiser <small>anlmdn</small></div><div class="track"><div class="fill ok" style="width:35.4%"></div></div><div class="vv">28%</div></div>
+      <div class="bar"><div class="bl">Denoiser <small>afftdn</small></div><div class="track"><div class="fill warn" style="width:43.9%"></div></div><div class="vv">35%</div></div>
+      <div class="bar"><div class="bl">RNNoise</div><div class="track"><div class="fill bad" style="width:54.3%"></div></div><div class="vv">43%</div></div>
+      <div class="bar"><div class="bl">DeepFilterNet <small>full strength</small></div><div class="track"><div class="fill bad" style="width:63.0%"></div></div><div class="vv">50%</div></div>
+
+      <div class="baseline-note"><span class="swatch" style="background:var(--accent)"></span> nothing beats doing nothing — the best "fix" only ties it</div>
+    </div>
+
+    <p><strong>DeepFilterNet at full strength — the best AI denoiser available — nearly doubled the errors</strong> (26% → 50%). RNNoise was almost as destructive. The gentle settings (high-pass, mild denoise, skip-silence) only manage to <em>break even</em>. Across 6 denoiser settings × 3 noises × 2 levels, <strong>not one ever improved accuracy.</strong></p>
+
+    <div class="call"><p class="q">Why? The recognizer was trained on real audio, noise and all. A denoiser removes noise but leaves faint artifacts and strips subtle cues — a kind of audio the model has <em>never heard</em>. It gets more confused by the "cleaned" version than by the honest noise.</p></div>
+
+    <p>This isn't just our bench. A 2025 controlled study tested enhancement in front of four recognizers <strong>including Parakeet</strong>: the noisy audio beat the denoised audio in <strong>all 40 configurations</strong>, and Parakeet at 10&nbsp;dB went from 10.9% → 16.8% error <em>worse</em> after denoising. Independent researchers, opposite side of the world, same conclusion.</p>
+
+    <details>
+      <summary>See the full grid — every fix, every noise, every level</summary>
+      <div class="body">
+      <div class="twrap"><table>
+        <thead><tr><th>Fix</th><th>Fan 10dB</th><th>Water 10dB</th><th>Fan 5dB</th><th>Water 5dB</th></tr></thead>
+        <tbody>
+          <tr class="base"><td>Do nothing</td><td class="num">15.5</td><td class="num">25.8</td><td class="num">34.3</td><td class="num">58.0</td></tr>
+          <tr><td>Skip-silence (VAD)</td><td class="num dn">14.8</td><td class="num">28.1</td><td class="num dn">33.3</td><td class="num dn">55.9</td></tr>
+          <tr><td>High-pass filter</td><td class="num dn">15.1</td><td class="num">27.7</td><td class="num">34.7</td><td class="num dn">56.9</td></tr>
+          <tr><td>DeepFilterNet (mild)</td><td class="num up">16.7</td><td class="num">28.0</td><td class="num up">37.7</td><td class="num">59.6</td></tr>
+          <tr><td>Denoiser (anlmdn)</td><td class="num up">16.3</td><td class="num">28.3</td><td class="num up">39.7</td><td class="num up">64.0</td></tr>
+          <tr><td>Denoiser (afftdn)</td><td class="num up">21.5</td><td class="num up">35.1</td><td class="num up">45.0</td><td class="num up">64.4</td></tr>
+          <tr><td>RNNoise</td><td class="num up">23.7</td><td class="num up">43.4</td><td class="num up">53.0</td><td class="num up">76.0</td></tr>
+          <tr><td>DeepFilterNet (full)</td><td class="num up">35.9</td><td class="num up">50.4</td><td class="num up">57.9</td><td class="num up">78.4</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted" style="font-size:13px">Values are word error rate (%). Green = better than doing nothing, red = worse. Note how error climbs monotonically with denoiser aggressiveness — there is no beneficial "sweet spot," only a least-harmful one.</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- MODELS -->
+  <section id="models">
+    <div class="kicker">Finding 3</div>
+    <h2>Can't a smarter model save us? We tried Whisper. No.</h2>
+    <p>If the audio can't be cleaned, maybe a different recognizer copes better. The obvious candidate is <strong>OpenAI's Whisper</strong> — trained on 680,000 hours of messy web audio, so it should have "seen it all." We ran Whisper small.en on the same noisy clips and measured how much <em>each</em> model drifts from its own clean transcript.</p>
+
+    <div class="chart">
+      <h3>Who holds up better in noise? (error added by noise)</h3>
+      <p class="cap">Parakeet 0.6B <span style="color:var(--accent)">▮</span> &nbsp; vs &nbsp; Whisper small.en <span style="color:var(--warn)">▮</span> &nbsp;· lower is better</p>
+
+      <div class="grp"><div class="gl">Water · 5 dB</div><div class="pair">
+        <div class="prow"><div class="pl">Parakeet</div><div class="track"><div class="fill base" style="width:72.5%"></div></div><div class="vv">58%</div></div>
+        <div class="prow"><div class="pl">Whisper</div><div class="track"><div class="fill bad" style="width:93.1%"></div></div><div class="vv">75%</div></div>
+      </div></div>
+      <div class="grp"><div class="gl">Water · 10 dB</div><div class="pair">
+        <div class="prow"><div class="pl">Parakeet</div><div class="track"><div class="fill base" style="width:32.3%"></div></div><div class="vv">26%</div></div>
+        <div class="prow"><div class="pl">Whisper</div><div class="track"><div class="fill bad" style="width:49.1%"></div></div><div class="vv">39%</div></div>
+      </div></div>
+      <div class="grp"><div class="gl">Fan · 5 dB</div><div class="pair">
+        <div class="prow"><div class="pl">Parakeet</div><div class="track"><div class="fill base" style="width:42.9%"></div></div><div class="vv">34%</div></div>
+        <div class="prow"><div class="pl">Whisper</div><div class="track"><div class="fill bad" style="width:65.6%"></div></div><div class="vv">53%</div></div>
+      </div></div>
+      <div class="grp"><div class="gl">Fan · 10 dB</div><div class="pair">
+        <div class="prow"><div class="pl">Parakeet</div><div class="track"><div class="fill base" style="width:19.4%"></div></div><div class="vv">16%</div></div>
+        <div class="prow"><div class="pl">Whisper</div><div class="track"><div class="fill bad" style="width:28.1%"></div></div><div class="vv">23%</div></div>
+      </div></div>
+      <div class="baseline-note"><span class="swatch" style="background:var(--accent)"></span> Parakeet wins every broadband case — it's already the more noise-robust of the two.</div>
+    </div>
+
+    <p>Parakeet — the smaller model Jot already ships — <strong>degraded less than Whisper in every noisy condition.</strong> So "swap in a famous model" is another dead end; it would make Jot <em>worse</em> in noise. Newer Parakeet checkpoints (v2 → v3) also showed no noise-robustness gain. The lever isn't <em>which</em> off-the-shelf model — it's whether the model was trained <em>on the noise you actually face</em>.</p>
+  </section>
+
+  <!-- WHAT WORKS -->
+  <section id="works">
+    <div class="kicker">The path forward</div>
+    <h2>So how <em>do</em> you improve on steady sounds?</h2>
+    <p class="lead">Water, fans, HVAC, a walk in the wind — these are <strong>stationary</strong> sounds: steady and predictable. That's exactly what makes them tractable, if you attack them in the right place. Ranked by evidence and leverage:</p>
+
+    <div class="road">
+      <div class="step">
+        <div class="n">1</div>
+        <div>
+          <h3>Fix the capture, not the recording<span class="tag dev">device-side</span></h3>
+          <p>The single highest-leverage lever, and the one thing we couldn't test on a Mac. The phone's own microphone stack (Apple's Voice Processing) can cancel steady noise <b>before</b> it ever corrupts the signal the recognizer reads — no artifacts, because nothing was "cleaned" after the fact. Critical caveat from the research: enable it with <b>auto-gain turned off</b> (<code>isVoiceProcessingAGCEnabled = false</code>) or in measurement mode, or its gain-pumping hurts more than it helps. Also: a mic pointed away from the noise, and AirPods — which sit near the mouth and win on proximity alone.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div>
+          <h3>Teach the recognizer the noise<span class="tag lab">offline research → ship a checkpoint</span></h3>
+          <p>The only artifact-free way to genuinely <b>improve</b> accuracy. Fine-tune Parakeet on speech mixed with real water/fan/wind (multi-condition training). The model learns to hear through the noise instead of being tripped by it — and, done right, clean-audio accuracy is unharmed. This is what the literature shows actually works, and it's why Whisper (trained on messy data) was already decent: <b>we just need that same idea, aimed at Jot's specific noises.</b> Ships as a better on-device model, invisibly.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div>
+          <h3>Skip-silence (VAD) — tested, and it's a wash<span class="tag lab">tested · inconsistent</span></h3>
+          <p>The textbook fix for "it typed something I never said" is to gate out non-speech (voice-activity detection). We tested it hard — and the reason it doesn't help is <b>good news</b>: fed six clips of pure fan/water noise with no speech, Parakeet correctly wrote <b>nothing</b>, with or without VAD. Unlike Whisper, <b>Parakeet doesn't hallucinate on noise</b> — so there's little for VAD to clean. And on the hardest case, broadband water, the VAD <b>misfires and clips real speech</b> ("My name is Vineet Sriram…" got eaten). Same verdict as the denoisers: inconsistent, and risky where it counts.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <div>
+          <h3>Be honest in the UX<span class="tag cheap">product</span></h3>
+          <p>Broadband noise physically masks speech — past a point, no software recovers it. A quiet "sounds noisy here" hint, or nudging toward AirPods, respects the user more than silently mangling their words.</p>
+        </div>
+      </div>
+      <div class="step dead">
+        <div class="n">✕</div>
+        <div>
+          <h3>Proven dead ends — don't build these<span class="tag dead">closed</span></h3>
+          <p>Any bolt-on denoiser (RNNoise, DeepFilterNet, spectral). A high-pass filter for accuracy. A newer Parakeet checkpoint. Swapping to Whisper. All measured here, twice over with the literature. The value of this study is as much what it <b>saves</b> you from building as what it points toward.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- METHOD -->
+  <section id="method">
+    <div class="kicker">For the record</div>
+    <h2>Method &amp; honest caveats</h2>
+    <p class="muted">Enough detail to reproduce, and the places where these numbers should be read with care.</p>
+
+    <div class="twrap"><table>
+      <tbody>
+        <tr><td><b>Recognizer</b></td><td style="text-align:left">Parakeet TDT 0.6B v3, int8, via FluidAudio/CoreML — the exact engine Jot ships</td></tr>
+        <tr><td><b>Test set</b></td><td style="text-align:left">36 real English clips from Jot recordings (~960 reference words)</td></tr>
+        <tr><td><b>Reference</b></td><td style="text-align:left">Each clip's own clean transcript — so a number = how far noise pushes the result off, not absolute accuracy</td></tr>
+        <tr><td><b>Noise</b></td><td style="text-align:left">Synthesized wind / water / exhaust-fan, mixed at 5 &amp; 10 dB SNR (active-speech referenced)</td></tr>
+        <tr><td><b>Denoisers</b></td><td style="text-align:left">ffmpeg high-pass, afftdn, anlmdn, RNNoise (arnndn); DeepFilterNet 3 at full &amp; mild strength</td></tr>
+        <tr><td><b>Comparators</b></td><td style="text-align:left">Whisper small.en (whisper.cpp); Parakeet v2 vs v3</td></tr>
+      </tbody>
+    </table></div>
+
+    <p><strong>Read these with care:</strong> most of the noise is <em>synthetic</em>, not field recordings — great for controlled, repeatable A/Bs, but real reverberant water and gusty walking-wind will differ. Noise here degrades speech mostly by <em>masking</em> (wrong/missing words); a dedicated test confirmed Parakeet doesn't <em>hallucinate</em> on pure noise (it stays silent), so that failure mode — Whisper's weakness — isn't Jot's. And scores are drift-from-clean, not absolute. The two real recordings validate the direction, but they're short and mild; the honest next step is more <strong>real</strong> water/fan/wind clips through the same bench — it's built and takes minutes.</p>
+
+    <details>
+      <summary>Sources behind the claims</summary>
+      <div class="body cites">
+        <p>“When De-noising Hurts” (2025) — enhancement in front of Whisper/Parakeet-TDT/Gemini hurt in all 40 configs · <a href="https://arxiv.org/html/2512.17562">arxiv.org/html/2512.17562</a></p>
+        <p>Whisper hallucinations on non-speech audio · <a href="https://arxiv.org/pdf/2501.11378">arxiv.org/pdf/2501.11378</a></p>
+        <p>Patched multi-condition training (noise-robust ASR) · <a href="https://arxiv.org/pdf/2207.04949">arxiv.org/pdf/2207.04949</a></p>
+        <p>Apple — disable input auto-gain on voice processing · <a href="https://developer.apple.com/documentation/avfaudio/avaudioinputnode/isvoiceprocessingagcenabled">isVoiceProcessingAGCEnabled</a></p>
+        <p>DeepFilterNet 3 · <a href="https://github.com/Rikorose/DeepFilterNet">github.com/Rikorose/DeepFilterNet</a> &nbsp;·&nbsp; RNNoise models · <a href="https://github.com/GregorR/rnnoise-models">github.com/GregorR/rnnoise-models</a></p>
+      </div>
+    </details>
+  </section>
+
+</div>
+
+<footer><div class="wrap">
+  <p><b>Jot noise-robustness study</b> — on-device speech-to-text research. All measurements run on the owner's own recordings with the shipping transcription engine. Bench is fully reproducible; every intervention above can be re-tested against real noise before any app code changes.</p>
+</div></footer>
+
+</body>
+</html>

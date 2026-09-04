@@ -67,6 +67,11 @@ struct SettingsView: View {
     /// VOCABULARY card row both observe `terms.count`.
     @State private var vocabularyStore = VocabularyStore.shared
 
+    /// The English engine, observed the same way `TranscriptionService.shared`
+    /// is — `languageStatusRow` reports its download/load state so English gets
+    /// the same honest one-liner the downloaded languages already get.
+    @State private var unifiedEnglish = UnifiedEnglishModel.shared
+
     /// LLM adapter for the AI-row's sub-status. Resolved lazily on appear;
     /// `nil` until then. Lives only for the lifetime of the Settings sheet
     /// so we don't pin LLM weights in memory when the user just glanced
@@ -81,6 +86,30 @@ struct SettingsView: View {
     /// itself is persisted in the App Group so it survives relaunch.
     /// See `docs/tts-lab/design.md`.
     @State private var ttsLabRevealed: Bool = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled)
+    /// Read-only status line for the punctuation-model row (5-tap reveal
+    /// block). Refreshed on row appear; the fetch itself needs no controls.
+    @State private var punctuationModelStatusLine: String = "Checking…"
+
+    private func refreshPunctuationModelStatus() {
+        let fetcher = PunctuationModelFetcher.shared
+        if fetcher.isInstalled {
+            punctuationModelStatusLine = "Installed — English dictations use it"
+            return
+        }
+        switch fetcher.phase {
+        case .downloading(let done, let total):
+            let pct = total > 0 ? Int((Double(done) / Double(total)) * 100) : 0
+            punctuationModelStatusLine = "Downloading — \(pct)%"
+        case .installing:
+            punctuationModelStatusLine = "Installing…"
+        case .failed(let why):
+            punctuationModelStatusLine = "Failed — \(why)"
+        case .idle, .done:
+            // Not installed + idle = the discretionary fetch is waiting for a
+            // moment iOS likes (Wi-Fi, power). Honest wording beats a spinner.
+            punctuationModelStatusLine = "Waiting for Wi-Fi — downloads automatically (57 MB)"
+        }
+    }
     @State private var ttsLabVersionTapCount: Int = 0
     @State private var ttsLabEnabled: Bool = AppGroup.defaults.bool(forKey: AppGroup.Keys.ttsLabEnabled)
     @State private var ttsService = TTSService.shared
@@ -158,6 +187,12 @@ struct SettingsView: View {
                 // First touch graduates "auto" to an explicit choice —
                 // never clobbered by future capability-default changes.
                 AppGroup.liveTextSetting = newValue ? "on" : "off"
+                // The enhanced English model transcribes ONLY through the live
+                // streaming session, so this toggle decides whether it can be
+                // used at all: off drops the resident encoder, on prepares (and,
+                // first time, fetches) it. Same both-edges pattern as the
+                // Apple-engine toggle below.
+                UnifiedEnglishModel.syncWithRouting()
             }
             .onChange(of: ttsLabEnabled) { _, newValue in
                 AppGroup.defaults.set(newValue, forKey: AppGroup.Keys.ttsLabEnabled)
@@ -438,15 +473,69 @@ struct SettingsView: View {
         )
     }
 
-    /// One-line status under the language row. English is bundled (no download);
-    /// a European language reflects the live download / load / ready state of its
+    /// One-line status under the language row. English is bundled, so it never
+    /// waits on anything — but on Jot's own engine it reports the more accurate
+    /// English model's own download/load state (`UnifiedEnglishModel.state`),
+    /// which is the ONLY place that 582 MB background fetch is visible. A
+    /// European language reflects the live download / load / ready state of its
     /// Parakeet v3 model (observed from `TranscriptionService.shared.modelState`).
     @ViewBuilder
     private var languageStatusRow: some View {
         let lang = LanguageChoice(rawValue: dictationLanguage) ?? .english
         let (text, tint): (String, Color) = {
             if lang.isEnglish {
-                return ("Built in — ready to use, no download.", Color.jotPageInkSecondary)
+                // English is never blocked on a download — the bundled engine is
+                // always there. But the more accurate model that supersedes it
+                // (`UnifiedEnglishModel`) arrives on its own over Wi-Fi, and the
+                // owner's standing complaint about the punctuation model applies
+                // doubly at 582 MB: "I don't know if I'm using the new engine or
+                // not". So the line reports which one is actually running.
+                // Not offered = the Apple engine is selected, live text is off
+                // (the enhanced model only transcribes through the live
+                // session), or the device can't run Jot's own engine. In all
+                // three the built-in model IS the English engine and there is
+                // nothing to download, so this line stays exactly as it was —
+                // do NOT advertise the enhanced download to a user whose own
+                // setting is what rules it out.
+                guard UnifiedEnglishModel.isOfferedForCurrentLanguage else {
+                    return ("Built in — ready to use, no download.", Color.jotPageInkSecondary)
+                }
+                switch unifiedEnglish.state {
+                case .ready:
+                    return ("Enhanced English model — ready, runs on this iPhone.", Color.green)
+                case .downloading(let f, _):
+                    // Zero progress is NOT "downloading slowly": the session is
+                    // discretionary, so iOS can hold the whole 582 MB for days
+                    // waiting for Wi-Fi and power. A 0% bar sitting there reads
+                    // as broken, so say what is actually happening — the same
+                    // honest treatment the punctuation-model row uses.
+                    // Guard on the DISPLAYED percentage, not the raw fraction:
+                    // 0 < f < 0.01 still renders "… 0%", which is the exact
+                    // parked-looking string this line exists to avoid.
+                    guard Int(f * 100) > 0 else { return (Self.unifiedWaitingLine, Color.jotPageInkSecondary) }
+                    return (
+                        "Built in and ready. Downloading the enhanced English model… \(Int(f * 100))%",
+                        Color.jotPageInkSecondary
+                    )
+                case .loading:
+                    return ("Loading the enhanced English model…", Color.jotPageInkSecondary)
+                case .failed:
+                    return (
+                        "Built in and ready. The enhanced model didn't download — Jot is using the standard one.",
+                        Color.jotPageInkSecondary
+                    )
+                case .notDownloaded:
+                    guard !UnifiedEnglishModel.isInstalledOnDisk else {
+                        // On disk but not loaded in this process — the kill
+                        // switch, or (transiently) the moment right after the
+                        // routing flips back on, e.g. the Apple-engine toggle
+                        // going ON→OFF, before `prepare()` has reached
+                        // `.loading`. Say what is true rather than promising a
+                        // download that already happened.
+                        return ("Enhanced English model downloaded.", Color.jotPageInkSecondary)
+                    }
+                    return (Self.unifiedWaitingLine, Color.jotPageInkSecondary)
+                }
             }
             guard showsParakeetDownload(lang) else {
                 // Apple's on-device speech recognition handles this language
@@ -475,6 +564,24 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, JotDesign.Spacing.cardPaddingH)
             .padding(.bottom, 12)
+    }
+
+    /// Shown both before the fetch starts and while it is enqueued at 0% — the
+    /// two states are indistinguishable to the user and equally out of Jot's
+    /// hands, so they say the same true thing.
+    private static var unifiedWaitingLine: String {
+        "Built in and ready. A more accurate English model (\(unifiedSizeLabel)) "
+            + "downloads automatically over Wi-Fi."
+    }
+
+    /// Download size of the enhanced English model, summed from the fetcher's
+    /// pinned manifest so the number on screen can never drift from what is
+    /// actually fetched.
+    private static var unifiedSizeLabel: String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: UnifiedEnglishModel.approximateDownloadBytes)
     }
 
     /// Dictation language as a native iOS pull-down menu (the Apple selector
@@ -1028,6 +1135,12 @@ struct SettingsView: View {
                                     // useful, and the upgrade sheet then offers an
                                     // instant switch instead of re-downloading.
                                     AppGroup.parakeetSwitchArmed = false
+                                    // Picking an engine changes whether English
+                                    // routes to the unified model, so bring it in
+                                    // line either way: Apple ON drops the resident
+                                    // encoder, Apple OFF prepares (and, first
+                                    // time, starts fetching) it.
+                                    UnifiedEnglishModel.syncWithRouting()
                                     if newValue {
                                         TranscriptionService.shared.preinstallAppleAssets()
                                     } else {
@@ -1042,6 +1155,27 @@ struct SettingsView: View {
                                 .accessibilityLabel("Use Apple speech engine")
                             }
                         )
+
+                        cardDivider
+
+                        // Punctuation model status — the download is deliberately
+                        // silent (discretionary Wi-Fi fetch, no user action), which
+                        // meant NO way to tell whether a dictation used it (owner,
+                        // 2026-08-31: "I don't know if I'm using the new engine or
+                        // not"). Read-only; the fetch needs no controls because it
+                        // retries itself at every launch until installed.
+                        settingsIconRow(
+                            systemImage: "text.badge.checkmark",
+                            tint: JotDesign.JotSemanticIcon.version,
+                            shaded: JotDesign.JotSemanticIcon.versionShaded,
+                            title: "Punctuation model",
+                            subline: punctuationModelStatusLine,
+                            trailing: { EmptyView() }
+                        )
+                        .onAppear { refreshPunctuationModelStatus() }
+
+                        cardDivider
+
                     }
 
                     cardDivider

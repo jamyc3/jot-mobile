@@ -142,6 +142,12 @@ enum DiagnosticsCategory: String, Codable {
     /// here instead of only `os.log` because this owner reviews in-app
     /// Diagnostics, not Console.
     case appleDictation
+    /// Punctuation/true-casing model lifecycle: fetch phase transitions
+    /// (downloading → installing → done/failed) and the restorer's one-time
+    /// load result. The download is a silent discretionary Wi-Fi fetch with
+    /// no UI of its own, so without these records there is no way to answer
+    /// "did my dictation use the punctuation model?" from the device.
+    case punctuationModel
     /// Writing the vocabulary file to disk (`VocabularyStore.save()`)
     /// threw. Previously swallowed with zero user signal; now recorded so
     /// a "my term disappeared" report is diagnosable from Help →

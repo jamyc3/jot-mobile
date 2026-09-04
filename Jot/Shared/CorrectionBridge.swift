@@ -17,6 +17,55 @@ enum CorrectionBridge {
 
     // MARK: - Shapes
 
+    /// **F3 — a producer-validated exact edit descriptor.** The app resolves,
+    /// against the immutable text it is about to hand to the keyboard, EXACTLY
+    /// which characters a paste-changing choice would replace, and ships that
+    /// here. `start` is a CHARACTER offset (`Array(text)` index, the unit both
+    /// sides already splice in); `text` is the substring standing at
+    /// `[start, start + text.count)` VERBATIM — the consumer re-verifies it
+    /// against its own copy of the baseline before editing, so a descriptor that
+    /// was resolved against a different string can only fail closed.
+    ///
+    /// `text` is not necessarily the ask's word: resolution is case-insensitive
+    /// and Unicode case folds vary in length, so the baseline's own casing is
+    /// what gets carried.
+    struct EditSpan: Codable, Sendable, Equatable {
+        let start: Int
+        /// Exclusive end. Carried explicitly (rather than derived from
+        /// `text.count`) so the two sides can DISAGREE loudly: a descriptor
+        /// whose `end` doesn't match its own text is malformed and is refused
+        /// at both the emit and the apply site rather than silently reinterpreted.
+        let end: Int
+        let text: String
+
+        init(start: Int, end: Int, text: String) {
+            self.start = start
+            self.end = end
+            self.text = text
+        }
+
+        /// Half-open character range this descriptor claims.
+        var range: Range<Int> { start..<end }
+
+        /// A descriptor that replaces NO characters is not an edit — it is an
+        /// insertion, and an empty range is invisible to overlap validation, so
+        /// it would rewrite text nobody checked. The producer asserts this
+        /// before publishing and the consumer re-checks it before applying.
+        var isWellFormed: Bool {
+            start >= 0 && end > start && end - start == text.count
+        }
+
+        // `end` is additive on a field that has never shipped in a payload, but
+        // decode it defensively anyway: a blob written without it derives the
+        // same value the old `range` did.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            start = try c.decode(Int.self, forKey: .start)
+            text = try c.decode(String.self, forKey: .text)
+            end = try c.decodeIfPresent(Int.self, forKey: .end) ?? (start + text.count)
+        }
+    }
+
     struct Ask: Codable, Sendable, Equatable {
         let recordKey: String
         let original: String        // what TDT wrote ("Jamie")
@@ -45,12 +94,28 @@ enum CorrectionBridge {
         /// NEVER hold the paste — they surface via the post-paste teach strip
         /// instead. Optional/nil = normal ask (back-compat decode).
         let postPasteOnly: Bool?
+        /// **F3 exact edit descriptors** (2026-08-30). The authoritative span the
+        /// ask's paste-changing choices replace in the published baseline, as
+        /// resolved and validated BY THE PRODUCER (`CorrectionAsksPublisher`):
+        ///   - `baseEdit` — the span the in-text word occupies, i.e. what the
+        ///     original↔term flip replaces (one span serves both directions);
+        ///   - `altEdit` — the wider span `altFind` occupies, when the 3-option
+        ///     alternate survived validation.
+        /// Optional and additive: a payload encoded before F3 decodes both as nil
+        /// and the keyboard keeps its own resolver (the consumer half of F3 lands
+        /// in the next batch — see docs/plans/vocab-hold-deck-reliability.md).
+        /// A NIL `baseEdit` on a paste-holding ask never occurs in a payload this
+        /// version produces: an ask whose base edit cannot be honored is dropped
+        /// before publish rather than offered.
+        let baseEdit: EditSpan?
+        let altEdit: EditSpan?
 
         init(recordKey: String, original: String, term: String, outcome: String,
              contextBefore: String, contextAfter: String,
              publishedStart: Int? = nil, publishedLength: Int? = nil,
              altTerm: String? = nil, altFind: String? = nil,
-             postPasteOnly: Bool? = nil) {
+             postPasteOnly: Bool? = nil,
+             baseEdit: EditSpan? = nil, altEdit: EditSpan? = nil) {
             self.recordKey = recordKey
             self.original = original
             self.term = term
@@ -62,6 +127,8 @@ enum CorrectionBridge {
             self.altTerm = altTerm
             self.altFind = altFind
             self.postPasteOnly = postPasteOnly
+            self.baseEdit = baseEdit
+            self.altEdit = altEdit
         }
     }
 
@@ -137,6 +204,21 @@ enum CorrectionBridge {
     }
 
     static func clearAsks() {
+        AppGroup.defaults.removeObject(forKey: asksKey)
+    }
+
+    /// Clear the asks blob ONLY if it belongs to `sessionID`. The blob is a
+    /// single global slot, so an unguarded clear from a path that is ending an
+    /// OLD deck (supersession, stranded-deck sweeps) would delete a NEWER
+    /// session's just-published asks. Deck-terminal cleanup goes through this;
+    /// the unguarded `clearAsks()` stays for the owner-of-the-blob paths that
+    /// already know the blob is theirs.
+    static func clearAsks(matching sessionID: UUID) {
+        guard
+            let data = AppGroup.defaults.data(forKey: asksKey),
+            let asks = try? JSONDecoder().decode(Asks.self, from: data),
+            asks.sessionID == sessionID
+        else { return }
         AppGroup.defaults.removeObject(forKey: asksKey)
     }
 

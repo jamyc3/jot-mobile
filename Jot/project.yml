@@ -24,7 +24,7 @@ settings:
     # is minimal — scripts can already do anything they want during a
     # build; the sandbox is defense-in-depth, not a security boundary.
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CURRENT_PROJECT_VERSION: "262"
+    CURRENT_PROJECT_VERSION: "298"
     MARKETING_VERSION: "2.0.2"
     # Vineet's team — same one used for Mac Jot. Pinned so xcodegen
     # regeneration doesn't wipe the signing team out of Xcode every time.
@@ -33,7 +33,10 @@ settings:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    exactVersion: "0.14.7"
+    # Bumped 0.14.7 -> 0.15.4 for the Parakeet Unified 0.6B English backend
+    # (`UnifiedAsrManager`), which does not exist in 0.14.7. See
+    # `App/Transcription/UnifiedEnglishModel.swift`.
+    exactVersion: "0.15.4"
   # MLX backend stack for the on-device Qwen 3.5 rewrite path. Declared
   # at the project level so xcodegen emits the package refs, but only the
   # `Jot` target depends on the products — JotKeyboard MUST NOT pull in
@@ -182,6 +185,13 @@ targets:
       # scripts/check-help-corpus-fresh.sh guards staleness at build time.
       # See App/Ask/HelpCorpus.swift + docs/ask-product-help/design.md.
       - path: Resources/help-corpus.json
+        buildPhase: resources
+      # Unigram vocabulary (32k, lower-case English) for the punctuation /
+      # true-casing model. ~640 KB, so it ships in the IPA — only the ~57 MB
+      # CoreML weights are downloaded (PunctuationModelFetcher). Keeping the
+      # vocab bundled means the tokenizer can never be half-installed relative
+      # to the model. See App/Transcription/PunctuationRestorer.swift.
+      - path: Resources/punct_cap_seg_vocab.json
         buildPhase: resources
       # TTS Lab voice presets REMOVED from the bundle (owner, 2026-07-06):
       # the Supertonic-3 voice-style JSONs (F1-F5, M1-M5, ~2.9 MB) were cut

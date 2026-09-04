@@ -46,10 +46,11 @@ final class KeyboardViewInputs {
     var hasSelection: Bool = false
     var showCorrectionNudge: Bool = false
     var correctionAsks: CorrectionBridge.Asks? = nil
-    /// Ask-before-paste HOLD deck (Thread 2) — pre-paste review; the paste is held
-    /// while this is true.
-    var showAskDeck: Bool = false
-    var askDeckAsks: CorrectionBridge.Asks? = nil
+    /// Ask-before-paste HOLD deck (F1) — the hub's deck snapshot while it is
+    /// REVIEWING (nil otherwise), plus whether a held paste exists in any phase
+    /// (which blocks a second dictation — F1b).
+    var askDeckSnapshot: AskDeckSnapshot? = nil
+    var askDeckBlocksDictation: Bool = false
 }
 
 /// Concrete, build-once root for the hosted keyboard surface.
@@ -95,9 +96,11 @@ struct KeyboardRootHostView: View {
     let onVocabNudgeDismiss: () -> Void
     let onCorrectionVerdict: (String, String) -> Void
     let onCorrectionFinished: () -> Void
-    let onAskDeckVerdict: (String, String) -> Void
-    let onAskDeckStopAsking: (String) -> Void
-    let onAskDeckFinished: () -> Void
+    let onAskDeckVerdict: (AskDeckToken, String, String) -> Void
+    let onAskDeckStopAsking: (AskDeckToken, String) -> Void
+    let onAskDeckSkipCard: (AskDeckToken, String) -> Void
+    let onAskDeckSkipAll: (AskDeckToken) -> Void
+    let onAskDeckFinished: (AskDeckToken) -> Void
 
     var body: some View {
         KeyboardView(
@@ -151,10 +154,12 @@ struct KeyboardRootHostView: View {
             correctionAsks: inputs.correctionAsks,
             onCorrectionVerdict: onCorrectionVerdict,
             onCorrectionFinished: onCorrectionFinished,
-            showAskDeck: inputs.showAskDeck,
-            askDeckAsks: inputs.askDeckAsks,
+            askDeckSnapshot: inputs.askDeckSnapshot,
+            askDeckBlocksDictation: inputs.askDeckBlocksDictation,
             onAskDeckVerdict: onAskDeckVerdict,
             onAskDeckStopAsking: onAskDeckStopAsking,
+            onAskDeckSkipCard: onAskDeckSkipCard,
+            onAskDeckSkipAll: onAskDeckSkipAll,
             onAskDeckFinished: onAskDeckFinished,
             feedback: feedback
         )

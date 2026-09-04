@@ -94,7 +94,78 @@ final class VocabularyStore {
     }
 
     func save() {
-        guard let url = fileURL else { return }
+        guard let url = writeToDisk() else { return }
+        // Nudge the rescorer to re-tokenize against the updated file.
+        // Cheap when the rescorer is already prepared; throws
+        // `.notPrepared` (swallowed) otherwise, so a save with vocab
+        // boosting disabled is a no-op. Keeps the "edit vocab, record
+        // immediately" UX promised by the desktop's same hook.
+        //
+        // FIRE-AND-FORGET on purpose — a keystroke in the Vocabulary pane must
+        // not wait on a CoreML rescorer build. A caller that needs the rebuild
+        // to have LANDED before it records (voice teaching's sentence test)
+        // uses `updateAwaitingRescorer` instead; this path's semantics are
+        // unchanged for everyone else.
+        //
+        // DEBOUNCED + single-flight: every term-field keystroke writes through
+        // this method, and each rebuild is a full `VocabularyRescorer.create`
+        // (CoreML). Typing a ten-character term used to queue ten of them, nine
+        // of which the holder's `generation` guard then threw away after paying
+        // for them. The delay is short enough to keep the desktop's "edit vocab,
+        // record immediately" promise, and the last write always wins.
+        if isEnabled {
+            rebuildTask?.cancel()
+            rebuildTask = Task {
+                try? await Task.sleep(nanoseconds: Self.rebuildDebounceNanoseconds)
+                guard !Task.isCancelled else { return }
+                try? await VocabularyRescorerHolder.shared.rebuildVocabulary(from: url)
+            }
+        }
+    }
+
+    /// Coalesces the keystroke storm described in `save()`.
+    @ObservationIgnored
+    private var rebuildTask: Task<Void, Never>?
+    private static let rebuildDebounceNanoseconds: UInt64 = 400_000_000
+
+    /// `update(id:aliases:)` + a rebuild the caller can AWAIT.
+    ///
+    /// The two vocabulary paths read different sources: the model-free
+    /// corrector reads `terms` in memory, but the acoustic path reads the FILE
+    /// through `CustomVocabularyContext.loadFromSimpleFormat` and only picks up
+    /// a change when `rebuildVocabulary` has finished building a new CoreML
+    /// rescorer. `save()`'s unstructured Task gives no completion signal, and
+    /// `VocabularyRescorerHolder.awaitReady` can't stand in for one — it polls
+    /// `isReady`, which is already true for the STALE vocabulary. So a flow
+    /// that writes aliases and immediately records would test the vocabulary it
+    /// just replaced. This is the awaitable path for those flows.
+    ///
+    /// Returns once the write is on disk and the rebuild has settled (or thrown
+    /// — `.notPrepared` simply means the acoustic path is not in play on this
+    /// device, and the model-free corrector already sees the in-memory change).
+    /// A concurrent `save()` can still supersede this rebuild via the holder's
+    /// `generation` guard; callers that care hold the only editing surface for
+    /// the duration.
+    func updateAwaitingRescorer(id: VocabTerm.ID, aliases: [String]) async {
+        guard let idx = terms.firstIndex(where: { $0.id == id }) else { return }
+        terms[idx].aliases = aliases
+        guard let url = writeToDisk(), isEnabled else { return }
+        // Cancel any debounced rebuild from a pending keystroke: it would fire
+        // mid-recording and, being later, would win the holder's generation
+        // arbitration against the rebuild awaited here.
+        rebuildTask?.cancel()
+        rebuildTask = nil
+        try? await VocabularyRescorerHolder.shared.rebuildVocabulary(from: url)
+    }
+
+    /// Serializes `terms` to the vocabulary file. Returns the URL written on
+    /// success so callers can drive the rescorer rebuild themselves; `nil` when
+    /// there is nothing to write to or the write failed — a failed write leaves
+    /// the file holding the OLD terms, and rebuilding the rescorer from those
+    /// would only re-install what is already loaded.
+    @discardableResult
+    private func writeToDisk() -> URL? {
+        guard let url = fileURL else { return nil }
         let body = VocabularyFile.serialize(terms)
         do {
             try body.write(to: url, atomically: true, encoding: .utf8)
@@ -111,17 +182,9 @@ final class VocabularyStore {
                 category: .vocabularySaveFailed,
                 message: "Vocabulary save failed: \(error.localizedDescription)"
             )
+            return nil
         }
-        // Nudge the rescorer to re-tokenize against the updated file.
-        // Cheap when the rescorer is already prepared; throws
-        // `.notPrepared` (swallowed) otherwise, so a save with vocab
-        // boosting disabled is a no-op. Keeps the "edit vocab, record
-        // immediately" UX promised by the desktop's same hook.
-        if isEnabled {
-            Task {
-                try? await VocabularyRescorerHolder.shared.rebuildVocabulary(from: url)
-            }
-        }
+        return url
     }
 
     // MARK: - Mutations (each writes through)
@@ -183,7 +246,14 @@ final class VocabularyStore {
     /// Settings rows' free-text editing (`update(id:text:)`) predates this and
     /// is NOT yet routed through here — tracked with the vocabulary-section
     /// overhaul (plan §12).
-    private static func fileSafe(_ s: String, isAlias: Bool) -> String {
+    /// Alias-only form of the existing persistence guard. Voice teaching keeps
+    /// the recognizer's raw text for review, but candidates entering the simple
+    /// file must not be allowed to change its line/field structure.
+    nonisolated static func fileSafeAlias(_ value: String) -> String {
+        fileSafe(value, isAlias: true)
+    }
+
+    nonisolated private static func fileSafe(_ s: String, isAlias: Bool) -> String {
         var out = s.replacingOccurrences(of: ":", with: " ")
         if isAlias { out = out.replacingOccurrences(of: ",", with: " ") }
         out = out.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")

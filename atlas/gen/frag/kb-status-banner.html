@@ -1,7 +1,13 @@
 <!-- §5.10 Keyboard status banner (SHIPPED 1.0.6). A liquid-glass banner whose tint, icon,
      and ink carry SEVERITY — success (green), warning (amber), error (red), progress (blue) —
      matching the app's StatusPill, instead of one saturated red bar for everything. Renders
-     instantly in the keyboard's top slot. -->
+     instantly in the keyboard's top slot.
+
+     The two paste-outcome variants are a PAIR: red is only for an affirmative failure (the
+     host's text shrank, or the field holds no text), while amber covers the undecidable case
+     — the host dropped the input connection before the paste could be verified, so the text
+     may well have landed. The neutral copy stops the keyboard telling you a good paste
+     failed, and the clipboard is the one-tap recovery either way. -->
 
 <div class="jot-display" style="font-size:30px;margin:4px 0 4px">Status banner</div>
 <div class="jot-caption" style="margin:0 0 18px">Color carries meaning — the tint tells you what happened at a glance.</div>
@@ -19,6 +25,11 @@
 <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;background:rgba(224,23,59,0.13);border:0.5px solid rgba(224,23,59,0.38);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);margin-bottom:9px">
   <svg viewBox="0 0 24 24" style="width:21px;height:21px;flex:none"><circle cx="12" cy="12" r="10" fill="#E0173B"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>
   <span style="color:#C01433;font-weight:600;font-size:13.5px;flex:1">Couldn't paste here — saved to clipboard, tap to paste</span>
+</div>
+
+<div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;background:rgba(255,159,48,0.16);border:0.5px solid rgba(255,159,48,0.4);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);margin-bottom:9px">
+  <svg viewBox="0 0 24 24" style="width:21px;height:21px;flex:none"><circle cx="12" cy="12" r="10" fill="#FF9F30"/><path d="M12 7v6M12 16v.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>
+  <span style="color:#B87314;font-weight:600;font-size:13.5px;flex:1">Also saved to clipboard — tap to paste if it didn't land</span>
 </div>
 
 <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;background:rgba(26,140,255,0.14);border:0.5px solid rgba(26,140,255,0.4);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)">

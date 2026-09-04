@@ -32,6 +32,24 @@ final class JotAppDelegate: NSObject, UIApplicationDelegate {
             ParakeetModelFetcher.shared.handleBackgroundSessionEvents(
                 completionHandler: completionHandler
             )
+        case UnifiedModelFetcher.sessionIdentifier:
+            // Without this the 582 MB unified fetch could COMPLETE while the app
+            // is suspended and never be installed — iOS relaunches us precisely
+            // to deliver these events, and dropping them strands the download.
+            MainActor.assumeIsolated {
+                UnifiedModelFetcher.shared.handleBackgroundSessionEvents(
+                    completionHandler: completionHandler
+                )
+            }
+        case PunctuationModelFetcher.sessionIdentifier:
+            // Same reason as the unified fetch: the punctuation model's download
+            // can complete while we are suspended, and dropping the relaunch
+            // event strands it half-staged forever.
+            MainActor.assumeIsolated {
+                PunctuationModelFetcher.shared.handleBackgroundSessionEvents(
+                    completionHandler: completionHandler
+                )
+            }
         default:
             // Not one of ours — release the system immediately so we never strand it.
             completionHandler()
@@ -256,6 +274,29 @@ struct JotApp: App {
             // (nothing is recording yet), so this applies immediately and the warm
             // chain below then warms the right model. No-op unless armed.
             ParakeetModelArrival.applyPendingSwitchIfSafe()
+
+            // Parakeet Unified — the English engine since build 297. The model
+            // is per-process state (`state` resets to `.notDownloaded` and the
+            // manager is nil in a fresh process), so without this every English
+            // dictation after a relaunch would silently run the bundled v2
+            // fallback. This ALSO starts the 582 MB download the first time, for
+            // a user who has never had it: the fetch is discretionary and
+            // Wi-Fi-only, and nothing waits on it. No-op off English, on the
+            // Apple engine, and when already prepared.
+            //
+            // Deliberately placed in this SERIAL cold-load chain rather than
+            // concurrently: it is a third CoreML model, and loading CoreML
+            // models in parallel contends in the ANE device-specialization
+            // compiler (measured 4x cold start — see the note below).
+            UnifiedEnglishModel.syncWithRouting()
+
+            // Punctuation / true-casing model (~57 MB). Unlike the fetches
+            // above this is unprompted and discretionary: it needs no user
+            // action, rides Wi-Fi at a moment the system picks, and simply
+            // no-ops in the transcript pipeline until it has landed. Owner call
+            // (2026-08-30): download it like the rest rather than bundling it,
+            // because bundling would nearly triple the IPA.
+            PunctuationModelFetcher.shared.resumeIfPending()
 
             // Stage 1 → 2: wait for Parakeet, then prepare the vocab rescorer IF
             // the user has it enabled. Done as an `if` (not an early return) so

@@ -29,8 +29,11 @@ enum BoostModelStatus: Equatable {
 }
 
 struct VocabularySettingsView: View {
+    @Environment(RecordingService.self) private var recordingService
+    @Environment(StreamingPartial.self) private var streamingPartial
     @State private var store = VocabularyStore.shared
     @State private var boostModelStatus: BoostModelStatus = .notDownloaded
+    @State private var teachingTerm: VocabTerm?
     @FocusState private var focusedID: VocabTerm.ID?
 
     var body: some View {
@@ -71,6 +74,13 @@ struct VocabularySettingsView: View {
                 Task { await VocabularyRescorerHolder.shared.unload() }
             }
         }
+        .sheet(item: $teachingTerm) { term in
+            VocabularyTeachingSheet(
+                term: term,
+                recording: recordingService,
+                streamingPartial: streamingPartial
+            )
+        }
     }
 
     // MARK: - Sections
@@ -90,6 +100,29 @@ struct VocabularySettingsView: View {
         }
     }
 
+    /// Why voice teaching can't run right now, or `nil` when it can.
+    ///
+    /// The two conditions are the exact pair the vocabulary apply is gated on in
+    /// the transcription path — voice teaching's sentence test runs that apply,
+    /// so the entry point has to answer the same question or the test can only
+    /// ever report that the term wasn't found. The button is REPLACED by the
+    /// reason rather than silently absent: a missing control with no explanation
+    /// reads as a bug, and both causes are one tap from being fixed.
+    ///
+    /// `LanguageChoice.current` is a plain read, not observable, so this does
+    /// not refresh if the dictation language changes while the pane is open.
+    /// Acceptable: the language picker lives on another screen, and the teach
+    /// sheet snapshots its own state at open anyway.
+    private var teachBlockedReason: String? {
+        if !store.isEnabled {
+            return "Turn on vocabulary boosting above to teach a term by voice."
+        }
+        if !LanguageChoice.current.isVocabEligible {
+            return "Teaching by voice isn't available for your dictation language."
+        }
+        return nil
+    }
+
     private var headerSubtext: String {
         store.isEnabled
             ? "Jot will prefer the terms below when transcribing. Add product names, proper nouns, and jargon you want spelled a specific way."
@@ -106,7 +139,9 @@ struct VocabularySettingsView: View {
                     VocabRow(
                         term: binding(for: term.id),
                         focusedID: $focusedID,
-                        rowID: term.id
+                        rowID: term.id,
+                        teachBlockedReason: teachBlockedReason,
+                        onTeach: { teachingTerm = term }
                     )
                 }
                 .onDelete { offsets in
@@ -338,11 +373,19 @@ private struct VocabRow: View {
     @Binding var term: VocabTerm
     var focusedID: FocusState<VocabTerm.ID?>.Binding
     let rowID: VocabTerm.ID
+    /// Why the voice-teaching sentence test can't run, or `nil` when it can —
+    /// see the gate's rationale at `teachBlockedReason`.
+    let teachBlockedReason: String?
+    let onTeach: () -> Void
 
-    /// Local draft for the comma-separated "Sounds like" line so typing a
-    /// comma or trailing space isn't eaten by a live re-parse; the parsed
-    /// aliases persist on every change via the binding.
-    @State private var soundsLikeDraft: String = ""
+    /// Draft for the "add a misheard form…" field. Committed on return/blur
+    /// only — the row's binding writes through to `VocabularyStore.save()`,
+    /// which rebuilds the CoreML rescorer, so a per-keystroke alias write would
+    /// rebuild it once per character. (The comma-separated editor this replaced
+    /// did exactly that, and needed a draft/round-trip dance to keep a comma
+    /// from being eaten mid-type; chips remove both problems.)
+    @State private var newAliasDraft: String = ""
+    @FocusState private var aliasFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -364,31 +407,126 @@ private struct VocabRow: View {
             // "Sounds like" (aliases) — VISIBLE + editable (owner ask,
             // 2026-07-14; round-2 review flagged hidden aliases as unsafe:
             // Find & Replace / correction teaching writes them, and an
-            // unwanted one silently changes future dictations). Shown only
-            // when aliases exist — they're created by the teaching flows.
-            if !term.aliases.isEmpty || !soundsLikeDraft.isEmpty {
-                HStack(spacing: 6) {
+            // unwanted one silently changes future dictations).
+            //
+            // Shown for EVERY non-empty term, not only ones that already have
+            // aliases (owner, 2026-08-31: the line "doesn't look like it's
+            // editable"). Each alias is a deletable chip and the trailing field
+            // is the add affordance, so the row reads as an input instead of a
+            // caption — and it matches how the teaching sheet talks about the
+            // same list.
+            if !isBlank {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("Sounds like")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .layoutPriority(1)
-                    TextField("comma-separated", text: $soundsLikeDraft)
+                    FlowLayout(spacing: 6, lineSpacing: 4) {
+                        // Indexed rather than keyed on the alias itself: a file
+                        // written by an older build can hold exact duplicates,
+                        // which would collide as identities.
+                        ForEach(Array(term.aliases.enumerated()), id: \.offset) { index, alias in
+                            aliasChip(alias, at: index)
+                        }
+                        // A FIXED width, and chip-shaped chrome instead of
+                        // `.roundedBorder`. `FlowLayout` sizes each subview by
+                        // proposing the full line width, and a TextField answers
+                        // that proposal with all of it — so a `minWidth` field
+                        // reported a full-width size, always wrapped onto its own
+                        // line, and tripled the height of every row in the list.
+                        // A fixed frame answers the proposal with 150 regardless,
+                        // which is what lets it flow inline beside the chips (as
+                        // the Atlas vocab-list screen shows it), and the padding
+                        // here matches `aliasChip`'s so the two sit on one line.
+                        TextField("add a misheard form…", text: $newAliasDraft)
+                            .font(.caption)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .frame(width: 150)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.35), lineWidth: 0.8)
+                            )
+                            .focused($aliasFieldFocused)
+                            .onSubmit(commitNewAlias)
+                            .accessibilityLabel("Add a misheard form for \(term.text)")
+                    }
+                }
+                .padding(.bottom, 4)
+                // Commit on blur as well as on return, so a typed form isn't
+                // lost by tapping elsewhere.
+                .onChange(of: aliasFieldFocused) { _, focused in
+                    if !focused { commitNewAlias() }
+                }
+            }
+
+            // Phase 2 of teaching applies the user's vocabulary through the real
+            // pipeline, and that apply is gated on the master toggle plus the
+            // language's vocab eligibility. Offering the button without them
+            // would run a sentence test that reports "not found" 100% of the
+            // time, on every CJK / LatAm-Spanish language and with the toggle
+            // off — teaching the user their vocabulary doesn't work.
+            if !isBlank {
+                if let reason = teachBlockedReason {
+                    Text(reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                        .accessibilityLabel("Sounds like — misheard forms this term corrects")
+                        .padding(.bottom, 6)
+                } else {
+                    Button(action: onTeach) {
+                        Label("Teach it by voice", systemImage: "waveform.and.mic")
+                            .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.bottom, 6)
+                    .accessibilityHint("Record the term so Jot can learn how it is misheard")
                 }
-                .padding(.bottom, 6)
             }
         }
         .frame(minHeight: 44)
-        .onAppear { soundsLikeDraft = term.aliases.joined(separator: ", ") }
-        .onChange(of: soundsLikeDraft) { _, new in
-            term.aliases = new.split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
+    }
+
+    private var isBlank: Bool {
+        term.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func aliasChip(_ alias: String, at index: Int) -> some View {
+        HStack(spacing: 3) {
+            // A mishearing can be a whole phrase, and the add-field takes
+            // pastes — an unbounded chip wraps to several lines and swallows
+            // the row. Middle truncation keeps both ends, which is what makes
+            // a long alias recognizable at a glance.
+            Text(alias)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Button {
+                guard term.aliases.indices.contains(index) else { return }
+                term.aliases.remove(at: index)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove sounds-like \(alias)")
         }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+    }
+
+    private func commitNewAlias() {
+        // Same sanitizing choke point the teaching flows use: ":" and ","
+        // are structural in the vocabulary file and a raw paste carrying one
+        // would corrupt the line on the next parse.
+        let candidate = VocabularyStore.fileSafeAlias(newAliasDraft)
+        newAliasDraft = ""
+        guard !candidate.isEmpty else { return }
+        term.aliases = TeachSentenceLocator.mergeAliases(
+            latestAliases: term.aliases, provisionalAliases: [candidate]
+        )
     }
 
     private var warningMessage: String? {

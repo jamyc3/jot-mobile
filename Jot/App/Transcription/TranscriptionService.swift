@@ -398,6 +398,12 @@ final class TranscriptionService {
             "Dictation language changed — language=\(AppGroup.transcriptionLanguage, privacy: .public) eagerWarm=\(eagerWarm, privacy: .public)"
         )
         if eagerWarm { warmUp() }
+        // The English engine follows the language too: prepare (and, first time,
+        // download) the unified model when the pick lands on English, drop the
+        // resident encoder when it leaves. Same teardown hazard profile as the
+        // `AsrManager` hand-off above, and the single gate lives in
+        // `syncWithRouting()` rather than being re-derived here.
+        UnifiedEnglishModel.syncWithRouting()
     }
 
     func purgeAndReload() async {
@@ -426,6 +432,61 @@ final class TranscriptionService {
     // MARK: - Sample-based inference (in-app record flow)
 
     func transcribe(samples: [Float]) async throws -> String {
+        try await transcribeSamples(samples, processingMode: .fullPipeline).text
+    }
+
+    /// Returns the selected recognizer's immediate output for flows that need
+    /// to observe what the engine heard before Jot changes the text.
+    func transcribeWithoutVocabulary(samples: [Float]) async throws -> String {
+        try await transcribeSamples(samples, processingMode: .recognizerOnly).text
+    }
+
+    /// The normal batch pipeline PLUS the vocabulary evidence it otherwise
+    /// discards — what the gate found, and what it chose to do about it.
+    ///
+    /// Voice teaching's sentence test needs to report the pipeline's own
+    /// behaviour rather than guess at it from the final string: the gate
+    /// deliberately DECLINES to rewrite a common-word original (it surfaces an
+    /// ask instead), so "the term isn't in the text" and "the term was never
+    /// found" are different facts that the text alone cannot separate. The
+    /// proposals carry both, and `gatedText` is the only string their
+    /// `publishedStart` offsets are valid for (`CorrectionProvenance`'s own
+    /// contract) — the post-gate segmenter/filler/number/punctuation chain
+    /// rewrites the text underneath them.
+    ///
+    /// Not a new inference path: same `runInference`, same engine routing, same
+    /// side effects (none that save — transcript saving, provenance commit and
+    /// keyboard ask publication all live in `DictationPipeline`, which teaching
+    /// never enters). The `clearPending()` at the head of every full run is
+    /// load-bearing here: it is what stops a teaching run's proposals from being
+    /// committed under a later dictation's transcript id.
+    func transcribeWithProposals(samples: [Float]) async throws -> InferenceOutput {
+        try await transcribeSamples(samples, processingMode: .fullPipeline)
+    }
+
+    private enum InferenceProcessingMode {
+        case fullPipeline
+        case recognizerOnly
+    }
+
+    /// One batch run's published text plus the vocabulary gate's own account of
+    /// it. Every caller but `transcribeWithProposals` reads only `text`.
+    struct InferenceOutput: Sendable {
+        /// The user-visible transcript, post-cleanup.
+        let text: String
+        /// The gate's output text — the ONLY string `proposals`' published
+        /// offsets index into. Equal to the recognizer's text when no
+        /// vocabulary pass ran.
+        let gatedText: String
+        /// What the vocabulary pass found, applied ("applied") and held back
+        /// ("kept") alike. Empty on `recognizerOnly` runs.
+        let proposals: [JotVocabCore.VocabularyGate.Proposal]
+    }
+
+    private func transcribeSamples(
+        _ samples: [Float],
+        processingMode: InferenceProcessingMode
+    ) async throws -> InferenceOutput {
         if let standIn {
             guard !isTranscribing else { throw TranscriptionError.busy }
             isTranscribing = true
@@ -434,7 +495,7 @@ final class TranscriptionService {
             log.info("Simulator transcription stand-in begin — sampleCount=\(samples.count, privacy: .public)")
             let result = try await standIn.transcribe(samples: samples)
             log.info("Simulator transcription stand-in end — chars=\(result.count, privacy: .public)")
-            return result
+            return InferenceOutput(text: result, gatedText: result, proposals: [])
         }
 
         try Self.guardAudioLength(sampleCount: samples.count)
@@ -454,13 +515,14 @@ final class TranscriptionService {
             let result = try await runInference(
                 on: samples,
                 label: "samples",
-                audioDurationSeconds: audioDurationSeconds
+                audioDurationSeconds: audioDurationSeconds,
+                processingMode: processingMode
             )
             let endedAt = Date()
             let elapsedMS = Self.elapsedMilliseconds(from: startedAt, to: endedAt)
             let rtf = Self.realTimeFactor(elapsedMS: elapsedMS, audioDurationSeconds: audioDurationSeconds)
             log.info(
-                "Transcription end — source=samples startedAt=\(Self.timestamp(startedAt), privacy: .public) endedAt=\(Self.timestamp(endedAt), privacy: .public) elapsedMS=\(elapsedMS, privacy: .public) audioDurationS=\(audioDurationSeconds, privacy: .public) rtf=\(rtf, privacy: .public) chars=\(result.count, privacy: .public)"
+                "Transcription end — source=samples startedAt=\(Self.timestamp(startedAt), privacy: .public) endedAt=\(Self.timestamp(endedAt), privacy: .public) elapsedMS=\(elapsedMS, privacy: .public) audioDurationS=\(audioDurationSeconds, privacy: .public) rtf=\(rtf, privacy: .public) chars=\(result.text.count, privacy: .public)"
             )
             signposter.endInterval("transcribe-samples", interval)
             return result
@@ -572,7 +634,7 @@ final class TranscriptionService {
                 label: "file",
                 audioDurationSeconds: audioDurationSeconds
             )
-            log.info("transcribe(audioFileURL:) — inference returned \(result.count, privacy: .public) chars")
+            log.info("transcribe(audioFileURL:) — inference returned \(result.text.count, privacy: .public) chars")
 
             let endedAt = Date()
             let elapsedMS = Self.elapsedMilliseconds(from: transcribeStartedAt, to: endedAt)
@@ -580,10 +642,10 @@ final class TranscriptionService {
             let rtf = Self.realTimeFactor(elapsedMS: elapsedMS, audioDurationSeconds: audioDurationSeconds)
             let totalRTF = Self.realTimeFactor(elapsedMS: totalElapsedMS, audioDurationSeconds: audioDurationSeconds)
             log.info(
-                "Transcription end — source=file startedAt=\(Self.timestamp(transcribeStartedAt), privacy: .public) endedAt=\(Self.timestamp(endedAt), privacy: .public) elapsedMS=\(elapsedMS, privacy: .public) totalElapsedMS=\(totalElapsedMS, privacy: .public) audioDurationS=\(audioDurationSeconds, privacy: .public) rtf=\(rtf, privacy: .public) totalRtf=\(totalRTF, privacy: .public) chars=\(result.count, privacy: .public) file=\(url.lastPathComponent, privacy: .public)"
+                "Transcription end — source=file startedAt=\(Self.timestamp(transcribeStartedAt), privacy: .public) endedAt=\(Self.timestamp(endedAt), privacy: .public) elapsedMS=\(elapsedMS, privacy: .public) totalElapsedMS=\(totalElapsedMS, privacy: .public) audioDurationS=\(audioDurationSeconds, privacy: .public) rtf=\(rtf, privacy: .public) totalRtf=\(totalRTF, privacy: .public) chars=\(result.text.count, privacy: .public) file=\(url.lastPathComponent, privacy: .public)"
             )
             signposter.endInterval("transcribe-file", interval)
-            return result
+            return result.text
         } catch {
             let endedAt = Date()
             let totalElapsedMS = Self.elapsedMilliseconds(from: transcriptionStartedAt, to: endedAt)
@@ -632,6 +694,68 @@ final class TranscriptionService {
 
     /// FluidAudio/Parakeet stop-pass. Owns: bundled-model integrity check,
     /// prepare/load wait, manager guard, decoder state.
+    /// Stop-pass for the Parakeet Unified 0.6B English backend.
+    ///
+    /// There is NO re-transcription here. The streaming session decoded the
+    /// audio as it arrived, so this simply promotes the transcript it already
+    /// finished — the same D2 promote contract `appleStopPass` uses, and the
+    /// reason this path has no post-stop wait at all.
+    ///
+    /// It carries `tokenTimings` with it, which is what keeps the acoustic
+    /// vocabulary merge and paragraph segmentation alive on this engine — see
+    /// the merge in `runInference`, which is gated on exactly that field.
+    ///
+    /// Returns nil when the artifact can't vouch for the whole recording
+    /// (pause/resume seams, a dropped chunk, a mid-session decode failure, live
+    /// text off). The caller then runs the bundled v2 engine — the default
+    /// engine changing must never cost a real dictation.
+    private func unifiedEnglishPromote(samples: [Float]) -> ASRResult? {
+        guard let pending = pendingStreamingArtifact else { return nil }
+        // Cleared unconditionally — including on the REJECT path below. A stale
+        // artifact outliving its stop-pass is the worse failure (it could be
+        // promoted onto a later, unrelated recording), so consume-on-read is
+        // deliberate. Accepted consequence: a transcribe that interleaves with a
+        // live dictation (a file import, a re-transcribe from Transcript Detail)
+        // reaches here with a different sample count, eats that dictation's
+        // artifact, and the dictation then falls back to the v2 batch pass. It
+        // costs a re-transcribe, never a wrong or missing transcript.
+        pendingStreamingArtifact = nil
+        guard pending.artifact.sourceSampleCount == samples.count,
+              Date().timeIntervalSince(pending.depositedAt) < 60
+        else {
+            DiagnosticsLog.record(
+                source: "main-app",
+                category: .modelLoad,
+                message: "Unified streaming artifact rejected — coverage mismatch",
+                metadata: [
+                    "artifactSamples": "\(pending.artifact.sourceSampleCount)",
+                    "captureSamples": "\(samples.count)",
+                ]
+            )
+            return nil
+        }
+        log.info(
+            "Unified: promoting streaming transcript — coverage exact (\(samples.count, privacy: .public) samples), no re-transcribe"
+        )
+        DiagnosticsLog.record(
+            source: "main-app",
+            category: .modelLoad,
+            message: "Unified streaming transcript promoted at stop (no re-transcribe)",
+            metadata: [
+                "samples": "\(samples.count)",
+                "chars": "\(pending.artifact.text.count)",
+                "timings": "\(pending.artifact.tokenTimings.count)",
+            ]
+        )
+        return ASRResult(
+            text: pending.artifact.text,
+            confidence: 1.0,
+            duration: Double(samples.count) / 16_000.0,
+            processingTime: 0,
+            tokenTimings: pending.artifact.tokenTimings
+        )
+    }
+
     private func fluidAudioStopPass(samples: [Float], label: String) async throws -> ASRResult {
         // Root-cause guard (belt-and-suspenders): an `isAppleOnly` language has
         // NO FluidAudio model at all, so running FluidAudio here would
@@ -828,6 +952,27 @@ final class TranscriptionService {
     /// user selected Apple they want Apple, not Parakeet — just fail"). Reads
     /// `useAppleEngine` exactly once per stop-pass.
     private func stopPassTranscribe(samples: [Float], label: String) async throws -> ASRResult {
+        // ── ENGLISH ROUTING TABLE (build 297; the three branches below, in order)
+        //
+        //   Apple engine selected, or Apple-only language, or Parakeet can't run
+        //     → Apple (`useAppleEngine`)
+        //   English + unified model on disk AND loaded  → Parakeet Unified 0.6B
+        //   English, model not there yet                → bundled Parakeet v2
+        //   any other language                          → bundled/downloaded v3
+        //
+        // Unified is the DEFAULT English engine, not an opt-in — but `isActive`
+        // is still fully conjunctive (see `UnifiedEnglishModel.isActive`), so
+        // the second and third rows are the same user on different days: the
+        // 582 MB fetch runs in the background and English rides v2 until it
+        // lands. There is no cliff, and a unified failure costs nothing.
+        //
+        // Order vs `useAppleEngine` no longer matters — `isOfferedForCurrentLanguage`
+        // is now false whenever the language routes to Apple, so this branch
+        // cannot steal a dictation the user asked Apple for. Kept first because
+        // it is the cheapest check and reads as the primary path it now is.
+        if UnifiedEnglishModel.shared.isActive, let promoted = unifiedEnglishPromote(samples: samples) {
+            return promoted
+        }
         if useAppleEngine {
             await Self.logAppleEngineCapabilityDiagnosticsIfNeeded()
             do {
@@ -860,7 +1005,12 @@ final class TranscriptionService {
     /// (`stopPassTranscribe`) plus the full post-pipeline cleanup (vocabulary
     /// rescore + paragraph segmentation + filler-word cleanup + number
     /// normalization).
-    private func runInference(on samples: [Float], label: String, audioDurationSeconds: Double) async throws -> String {
+    private func runInference(
+        on samples: [Float],
+        label: String,
+        audioDurationSeconds: Double,
+        processingMode: InferenceProcessingMode = .fullPipeline
+    ) async throws -> InferenceOutput {
         let inferenceStartedAt = Date()
 
         let inferenceInterval = signposter.beginInterval("transcribe-inference")
@@ -915,6 +1065,21 @@ final class TranscriptionService {
             throw TranscriptionError.noAudioCaptured
         }
         do {
+            if case .recognizerOnly = processingMode {
+                // Teaching needs the selected engine's own words. Returning at
+                // this boundary also avoids starting the independent CTC pass.
+                let result = try await stopPassTranscribe(samples: samples, label: label)
+                let inferenceEndedAt = Date()
+                let wallClockMS = Self.elapsedMilliseconds(from: inferenceStartedAt, to: inferenceEndedAt)
+                let wallClockRTF = Self.realTimeFactor(elapsedMS: wallClockMS, audioDurationSeconds: result.duration)
+                let engineRTF = result.duration > 0 ? result.processingTime / result.duration : 0
+                log.info(
+                    "Parakeet inference end — source=\(label, privacy: .public) startedAt=\(Self.timestamp(inferenceStartedAt), privacy: .public) endedAt=\(Self.timestamp(inferenceEndedAt), privacy: .public) wallClockMS=\(wallClockMS, privacy: .public) processingMS=\(result.processingTime * 1_000, privacy: .public) audioDurationS=\(result.duration, privacy: .public) wallClockRtf=\(wallClockRTF, privacy: .public) engineRtf=\(engineRTF, privacy: .public) chars=\(result.text.count, privacy: .public)"
+                )
+                signposter.endInterval("transcribe-inference", inferenceInterval)
+                return InferenceOutput(text: result.text, gatedText: result.text, proposals: [])
+            }
+
             // ── Concurrency: overlap the expensive CTC keyword-spot pass
             // with the TDT transcribe. The spot consumes ONLY the audio
             // (not the TDT text/timings), so it can run on the separate
@@ -1010,6 +1175,13 @@ final class TranscriptionService {
             // if FluidAudio ever returns nil here the rescore is
             // skipped. Mirrors `jot/Sources/Transcription/Transcriber.swift:117`.
             var transcriptText = result.text
+            // The gate's own account of this run, surfaced by
+            // `transcribeWithProposals` and ignored by every other caller. The
+            // baseline starts at the recognizer's text so a run where no
+            // vocabulary pass fires still reports a `gatedText` its (empty) set
+            // of proposals is trivially valid for.
+            var gatedText = result.text
+            var gateProposals: [JotVocabCore.VocabularyGate.Proposal] = []
             // v1b — start every dictation with an empty correction-provenance
             // slot so a stale `pending` (from a no-proposal dictation, or from a
             // non-saving caller like Ask/watch/file-import) can never be committed
@@ -1061,6 +1233,8 @@ final class TranscriptionService {
                 if let merged, let rescored = merged {
                     transcriptText = rescored.text
                     acousticProposals = rescored.proposals.count
+                    gatedText = rescored.text
+                    gateProposals = rescored.proposals
                 } else if merged == nil {
                     self.log.error(
                         "vocabulary merge timed out after \(Self.vocabMergeTimeoutSeconds, privacy: .public)s; publishing raw transcript"
@@ -1113,6 +1287,8 @@ final class TranscriptionService {
                     }
                     if let corrected, !corrected.proposals.isEmpty {
                         transcriptText = corrected.text
+                        gatedText = corrected.text
+                        gateProposals = corrected.proposals
                         DiagnosticsLog.record(
                             source: "main-app",
                             category: .vocabularyGate,
@@ -1169,7 +1345,14 @@ final class TranscriptionService {
             // ParagraphSegmenter above is language-agnostic (pause-based), so it
             // stays for every language.
             transcriptText = Self.applyLanguageCleanup(transcriptText)
-            return transcriptText
+            // Re-punctuate with the downloaded punct/cap/seg model. Runs LAST so
+            // it sees the filler-stripped, number-normalized text — the same
+            // order the evaluation used. No-ops unless the language is enabled
+            // and the model finished downloading.
+            transcriptText = await Self.applyPunctuationModel(transcriptText)
+            return InferenceOutput(
+                text: transcriptText, gatedText: gatedText, proposals: gateProposals
+            )
         } catch {
             let inferenceEndedAt = Date()
             let wallClockMS = Self.elapsedMilliseconds(from: inferenceStartedAt, to: inferenceEndedAt)
@@ -1192,9 +1375,12 @@ final class TranscriptionService {
     /// the same shared word lists, so a language behaves identically on iPhone
     /// and Mac.
     ///
-    /// The Apple-engine paths (`appleStopPass`, and the Apple-only CJK
-    /// languages) never reach here: Apple emits cased, punctuated text with no
-    /// hesitation-token artifacts to strip, exactly as on the Mac.
+    /// The Apple ENGINE does reach here: English dictations routed through
+    /// `appleStopPass` flow into the same post-processing tail as Parakeet
+    /// ones, so English Apple output gets the full chain too (harmless — the
+    /// number pass only rewrites spelled-out words, which Apple rarely emits).
+    /// The Apple-only CJK languages are the ones that pass through untouched,
+    /// via their `nil` `fillerLanguageCode`.
     private static func applyLanguageCleanup(_ text: String) -> String {
         guard let fillerCode = LanguageChoice.current.fillerLanguageCode else {
             return text
@@ -1208,6 +1394,37 @@ final class TranscriptionService {
         // Non-English: hesitation sounds ONLY. NumberNormalizer is deliberately
         // absent — see `fillerLanguageCode`.
         return FillerWordCleaner.clean(text, language: fillerCode)
+    }
+
+    /// Re-punctuate the finished transcript with the downloaded punct/cap/seg
+    /// model. Returns `text` unchanged whenever the model is not available, so
+    /// this can never cost a dictation.
+    ///
+    /// Gated on `LanguageChoice.punctuationLanguageCode` — English only today,
+    /// because that is the only language the model was evaluated in (three blind
+    /// judges preferred it over Parakeet's own punctuation 31–16 on identical
+    /// words; `docs/research/granite-turboctc/PUNCTUATION.md`).
+    ///
+    /// English runs through this on ALL THREE engines (owner call 2026-08-30:
+    /// "just enable it for both"): Parakeet v2, Parakeet Unified and Apple
+    /// stop-pass text share this tail, and the restorer strips existing
+    /// case/punctuation before re-adding its own, so a source's built-in
+    /// punctuation cannot double up — it is simply replaced. Whether Apple's or
+    /// Unified's own punctuation was better remains UNMEASURED (the blind eval
+    /// compared Parakeet v2 only) — and Unified's native punctuation is one of
+    /// the reasons it was picked, so that is the comparison to run first if
+    /// English reads worse than expected on the new engine.
+    ///
+    /// **Deliberately NOT applied to the live preview.** The preview re-runs
+    /// while the user is still speaking, so re-punctuating each tick would make
+    /// sentence boundaries jump around as later words arrive — the model decides
+    /// boundaries from the whole window it is given. The cost is that the preview
+    /// and the final transcript differ in punctuation, which is a visible
+    /// divergence the rest of this file works to avoid. Revisit if that reads
+    /// worse on device than the flicker would.
+    private static func applyPunctuationModel(_ text: String) async -> String {
+        guard LanguageChoice.current.punctuationLanguageCode != nil else { return text }
+        return await PunctuationRestorer.shared.restore(text)
     }
 
     // MARK: - Preview inference (batch-only streaming, Phase 0)
@@ -1339,6 +1556,22 @@ final class TranscriptionService {
         // artifact from the PRIOR slice/session can no longer be valid —
         // clear it rather than rely solely on the teardown-side deposits.
         pendingStreamingArtifact = nil
+        // Parakeet Unified (English, the default since build 297) streams
+        // NATIVELY — this session decodes as the audio arrives, so it is both the
+        // live preview and, via `stopArtifact()`, the finished transcript. The
+        // pseudo-streaming `PreviewScheduler` below is not involved on this path
+        // at all.
+        //
+        // The branch order mirrors `stopPassTranscribe` exactly, which is what
+        // keeps the LIVE TEXT and the SAVED TRANSCRIPT on the same model: a
+        // preview from one engine and a final from another is the one divergence
+        // this factory exists to prevent.
+        if UnifiedEnglishModel.shared.isActive,
+           let session = await UnifiedEnglishModel.shared.makeSession(
+               queue: queue, presenter: presenter, sessionID: sessionID
+           ) {
+            return session
+        }
         guard useAppleEngine else {
             return PreviewScheduler(queue: queue, presenter: presenter, sessionID: sessionID)
         }
@@ -1443,8 +1676,8 @@ final class TranscriptionService {
             // text so the scheduler/UI flow is testable without a model.
             return try? await standIn.transcribe(samples: samples)
         }
-        guard let manager, modelState == .ready else { return nil }
         guard Double(samples.count) >= Self.sampleRate else { return nil }
+        guard let manager, modelState == .ready else { return nil }
         do {
             var decoderState = TdtDecoderState.make(
                 decoderLayers: Self.selectedVersion.decoderLayers

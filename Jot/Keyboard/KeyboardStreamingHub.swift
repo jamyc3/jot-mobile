@@ -239,14 +239,48 @@ final class KeyboardStreamingHub {
     /// whenever `showCorrectionNudge` is true.
     private(set) var correctionAsks: CorrectionBridge.Asks?
 
-    /// **Ask-before-paste HOLD deck (Thread 2).** Whether the PRE-paste review deck
-    /// should render. Distinct from `showCorrectionNudge` (the post-paste teach
-    /// strip): while this is true the controller is HOLDING the paste until the deck
-    /// resolves, then re-enters its flush to insert the resolved text. Snapshot-backed
-    /// (rendered via `onShouldRender`).
-    private(set) var showAskDeck = false
-    /// The asks for the held session. Non-nil whenever `showAskDeck` is true.
-    private(set) var askDeckAsks: CorrectionBridge.Asks?
+    /// **Ask-before-paste HOLD deck (F1).** The ONE piece of deck state in the
+    /// process — see `ActiveDeck`. Nil when no paste is being held. Everything the
+    /// deck knows (which session, how far the owner got, what they picked, what
+    /// text resolved out of it) lives here rather than on a controller or in
+    /// SwiftUI-local `@State`, because both of those die while the deck is still
+    /// gating a real pending paste.
+    private(set) var activeDeck: ActiveDeck?
+
+    /// Monotonic across the process lifetime; a new deck never reuses a token.
+    private var deckGeneration = 0
+
+    /// The controller iOS most recently presented. Only IT may drive proxy
+    /// insertion for a deck: this codebase keeps ghost controllers alive with
+    /// live-looking `textDocumentProxy`s (see the type doc above), and a ghost
+    /// inserting the resolved text would paste into a field the owner is not
+    /// looking at. Set from `viewWillAppear`, beside `onShouldRender`.
+    private(set) var activeControllerID: ObjectIdentifier?
+
+    func setActiveController(_ id: ObjectIdentifier) {
+        activeControllerID = id
+    }
+
+    func isActiveController(_ id: ObjectIdentifier) -> Bool {
+        activeControllerID == nil || activeControllerID == id
+    }
+
+    /// Render snapshot for the SwiftUI tree — non-nil ONLY while the deck is
+    /// `.reviewing` (once it resolves, the strip's job is done and the paste is
+    /// what the owner is waiting on). Carries the deck's progress so a remounted
+    /// strip resumes at the first unanswered card instead of restarting.
+    var askDeckSnapshot: AskDeckSnapshot? {
+        guard let deck = activeDeck, deck.phase == .reviewing else { return nil }
+        return AskDeckSnapshot(
+            token: deck.token, asks: deck.asks.asks, totalUnresolved: deck.asks.totalUnresolved,
+            index: deck.index, hasEngaged: deck.hasEngaged, answered: deck.answers.count)
+    }
+
+    /// Whether a held paste exists in ANY phase. F1b: dictation is modal against
+    /// this — the pending-paste slot, the handoff payload and the asks blob are
+    /// each single-slot, so a second dictation would overwrite the deck's own
+    /// transport out from under it.
+    var hasActiveDeck: Bool { activeDeck != nil }
 
     // MARK: - Render-notify hook (snapshot-backed surfaces only)
 
@@ -521,7 +555,7 @@ final class KeyboardStreamingHub {
     private func showCorrectionNudgeFromReady() {
         // Never raise the post-paste teach nudge while the pre-paste hold deck is up
         // (or already showing a nudge / warm-hold). The deck owns the asks pre-paste.
-        guard !showCorrectionNudge, !showWarmHoldNudge, !showAskDeck else { return }
+        guard !showCorrectionNudge, !showWarmHoldNudge, !hasActiveDeck else { return }
         let a = CorrectionBridge.readLatestAsks()
         if let a, !a.asks.isEmpty, Self.isPostPasteEligible(a) {
             DiagnosticsLog.record(source: "keyboard", category: .vocabularyGate,
@@ -540,7 +574,9 @@ final class KeyboardStreamingHub {
     /// never edits the host's already-pasted text (teach-only). Driven by the
     /// controller's paste-time flush.
     func maybeShowCorrectionNudge(sessionID: UUID) {
-        guard !showWarmHoldNudge else { return }
+        // Never over a held paste: the deck owns the strip slot and these asks
+        // while it is up (and the teach strip cannot honor a paste-changing pick).
+        guard !showWarmHoldNudge, !hasActiveDeck else { return }
         let a = CorrectionBridge.readAsks(sessionID: sessionID)
         if let a, !a.asks.isEmpty, Self.isPostPasteEligible(a) {
             DiagnosticsLog.record(source: "keyboard", category: .vocabularyGate,
@@ -559,26 +595,156 @@ final class KeyboardStreamingHub {
         onShouldRender?()
     }
 
-    /// Present the ask-before-paste HOLD deck for a session whose paste the
-    /// controller is gating. Yields to nothing — the controller only calls this
-    /// after it has decided to hold (asks present, deck not yet handled).
-    func presentAskDeck(_ asks: CorrectionBridge.Asks) {
-        guard !showAskDeck else { return }
+    // MARK: - Ask-before-paste hold deck (F1 — the one state machine)
+
+    /// Open a deck for a session whose paste the controller is gating, and return
+    /// its token. `baseline` is the staged handoff text captured at hold time, so
+    /// the resolution never depends on a second payload read.
+    ///
+    /// A deck for another session is SUPERSEDED here (one held paste at a time —
+    /// the transports are single-slot). Re-holding the SAME session returns the
+    /// existing token rather than restarting progress: that is the re-entrant
+    /// flush arriving while the owner is mid-deck.
+    func beginAskDeck(_ asks: CorrectionBridge.Asks, baseline: String) -> AskDeckToken {
+        if let existing = activeDeck, existing.sessionID == asks.sessionID {
+            return existing.token
+        }
+        deckGeneration += 1
         // Clear any post-paste teach nudge that raced in on `correctionAsksReady` —
         // the hold deck is the single surface for these asks while it's up.
         showCorrectionNudge = false
         correctionAsks = nil
-        askDeckAsks = asks
-        showAskDeck = true
+        activeDeck = ActiveDeck(
+            token: AskDeckToken(sessionID: asks.sessionID, generation: deckGeneration),
+            asks: asks, baseline: baseline)
+        onShouldRender?()
+        return activeDeck!.token
+    }
+
+    /// The owner picked a word (or "Stop asking") on a card. `choice` is what the
+    /// PASTE uses ("term" | "original" | "alt0"); `learning` is what the app is
+    /// told ("term" | "original" | "suppress"). Answering a record that is already
+    /// answered is impossible by construction — that is what kept a remounted
+    /// strip from re-answering card 1 and giving the paste a last-wins value the
+    /// first-event-wins `CorrectionInbox` would never agree with.
+    /// Returns whether the answer was taken.
+    @discardableResult
+    func answerAskDeck(_ token: AskDeckToken, recordKey: String,
+                       choice: String, learning: String) -> Bool {
+        guard var deck = matchingDeck(token), deck.phase == .reviewing else {
+            logStaleDeckAction("answer", token)
+            return false
+        }
+        deck.hasEngaged = true
+        guard deck.answers[recordKey] == nil, !deck.skipped.contains(recordKey),
+              deck.asks.asks.contains(where: { $0.recordKey == recordKey })
+        else {
+            activeDeck = deck   // keep the engagement bit; ignore the duplicate
+            return false
+        }
+        deck.answers[recordKey] = ActiveDeck.Answer(choice: choice, learning: learning)
+        deck.answerOrder.append(recordKey)
+        activeDeck = deck
+        onShouldRender?()
+        return true
+    }
+
+    /// A card went by without a pick (the per-card idle timeout, or teach-mode
+    /// "Skip"). It is RESOLVED for progress purposes — the deck must not offer it
+    /// again — but contributes no verdict and no edit.
+    func skipAskDeckCard(_ token: AskDeckToken, recordKey: String) {
+        guard var deck = matchingDeck(token), deck.phase == .reviewing else {
+            logStaleDeckAction("skip", token)
+            return
+        }
+        guard deck.answers[recordKey] == nil else { return }
+        deck.skipped.insert(recordKey)
+        activeDeck = deck
         onShouldRender?()
     }
 
-    /// Tear the hold deck down — its session resolved, the controller is about to
-    /// re-enter its flush and paste the resolved text.
-    func dismissAskDeck() {
-        showAskDeck = false
-        askDeckAsks = nil
+    /// First card, zero engagement, idle timeout → don't march the owner through
+    /// 3×10s. Everything unanswered is skipped and the deck falls straight to done.
+    func skipAllAskDeckCards(_ token: AskDeckToken) {
+        guard var deck = matchingDeck(token), deck.phase == .reviewing else {
+            logStaleDeckAction("skip-all", token)
+            return
+        }
+        for ask in deck.asks.asks where deck.answers[ask.recordKey] == nil {
+            deck.skipped.insert(ask.recordKey)
+        }
+        activeDeck = deck
         onShouldRender?()
+    }
+
+    /// The deck is finished: `text` is what the paste should insert. Moves the
+    /// phase off `.reviewing` (so the strip comes down) and hands the caller the
+    /// deck it resolved, whose `answers` are the ONE batch of verdicts to enqueue.
+    /// Returns nil on a stale token — a ghost controller's finish must not resolve
+    /// the live deck.
+    func resolveAskDeck(_ token: AskDeckToken, text: String) -> ActiveDeck? {
+        guard var deck = matchingDeck(token), deck.phase == .reviewing else {
+            logStaleDeckAction("resolve", token)
+            return nil
+        }
+        deck.phase = .resolved(text: text)
+        activeDeck = deck
+        onShouldRender?()
+        return deck
+    }
+
+    /// Claim the deck for insertion (`.resolved` → `.inserting`) so a second
+    /// flush can't drive the same paste twice. Returns the text to insert, or nil
+    /// if this deck isn't resolved-and-waiting.
+    func beginAskDeckInsertion(_ token: AskDeckToken) -> String? {
+        guard var deck = matchingDeck(token), case .resolved(let text) = deck.phase else { return nil }
+        deck.phase = .inserting(text: text)
+        activeDeck = deck
+        return text
+    }
+
+    /// An insertion attempt ended without landing (proxy still disconnected, or
+    /// the pending session moved under us). Put the deck back in `.resolved` so
+    /// the next flush can try again with the owner's picks intact — the payload
+    /// was NOT consumed on that path.
+    func returnAskDeckToResolved(_ token: AskDeckToken) {
+        guard var deck = matchingDeck(token), case .inserting(let text) = deck.phase else { return }
+        deck.phase = .resolved(text: text)
+        activeDeck = deck
+    }
+
+    /// TERMINAL. Every way a held paste can end — successful insertion, clipboard
+    /// fallback, cancellation, the session going terminal, supersession — clears
+    /// the deck through here. Session-scoped: a late cleanup for session A must
+    /// never take session B's deck with it.
+    func clearAskDeck(sessionID: UUID) {
+        guard let deck = activeDeck, deck.sessionID == sessionID else { return }
+        activeDeck = nil
+        onShouldRender?()
+    }
+
+    /// The deck for `sessionID`, if that is the one currently held.
+    func askDeck(for sessionID: UUID) -> ActiveDeck? {
+        guard let deck = activeDeck, deck.sessionID == sessionID else { return nil }
+        return deck
+    }
+
+    private func matchingDeck(_ token: AskDeckToken) -> ActiveDeck? {
+        guard let deck = activeDeck, deck.token == token else { return nil }
+        return deck
+    }
+
+    /// A command arrived for a deck that no longer exists (or for an older
+    /// generation of it) — a stale strip/controller talking to the singleton.
+    /// Fenced, and logged so the device gate can see it happen.
+    private func logStaleDeckAction(_ action: String, _ token: AskDeckToken) {
+        DiagnosticsLog.record(
+            source: "keyboard", category: .vocabularyGate,
+            message: "ask-deck: stale action fenced",
+            metadata: ["action": action,
+                       "session": token.sessionID.uuidString,
+                       "generation": "\(token.generation)",
+                       "live": activeDeck.map { "\($0.sessionID.uuidString)/\($0.generation)" } ?? "<none>"])
     }
 
     // MARK: - History
@@ -604,4 +770,111 @@ final class KeyboardStreamingHub {
         // feed.
         onShouldRender?()
     }
+}
+
+// MARK: - Ask-before-paste hold deck state (F1)
+
+/// Identity of one hold deck: WHICH dictation it belongs to, and WHICH opening
+/// of a deck for it. Every strip and controller action carries this and is
+/// no-op'd on mismatch.
+///
+/// The session ID alone is not enough. `KeyboardStreamingHub` is a process
+/// singleton while controllers are not: iOS keeps ghost controllers alive and
+/// does not reliably call `viewWillDisappear`, so a stale controller (or a strip
+/// that SwiftUI has not finished tearing down) can hand the singleton a command
+/// that reads perfectly valid — same session, wrong deck. `@MainActor` serializes
+/// those commands; it does not tell them apart. The monotonic `generation` does.
+struct AskDeckToken: Equatable, Hashable, Sendable {
+    let sessionID: UUID
+    let generation: Int
+}
+
+/// Everything the hold deck knows, in ONE value on the process-lifetime hub.
+///
+/// This replaces four per-controller dictionaries plus the strip's SwiftUI-local
+/// progress. Those died with the controller/view while `showAskDeck` and the
+/// real pending paste lived on, which is how a keyboard dismissed mid-deck came
+/// back with no captured baseline and pasted the raw payload while the queued
+/// verdicts flipped the saved transcript (D1). Progress is derived from
+/// `answers`/`skipped` rather than stored as an index, so a remounted strip
+/// RESUMES at the first unanswered card by construction and can never re-answer
+/// a record.
+///
+/// Lifetime is the extension PROCESS, not the controller: eviction mid-deck
+/// still loses it (accepted limit, see the plan's "Known limits").
+struct ActiveDeck {
+    /// What the owner chose on one card.
+    struct Answer: Equatable {
+        /// What the PASTE uses: "term" | "original" | "alt0".
+        let choice: String
+        /// What the APP learns: "term" | "original" | "suppress".
+        let learning: String
+    }
+
+    /// Where the held paste is. The flush branches on this BEFORE it reads the
+    /// handoff's freshness window, so a deck that outlives the 30s payload
+    /// expiry still pastes (E1) instead of falling into no-payload cleanup.
+    enum Phase: Equatable {
+        /// The owner is answering cards. No insert, no consume, no cleanup.
+        case reviewing
+        /// Answered. `text` is the exact string to paste — no age check applies
+        /// to it, because it is not being re-read from the expiring transport.
+        case resolved(text: String)
+        /// A controller is driving the proxy insert for `text` right now.
+        case inserting(text: String)
+    }
+
+    let token: AskDeckToken
+    let asks: CorrectionBridge.Asks
+    /// The staged handoff payload, captured once at hold time. The resolution
+    /// never re-reads the transport — the producer's edit descriptors were
+    /// resolved against exactly this string.
+    let baseline: String
+    var answers: [String: Answer] = [:]
+    /// Answer order, so the verdict batch reaches the app in the order the owner
+    /// actually gave it.
+    var answerOrder: [String] = []
+    /// Cards resolved WITHOUT a pick (idle timeout / skip-all). Not verdicts —
+    /// just "don't offer this again".
+    var skipped: Set<String> = []
+    var hasEngaged = false
+    var phase: Phase = .reviewing
+
+    init(token: AskDeckToken, asks: CorrectionBridge.Asks, baseline: String) {
+        self.token = token
+        self.asks = asks
+        self.baseline = baseline
+    }
+
+    var sessionID: UUID { token.sessionID }
+    var generation: Int { token.generation }
+
+    /// The first card the owner has neither answered nor skipped — i.e. where a
+    /// freshly-mounted strip picks up. `asks.count` means the deck is done.
+    var index: Int {
+        asks.asks.firstIndex { answers[$0.recordKey] == nil && !skipped.contains($0.recordKey) }
+            ?? asks.asks.count
+    }
+
+    /// The verdict batch to enqueue at resolution — deduplicated by construction
+    /// (one answer per record) and ordered as the owner gave them.
+    var verdictEvents: [CorrectionBridge.VerdictEvent] {
+        answerOrder.compactMap { key in
+            guard let answer = answers[key] else { return nil }
+            return CorrectionBridge.VerdictEvent(
+                transcriptID: asks.transcriptID, recordKey: key, verdict: answer.learning)
+        }
+    }
+}
+
+/// Immutable render input for the strip: the deck's identity plus the progress
+/// the view used to own privately.
+struct AskDeckSnapshot: Equatable {
+    let token: AskDeckToken
+    let asks: [CorrectionBridge.Ask]
+    let totalUnresolved: Int
+    /// First unanswered card — a remounted strip resumes HERE.
+    let index: Int
+    let hasEngaged: Bool
+    let answered: Int
 }

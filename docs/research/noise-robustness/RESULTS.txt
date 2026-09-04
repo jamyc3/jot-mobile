@@ -1,0 +1,69 @@
+# Jot noise-robustness bench — full results
+
+clips=36  ref words(clean-v3)=969
+
+condition  noise  snr      WER  ins/ref
+--------------------------------------------
+noisy      fan     05    34.3%     2.2%
+hpf        fan     05    34.7%     2.1%
+afftdn     fan     05    45.0%     1.4%
+anlmdn     fan     05    39.7%     1.8%
+vad        fan     05    33.3%     2.2%
+dfn        fan     05    57.9%     1.7%
+dfnmild    fan     05    37.7%     2.5%
+rnnoise    fan     05    53.0%     2.2%
+noisy      fan     10    15.5%     1.7%
+hpf        fan     10    15.1%     1.9%
+afftdn     fan     10    21.5%     1.2%
+anlmdn     fan     10    16.3%     1.3%
+vad        fan     10    14.8%     1.1%
+dfn        fan     10    35.9%     1.0%
+dfnmild    fan     10    16.7%     1.0%
+rnnoise    fan     10    23.7%     1.5%
+noisy      water   05    58.0%     1.5%
+hpf        water   05    56.9%     1.9%
+afftdn     water   05    64.4%     0.7%
+anlmdn     water   05    64.0%     1.2%
+vad        water   05    55.9%     1.8%
+dfn        water   05    78.4%     1.3%
+dfnmild    water   05    59.6%     1.1%
+rnnoise    water   05    76.0%     0.9%
+noisy      water   10    25.8%     1.8%
+hpf        water   10    27.7%     2.2%
+afftdn     water   10    35.1%     1.3%
+anlmdn     water   10    28.3%     1.8%
+vad        water   10    28.1%     1.5%
+dfn        water   10    50.4%     2.3%
+dfnmild    water   10    28.0%     1.8%
+rnnoise    water   10    43.4%     2.6%
+noisy      wind    05     2.8%     1.1%
+hpf        wind    05     2.5%     0.9%
+afftdn     wind    05     5.6%     1.4%
+anlmdn     wind    05     4.0%     1.4%
+vad        wind    05     4.2%     0.9%
+dfn        wind    05    14.2%     0.2%
+dfnmild    wind    05     3.8%     0.9%
+rnnoise    wind    05     3.8%     0.4%
+noisy      wind    10     1.7%     0.3%
+hpf        wind    10     3.0%     1.1%
+afftdn     wind    10     4.9%     1.3%
+anlmdn     wind    10     4.0%     1.0%
+vad        wind    10     6.0%     2.5%
+dfn        wind    10    19.9%     1.4%
+dfnmild    wind    10     4.5%     1.1%
+rnnoise    wind    10     4.6%     0.6%
+
+=== model: v2 vs v3 ===
+clean: v2 differs from v3 by 4.5% WER (checkpoint divergence)
+  v3 water@5 noisy vs its own clean: WER 58.0%  ins 1.5%
+  v2 water@5 noisy vs its own clean: WER 58.3%  ins 1.9%
+
+## Parakeet vs Whisper (degradation vs own clean)
+noise   snr    Parakeet   Whisper   winner
+------------------------------------------------
+fan      10       15.5%     22.5%   Parakeet (-7.1)
+fan      05       34.3%     52.5%   Parakeet (-18.2)
+water    10       25.8%     39.3%   Parakeet (-13.5)
+water    05       58.0%     74.5%   Parakeet (-16.5)
+wind     10        1.7%      2.5%   tie (-0.8)
+wind     05        2.8%      2.4%   tie (+0.4)

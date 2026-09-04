@@ -419,3 +419,30 @@ touched for any reason (verify in the same pass).
 will visit it later"). Not yet in any TestFlight build.
 
 ---
+
+## 10. Multi-part version numbers half-convert ("one point zero point three")
+
+**Found** 2026-08-30 while dropping the `NumberNormalizer` digit floor from 10 to 2.
+
+`NumberNormalizer.parseDecimalTail` consumes exactly ONE `point <digits>` run, so a dictated
+semantic version stops halfway:
+
+```
+"version one point zero point three"  ->  "version 1.0 point three"
+```
+
+Measured on the 2,711-recording corpus: **9 of 20 version-like numbers** are mangled this way.
+It is pre-existing — the floor change neither caused nor worsened it (the guard in Rule 6a
+keeps the trailing cardinal a word, which is why the output is `point three` and not
+`point 3`).
+
+**Fix sketch.** In `parseDecimalTail`, after consuming the first fractional run, loop: if the
+next plain-space word is another bare `point` followed by a digit run, append `.` + digits and
+keep going. Guard on the same conditions already used (no trailing punctuation on `point`, no
+newline crossing) so `"…missed the point. Five…"` still cannot fire. Add golden fixtures for
+`one point zero point three` → `1.0.3` and a negative case for a sentence-boundary `point`.
+
+**Why deferred.** Low frequency (20 occurrences in 2,711 recordings) and the current output is
+readable, just not ideal. Worth doing the next time `NumberNormalizer` is opened.
+
+---

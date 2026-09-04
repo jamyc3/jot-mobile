@@ -674,12 +674,14 @@
           "title": "Custom Term List",
           "sections": [
             "8.1",
+            "8.4a",
             "8.6",
             "8.7",
             "8.9"
           ],
           "image": "screens/ios/vocab-list.png",
-          "captured": true
+          "captured": false,
+          "issue": "Screenshot is stale (pre teach-by-voice v2): every term row now shows its \"Sounds like\" forms as removable chips with an \"add a misheard form…\" field, and \"Teach it by voice\" sits under each term (shown only when vocabulary is on and the language uses it). The fragment is current — re-shoot and set captured back to true."
         },
         {
           "id": "vocab-boost-pending",

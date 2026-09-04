@@ -1,0 +1,262 @@
+# BLIND COMPARISON — TASK C
+
+Each clip shows the same audio transcribed by three different systems, each then passed
+through the SAME punctuation/capitalization model. The words differ slightly between them -
+IGNORE word accuracy entirely.
+
+Judge ONLY the FORMATTING quality for a speech-to-text dictation app whose output is pasted
+straight into chat messages, code comments and tickets. Consider: sentence boundaries, comma
+placement, over/under-punctuation, capitalization of proper nouns, whether contractions read
+naturally, and whether numbers are rendered sensibly.
+
+======================================================================
+
+### CLIP 1
+  A: Can Parakeet Version 2 or Version 3? Six hundred million parameters actually differentiate between different speakers?
+  B: Can Parakeet Version 2 or Version 3 600000000 parameters actually differentiate between different speakers?
+  C: Can Parakeet Version two or version three six hundred million parameters actually differentiate between different speakers?
+
+### CLIP 2
+  A: Fantastic job. I think one more thing is in the priority. Hydrator and the bulk Hydrator both have a dashed line to the journey admin to fetch the rules information because they need that information to even fetch the leaves from P360 once they fetch the signal trigger, do you understand?
+  B: Fantastic job. I think one more thing is in the priority. Hydrator and the bulk Hydrator both have a dashed line to the journey admin to fetch the rules information because they need that information. To even fetch the leaves from P 360 once they fetch the signal trigger, do you understand?
+  C: Fantastic job. I think one more thing is in the priority. Hydrator and the UH, Bulk Hydrator both have a dashed line to the journey admin to fetch the rules information. Because they need that information. To even fetch the leaves from P Three, sixty once they fetch the signal trigger, do you understand?
+
+### CLIP 3
+  A: I do not have access to download the video or download the transcripts. Can you do that, please? And give it to me. I think, uh, Joseph has access to that because he created it initially. Can you work with him and help me out?
+  B: I do not have access to download the video or download the transcripts. Can you do that, please? And give it to me. I think Joseph has access to that because he created it initially. Can you work with him and help me out?
+  C: I do not have access to download the video or download the transcripts. Can you do that, please? And give it to me. I think Joseph has access to that because he created it initially. Can you work with him and help me out?
+
+### CLIP 4
+  A: Okay, can you tell me if this? When you apply the migration, it will not affect the current site?
+  B: Okay, can you tell me if this, uh? When you apply the migration, it will not affect the current side?
+  C: Okay, can you tell me if this? When you apply the migration, it will not affect the current site?
+
+### CLIP 5
+  A: I think B is the right option and make sure each pill is of different width. Make sure they do not fold into another line.
+  B: Think Uh, B is the right option and make sure, uh, the each pill is of different width. Make sure they don't, uh, fold into another line.
+  C: I think B is the right option and make sure each pill is of different width. Make sure they don't fold into another line.
+
+### CLIP 6
+  A: Let us do this, let us not convert 1000000 and 1000000000 and anything above 1000000. Let us just leave it at that.
+  B: Let's do this, let's not convert million and billion and anything above million billion trillion, let's just leave it at that.
+  C: Let's do this, let's not convert million and billion and anything above million billion trillion, let's just leave it at that.
+
+### CLIP 7
+  A: Yeah, on a flat checklist so that I can just test all of them one by one. I think there are few bugs which we added here and there. Sometimes, like the Hero Page, Uh doesn't show the full screen, it only shows half the screen.
+  B: Yeah, want a flat checklist so that I can test all of them one by one. I think there are a few books which we added here and there. Sometimes, like the hero, Page does not show the full screen, it only shows half the screen.
+  C: Yeah, I want a flat checklist so that I can distest all of them one by one. I think there are few bugs which we added here and there. Sometimes, like the hero, Page doesn't show the full screen, it only shows half the screen.
+
+### CLIP 8
+  A: I think he gave some information about the previous team. How much we did. Hello, give me one minute, Hello, good morning, I just want to take one minute.
+  B: I think he gave, uh, some information about the previous, Uh, team, how much we did. Hello, give me one minute, Hello, good morning.
+  C: I think he gave some information about the previous team how much we did. Yeah, take one.
+
+### CLIP 9
+  A: Okay for the S3 axis? What are all the different IM roles? Do you need not IAM roles? Do you need access to? I'm asking my colleague to add access to the role.
+  B: Okay for the S Three access. What are all the different IM roles? Do you need? Ah, not IM role? What are all the different, uh, actions do you need access to? I'm asking my colleague to add access to the role.
+  C: For for the S 3 axis, what are all the different IM roles? Do you need not? IM? What are all the different actions do you need access to? I am asking my colleague to add access to the row.
+
+### CLIP 10
+  A: And then what each set actually says is totally disconnected, something is wrong, you need to fix it. And here is the actual diagram.
+  B: And then the what each set actually says is totally disconnected. Something is wrong, need to fix it. And here is the actual diagram.
+  C: And then the what each side actually says is totally disconnected. Something is wrong, you need to fix it. And here is the actual diagram.
+
+### CLIP 11
+  A: Also, the advanced right now only opens. When I click on the carrot if I click on advanced text also, it should open up. What the fuck? Why do I need to go? Click on the single Carrot, which is like, Tiny.
+  B: Also, the advanced right now only open. I click on the cart if I click on advanced text. Also, it should open up. What the fuck, Why do I need to go? Click on the single Caret, which is like, Tiny.
+  C: Also the advanced right now on the openstack on the carrot. If I click on advanced text also, it should open up. What the fuck, Why do I need to go? Click on the single Carrot, which is like, Tiny.
+
+### CLIP 12
+  A: Motherfucker, you broke it. Now their whole app is broken. What the fuck when I'm getting exceptions over exceptions on?
+  B: Motherfucker you broke it. Now the whole app is broken. What the fuck when I'm getting exceptions over exceptions on Jot?
+  C: Motherfucker, you broke it. Now their whole app is broken. What the fuck when I am getting exceptions over exceptions on Jot?
+
+### CLIP 13
+  A: I fucking told you in Version 23, it still shows downloaded, and it does not fucking work because those re download does not work. So there is nothing no way being downloaded.
+  B: I fucking told you in version twenty three, it still shows downloaded, and it does not fucking work cause those read download does not work. So there is nothing no way it's been downloaded.
+  C: I told you, in Version 23, it still shows downloaded, and it does not fucking work because those re<unk>download does not work. So there is nothing no weights being downloaded.
+
+### CLIP 14
+  A: Maybe down you show a simple Json on how an attribute will be stored. I am just giving you something sample. This is by no means is correct. This is like from the front end, how a particular journey will be shown.
+  B: And maybe down you show a simple Json on how an attribute will be stored. I'm just giving you something sample. This is by no means is correct. This is like from the front end of a particular journey will be shown.
+  C: And maybe down you show a simple Json on how an attribute will be stored. I'm just giving you something sample. This is by no means is correct. This is like from the front end of a particular journey will be shown.
+
+### CLIP 15
+  A: Okay, it is working fantastic. You can release it to Sony and also push it. You know that, right? I think releasing it to Sony means pushing it to the nurture AI Playground, whatever app cast and updating the sparkle and so on, is it still the same?
+  B: Okay, it's working fantastic. You can release it to Sony and also push it. You know that I think releasing it to Sony means pushing it to the nurture. AI Playground, whatever appcast and updating the sparkle and so on, is it still the same?
+  C: Okay, it's working fantastic. You can, um, release it to Sony and also push it. You know that, right? I think releasing it to Sony means pushing it to the nurture AI playground, whatever acast and updating the sparkle and so on, is it still the same?
+
+### CLIP 16
+  A: True, but I am just a little worried that I might miss. We might break some existing functionality, can you tell me?
+  B: True, but I'm just little worried that I might, uh, miss. We might break some existing functionality, can you tell me?
+  C: True, but I'm just a little worried that I might break some existing functionality, can you tell me?
+
+### CLIP 17
+  A: Yeah, it should be the oldest one should be on top, and that's the right way to do it. I was just wondering if we are doing that.
+  B: Yeah, um, it should be the oldest one should be on top and like, that's the right way to do it. I was just wondering if we are doing that.
+  C: Yeah, it should be the oldest one should be on top and like that is the right way to do it. I was just wondering if we are doing that.
+
+### CLIP 18
+  A: The example should not be vague, it should be pretty standard. What I've been thinking about lately is useless. I think what I've been thinking about in the last two days, what happened on what, uh, already speak on May Twenty sixth. Something like that then, um, what were? The various thoughts I've had is useful.
+  B: The example should not be vague, it should be pretty standard. What I have been thinking about lately is useless. I think what I have been thinking about in the last 2 days, what happened on what, where did I speak on May 26th? Something like that, then? What were the various thoughts I have had is useful.
+  C: The example should not be vague, it should be pretty standard. What I've been thinking about lately is useless. I think what I've been thinking about in the last 2 days, what happened on what did I speak on May 26th? Something like that, then? What were the various thoughts I've had is useful.
+
+### CLIP 19
+  A: The Chevron in Pic, a transcription model, should open when someone clicks the text, no, do not expect someone to click the tiny Chevron. Other than that, it is great.
+  B: The Chevron in Pic, a transcription model, should open. When someone clicks the text, no, don't expect someone to click the tiny Chevron. Other than that, it's great.
+  C: The Chevron in Pick, a transcription model, should open. When someone clicks the text, no, don't expect someone to click the tiny Chevron. Other than that, it's great.
+
+### CLIP 20
+  A: Just ignore that. I think I need to remove that. This is based on one engineer, if one engineer is doing all the work. So, yeah.
+  B: Um, just ignore that. I think I need to remove that. This is based on one engineer, if one engineer is doing all the work, so, yeah.
+  C: Just ignored that. I think I need to remove that. This is based on one engineer, one engineer is doing all the work. So, yeah.
+
+### CLIP 21
+  A: Dude, we need to test it. What the fuck are you committing it right now?
+  B: Dude, we need to test it on the fuck while you're committing it right now.
+  C: Dude, we need to test it on the fuck. We are committing it right now.
+
+### CLIP 22
+  A: Yeah, it is super slow. What is the difference between 1120 MS and the 520 MS or 560 MS? does that also support punctuation?
+  B: Yeah, it is super slow. What is the difference between 1120 MS and the 520 MS or 560 MS? does that also support punctuation?
+  C: Yeah, it is super slow. What is the difference between one, one, two zero MS and the five twenty MS or five Sixty MS? Does that also support punctuation?
+
+### CLIP 23
+  A: Okay, maybe I'll create an Android version to You can be my first Test subject. What phone do you have?
+  B: Okay, maybe I will create an Android version, too. You can be my 1st Test subject. What phone do you have?
+  C: Okay, uh, maybe I'll create an Android version, too, and you can be my first Test subject. What phone do you have?
+
+### CLIP 24
+  A: Did you fucking fix them? Or like, Are you telling that we initially need to fix it?
+  B: Did you fucking fix them? Or like, Are you telling that we initially need to fix it?
+  C: Did you fucking fix them? Or like, Are you dream that we still need to fix it?
+
+### CLIP 25
+  A: Let's keep the page name the It's, uh, duplicated, let's create a new page, I guess no more. Uh, actually, you know what, let's not duplicate it, it's there's no comments in this page, so it's totally fine.
+  B: Let's keep the page name, it's duplicated, let's create a new page, I guess, because there's no more, actually know what, let's not duplicate it. There's no comments in this page, so it's totally fine.
+  C: Let us keep the page name this, let us duplicate it, let us create a new page, I guess, because there is no more. Actually, no what? Let us not duplicate it. It is there is no comments in this page, so it is totally fine.
+
+### CLIP 26
+  A: You don't need to figure out how to deploy a website or anything. Just talk to Claude or Codex and delete to deploy it when ask you your email, but that's it.
+  B: You don't need to figure out how to deploy a website or anything. Just talk to Claude or Codex and tell it to deploy it when ask you your email, but that's it.
+  C: You do not need to figure out how to deploy a website or anything, just talk to Cloud or CodeX and tell it to deploy. It might ask you your email, but that is it.
+
+### CLIP 27
+  A: I think you can do all of this right, commit and push it and create the PR. I am not going to eyeball it. I think you should if you're confident, you can commit and push it.
+  B: I think you can do all of this right, commit and push it and create the PR. I am not gonna eyeball it. I think you should. If you're confident, you can, uh, commit and push it.
+  C: I think you can do all of this right, commit and push it and create the peer. I am not going to eyeball it. I think you should if you are confident, you can commit and push it.
+
+### CLIP 28
+  A: Wow, can you give me the Model ID, which can be used in fluid audio for the sort former Diorizer?
+  B: Wow, can you give me the model ID, which can be used in fluid audio for the sort former Diarizer?
+  C: Wow, can you give me the model ID, which can be used in fluid audio for the short former tireiser?
+
+### CLIP 29
+  A: Yes, let the Advanced Adversarial review come back. Once that is done, I will test it, and then, uh, we can, um, implement this. But scope and design all of this can be done right now in parallel and write it into the features of upcoming features. And maybe, uh, we can work on it later on.
+  B: Yes, let theverse serial review come back. Once that is done, I will test it and then we can implement this. But scope and design and all of this can be done right now in parallel and write it into the features as upcoming features. Maybe we can work on it later.
+  C: Yes, let the advanced serial review come back. Once that is done, I will test it and then we can implement this. But scope and design and all of this can be done right now in parallel and write it into the features of upcoming features. Maybe we can work on it later on.
+
+### CLIP 30
+  A: Actually, now the scroll works, that's awesome. Yes, now can you add swipe to delete back?
+  B: Actually, now the scroll works, that is awesome. Yes, now can you add swipe to delete back?
+  C: Actually, now the scroll works, that's awesome. Yes, now can you add swipe to delete back?
+
+### CLIP 31
+  A: Um, what do you mean, uh? About eight features, three plus platforms, two open contribution features, roughly fifty eight friends. I did not understand that.
+  B: What do you mean? About 8 features, 3 plus platforms, 2 Open contribution features roughly 58 friends. I did not understand that.
+  C: What do you mean? About 8 features, 3 plus platforms, 2 Open contribution features roughly 58 friends. I did not understand that.
+
+### CLIP 32
+  A: For example, you can tell CodeX to install the skill and create a particular website.
+  B: For example, you can tell CodeX to install the skill and create a particular website.
+  C: For example, you can tell CodeX to install the skill and create a particular website.
+
+### CLIP 33
+  A: Why will multiple for a single user? Why would it map into multiple JSON mappers? It should just go into the same Json Mapper.
+  B: Why for a single user, why would it map into multiple JSON mappers? It should just go into the same Json Mapper, right?
+  C: Why will multiple U Uh for a single user? Why would it map into multiple JSON mappers? It should just go into the same Json Mapper, right?
+
+### CLIP 34
+  A: What are you talking about in device management, under VPN and device management? Nothing else is there, so I don't know what you are seeing. Do not waste my time.
+  B: What are you talking about in device management? It is under VPN and device management. Nothing else is there, so I don't know what you are saying. Do not waste my time.
+  C: What are you talking about in device management? It is under VPN and device management. Nothing else is there, so I do not know what you are seeing. Do not waste my time.
+
+### CLIP 35
+  A: The UX is so bad here, can we just have some advanced, uh, some toggle? Which will show that other than this right now, it looks so bad, looks Yuck exactly what open source apps look like.
+  B: The UX is so bad here, can we just have some advanced, some toggle? Which will show that other than this right now, it looks so bad, looks Yuck exactly what open source apps look like.
+  C: The UX is so bad here, can we just have some advanced toggle? Which will show that rather than this right now, it looks so bad, looks Yuck exactly what open source apps look like.
+
+### CLIP 36
+  A: Fantastic now. I think all the users page, I think we should accept their API key. And once they give their API key, you should be able to do some things from there by, like, Maybe delete, maybe what else can we add there?
+  B: Fantastic now, I think on the user's page, I think we should accept their API key. And once they give their API key. You should be able to do some things from there by maybe delete. Maybe what else can we add there?
+  C: Fantastic now, I think on the users page, I think we should accept their API key and once they give their API key, you should be able to do some things from there, but maybe delete. Maybe what else can we add there?
+
+### CLIP 37
+  A: Same fucking shit for even Anthropic, Openai and Gemini. They are not gated by API. Or maybe they are like, Go fucking, call those apis without, do a fucking calll and tell me if it isatedated, then for Gemini, I think it is Gemini. 3 One flashlight, not 3.5. Flash the default one.
+  B: Same fucking shit for even, uh, Anthropic, Openai and Gemini. They are not gated by API. Or maybe they are like, Go fucking, call those apis without, do a fucking call and tell me. If it is gated, then for Gemini, I think it is Gemini. Three point, one flashlight, not, uh, three point five. Flash the default one.
+  C: Same fucking shit for even anthropic Open AI and Gemini. They are not gated by API. Or maybe they are like, Go fucking, call those apis without, do a fucking curl and tell me if it is gated, then for Gemini, I think it is. Gemini 3 1 flashlight, not 3 5. Flash the default one.
+
+### CLIP 38
+  A: Yeah, run CTC at the end, then Option 4 for Nematron, only for V 3 Batch. It is pretty straightforward for V 2 EOU it is the same thing unchanged.
+  B: Yeah, run CTC at the end, then Option Four for Pneumotron, only for UH V Three Batch is pretty straightforward for V Two. Uh eou, it's the same thing unchanged.
+  C: Yeah, run CTC at the end, then Option 4 for Nemotron, only for V3 Batch. It's pretty straightforward for V2. EOU it's the same thing unchanged.
+
+### CLIP 39
+  A: Okay, I am watching. Marcus Brownlee is video YouTube video as people and culture value the ability to take quick, high quality pictures and videos more and more. You, of course, see the cameras improving drastically on the back of our phones. Europe.
+  B: Okay, I'm watching. Marcus Brownlee's video, YouTube video and culture valued the ability to take quick, high<unk>quality pictures and videos more and more. You, of course, see the cameras improving drastically on the back of our phones.
+  C: Okay, I'm watching Marcus Brownlee's video YouTube video, as people and culture valued the ability to take quick, high quality pictures and videos. More and more. You, of course, see the cameras improving drastically on the back of our phones. Europe.
+
+### CLIP 40
+  A: So we will be listening to a particular Kafka queue and listening to user events, which will be user ID, maybe attribute ID and value. And when that comes in, we will figure out which transitioner to calculate, depending on the user ID and attribute ID, and calculate that.
+  B: So we will be listening to a particular Kafka queue and listening to user events, which will be user ID, maybe attribute ID and value. And when that comes in, we will figure out which transition or to calculate, depending on the user ID and attribute ID, and calculate that.
+  C: So we will be listening to a particular Kafka queue and listening to user events, which will be user ID. Maybe attribute ID and value. And, uh, when that comes in, we will figure out which transition or to calculate, depending on the user ID and Attribute ID and, uh, calculate that.
+
+### CLIP 41
+  A: Got one touch button? So like now you have transcription which is happening. You can look at what you are seeing right here. Can you see the screen right? Like you can see? You can see all of this, and it does not add punctuation yet. But let us say you go to, and then once you stop.
+  B: Got one touch button? So like now you have transcription which is happening. You can look at, uh, what you're seeing right here. Can you see the screen right? Like you can say, you can see all of this and it doesn't add, uh, punctuation yet, but let's say you go to, and then once you stop.
+  C: Got one touch button? So like now you have transcription which is happening. You can look at what you're saying right here. Can you see the screen right? Like you can say, you can see all of this. It doesn't add punctuation yet, but let's say you go to, and then once you stop.
+
+### CLIP 42
+  A: I understand we only store five for rollback purposes. But in the number of, uh, revisions, do we have any limit, do we have any hundred limit on the revisions? is what I'm asking.
+  B: I understand we only Store 5 for rollback purposes. But in the number of revisions, do we have any limit, do we have any 100 limit on the revisions? is what I'm asking.
+  C: I understand we only Store 5 for rollback purposes. But in the number of revisions, do we have any limit, do we have any 100 limit on the revisions? is what I am asking.
+
+### CLIP 43
+  A: Yeah, that will be good, because I am not part of that. I am only part of Journey engine now, so I am saying, Yeah, get me that.
+  B: Yeah, that will be good. 'Cause. I'm not part of that. I'm only part of Journey engine now, so I'm saying, Yeah, get me that.
+  C: Yeah, that will be good cause. I'm not part of that. I'm only part of Journey engine now, so I'm saying, Yeah, get me that.
+
+### CLIP 44
+  A: How do I figure out where all of my app has been downloaded, which all countries I'm talking about an IOS app? I just recently released it.
+  B: How do I figure out where all of my app has been downloaded, which all countries I am talking about an IOS app? I just recently released it.
+  C: How do I figure out where all my app has been downloaded with all countries? I'm talking about an IOS app? I just recently released it.
+
+### CLIP 45
+  A: Also, um, right now they are accessing via skills. How can we make sure to keep updating the skills and have the agents auto update the skills? And so this, too.
+  B: Also, right now, they are accessing via skills. How can we make sure to keep updating the skills and have the agents auto update the skills? And so this, too.
+  C: Also, right now, they are accessing via skills. How can we make sure to keep updating the skills and have the agents auto update the skills? Answer this, too.
+
+### CLIP 46
+  A: Yes, please fucking, do that, bro, how long are you taking to do that? We fucking figured it out, right? That is the right thing. Why are you asking me 100 times? Do you have any other problems with it? If, yes, yeah, let us continue talking about it.
+  B: Yes, please fucking, do that, bro, how long are you taking to do that? We fucking Figure figured it out, right? That's the right thing. Why are you asking me a hundred times? Do you have any other problems with it? If, yes, yeah, let's continue talking about it.
+  C: Yes, please do that, bro, how long are you taking to do that? We fucking figured it out, right? That's the right thing. Why are you asking me 100 times? Do you have any other problems with it? If yes, yeah, let's continue talking about it.
+
+### CLIP 47
+  A: Also, the ask should only show up when they have basically downloaded the Quent three point, five, Four B model. Not if it is loaded. I'm just saying downloaded, it, is that possible?
+  B: Also, the ask should only show up when they have basically downloaded the Q 3.54 B model, not if it is loaded. I am just saying downloaded, it, is that possible?
+  C: Also, the ask should only show up when they have basically downloaded the QUEN 3 54B model, not if it is loaded. I'm just saying downloaded, it, is that possible?
+
+### CLIP 48
+  A: This is great now. The point of having tags was that later on, we could build a mind map or something like that. Let us say, if we can do, can we do that using this, too?
+  B: This is great now. The point of having tags was that later on we could build, uh, mind, map or something like that. Let's say, if we can do, can we do that using this tool?
+  C: This is great now. The point of having tags was that later on we could build mind, map or something like that. Let's say if we can, we do that using this, too.
+
+### CLIP 49
+  A: I do not want to cancel my subscription, but can I, uh, just for a bit? Install an H.P. UH, retail cartridge and still pay for my subscription and pages, but just use the the retail one.
+  B: I do not want to cancel my subscription, but can I just for a bit? Install an HP retail cartridge and still pay for my subscription pages? But just use the retail one.
+  C: I do not want to cancel my subscription, but can I just for a bit? Install an HP retail cartridge and still pay for my subscription and pages? But just use the retail one.
+
+### CLIP 50
+  A: Hey, I won't be able to attend, uh, the three P M meeting, I'll try to listen in. I have physical therapy scheduled at that time, I'm sorry.
+  B: Hey, I will not be able to attend the 3 p.m. meeting, I will try to listen in. I have physical therapy scheduled at that time, I am sorry.
+  C: Hey, I won't be able to attend the 3 P M meeting. I'll try to listen in. I have physical therapy scheduled at that time, I'm sorry.

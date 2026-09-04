@@ -184,6 +184,47 @@ enum LanguageChoice: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// Whether the downloaded punctuation / true-casing model
+    /// (`PunctuationRestorer`) runs for this language. `nil` = skip it and keep
+    /// the engine's own punctuation.
+    ///
+    /// Deliberately a per-language switch rather than an `isEnglish` check, so
+    /// enabling a language later is one line here — the same shape as
+    /// `fillerLanguageCode`, for the same reason.
+    ///
+    /// **English-only today, and that is an evidence gate, not a technical one.**
+    /// The model shipped is the English export; the same author publishes a
+    /// 47-language build at nearly the same size (233 MB vs 210 MB fp32) which
+    /// covers 17 of Jot's 24 Parakeet-routed languages. It is not enabled because
+    /// the blind evaluation behind this feature was English-only — see
+    /// `docs/research/granite-turboctc/PUNCTUATION.md`. Enable a language when it
+    /// has passed the same judging, not before.
+    ///
+    /// This is a per-LANGUAGE gate, not a per-engine one: English returns "en"
+    /// on BOTH engines (owner call 2026-08-30 — "just enable it for both"), so
+    /// an English dictation routed through Apple's `SpeechTranscriber` is
+    /// re-punctuated the same as a Parakeet one. That is safe to layer because
+    /// `PunctuationRestorer` strips existing case/punctuation before re-adding
+    /// its own — Apple's built-in punctuation is replaced, never doubled.
+    var punctuationLanguageCode: String? {
+        switch self {
+        case .english: return "en"
+        // Not yet evaluated. The 47-language model would cover most of these.
+        case .spanish, .spanishLatinAmerica, .french, .german, .italian, .portuguese,
+             .romanian, .polish, .czech, .slovak, .slovenian, .croatian, .bosnian,
+             .russian, .ukrainian, .belarusian, .bulgarian, .serbian,
+             .danish, .dutch, .finnish, .greek, .hungarian, .swedish:
+            return nil
+        // CJK: not a candidate for THIS model regardless of evaluation — its
+        // label set is `.` `,` `?` (not `。` `、`) and per-character true-casing
+        // is meaningless for these scripts. Needs the 47-language build AND a
+        // per-language eval if ever revisited.
+        case .japanese, .korean, .chineseMandarin, .cantoneseHongKong, .cantoneseMainland,
+             .chineseTraditional:
+            return nil
+        }
+    }
+
     /// Whether the CTC custom-vocabulary boost (keyword spot + merge) runs
     /// for this language. Two independent reasons force a skip, both covered
     /// here so the gate is a single named flag rather than scattered checks:

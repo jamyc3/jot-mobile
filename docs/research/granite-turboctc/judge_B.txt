@@ -1,0 +1,263 @@
+# BLIND TRANSCRIPT COMPARISON — TASK B
+
+Each clip below shows the same audio transcribed by three different systems.
+The words may differ slightly - IGNORE that. 
+
+Judge ONLY the FORMATTING quality for a speech-to-text dictation app whose output
+is pasted straight into chat messages, code comments and tickets. Consider:
+sentence boundaries, comma placement, over/under-punctuation, capitalization of
+proper nouns and sentence starts, and whether contractions read naturally.
+
+======================================================================
+
+### CLIP 1
+  A: Can this run in the Mac An E similar to V two V three in fluid audio
+  B: Can this run in the Mac A any similar to V two, V3 in fluid audio.
+  C: Can this run in the Mac, an similar to V 2 V 3 in fluid audio?
+
+### CLIP 2
+  A: I want to compare these two databases DynamoDB and Aerospike for bid set operations and also for list operations can I just upend to lists does it cost reading the whole list and appending or how does it work use the latest DynamoDB and Aerospike information
+  B: I want to compare these two databases DynamoDB and Aerospike for bitset operations and also for list operations. Can I just append uh two lists uh does it cost reading the whole list and appending or how does it work use the latest DynamoDB and Aerospike information
+  C: I want to compare these 2 databases DynamoDB and AeroSpPike for bid set operations and also for list operations. Can I just append to lists? Does it cost reading the whole list and appending, or how does it work? Use the latest Dynamo DB and Aereros spike information.
+
+### CLIP 3
+  A: This is fantastic. Can you actually create um beautiful website using front end design and uh create it in in the nurture page?
+  B: This is fantastic. Can you actually create um beautiful uh website using front end design and uh create it in in the nurture page?
+  C: This is fantastic. Can you actually create a beautiful website using front end design and create it in the nurture page?
+
+### CLIP 4
+  A: Prompt enhancer is useless. We will be waitinging to generate a prompt. Can you tell me about the awesome ChatGPT prompts prompt generator?
+  B: Prompt enhancer is useless, we will be creating to generate a prompt. Can you tell me about the awesome ChatGPT prompts prompt generator?
+  C: Prompt en enhancer is useless. We will be creating to generate a prompt. Can you tell me about the awesome Chat GPT prompts prompt generator?
+
+### CLIP 5
+  A: If the user does not update a state but just adds a new state in between the Old State stays, only the new state gets a new ID.
+  B: If the user does not update a state, just adds a new state in between, the old state stays only the new state gets a new ID
+  C: If the uh user does not update a state just adds a new state in between the old state stays only the new state gets a new ID.
+
+### CLIP 6
+  A: Can you tell me from product perspective so that I can understand the ship critical and media medium
+  B: Can you tell me from product perspective so that I can understand the ship critical and high medium?
+  C: Can you tell me from product perspective so that I can understand the ship critical and media medium?
+
+### CLIP 7
+  A: Now, when I go inside the app, the copy button is not working there. Okay, how can we fix that?
+  B: Now when I go inside the app the copy button is not working there. How can we fix that?
+  C: Now when I go inside the app, the copy button is not working there. Can how can we fix that?
+
+### CLIP 8
+  A: Dude, we need to test it on the fuck while you're committing it right now.
+  B: Dude, we need to test it on the fuck we are committing it right now
+  C: Dude, we need to test it. What the fuck are you committing it right now?
+
+### CLIP 9
+  A: Yes, all of them automatically sign in is set, all of them have my team name and the signing certificate.
+  B: Yes, all of them automatically sign in is set. All of them have my team name and the signing certificate
+  C: Yes, all of them automatically sign in is set. All of them have my team name and the signing certificate.
+
+### CLIP 10
+  A: You fucking shit, what the fuck did you do to the model? Where did you remove the label of the model?
+  B: You fucking shit. What the fuck did you do to the model? When did you remove the label of the model?
+  C: You fucking shit what the fuck did you do to the model? Where did you remove the label of the model
+
+### CLIP 11
+  A: It worked, but it is no longer showing me streaming text. It shows listening and then when I stop the streaming it takes around ten to fifteen seconds to do this can you hear me let's see if this is working are we actually turning are we
+  B: It worked, but it is no longer showing me streaming text, it shows listening. And then when I stop the streaming, it takes around 10 to 15 seconds to do this. Can you hear me? Let us see if this is working, Are we actually turning, are we?
+  C: It worked, but it is no longer showing me streaming text. It shows listening. And then when I stop the streaming, it takes around 10 to 15 seconds to do this Can you hear me? Let's see if this is working. Are we actually turning
+
+### CLIP 12
+  A: Can you convert this into slides.dev feedback? Say slides.dev presentation and maybe you can use the template. You can use that template and deploy it to the nurture AI playground website using the skill under my name Vini3RAM
+  B: Can you convert this into uh slides dot dev feedback say slides dot dev presentation and maybe you can use the I'll give you the template you can use that template and deploy it to the Nurture AI Playground website using the skill under my name we need Three RAM
+  C: Can you convert this into slides? Dev feedback, say, slides Dev presentation and maybe you can use the I will give you the template. You can use that template and deploy it to the Nurture AI Playground website, using the skill under my name Vin Sriira.
+
+### CLIP 13
+  A: For example, you can tell CodeX to install the skill and create a particular website.
+  B: For example, you can tell Codex to install the skill and create a particular website.
+  C: For example you can tell Codex to install the skill and create a particular website.
+
+### CLIP 14
+  A: Yeah, I think again they are separating into different domains. We should not be doing it. I think it should be a discussion between the UX and P 360. They know exactly how to divide it into different domains. The product heads should talk about it and not us.
+  B: Yeah, I think again, um they're separating into different domains we we shouldn't be doing it I think it should be a discussion between the UX and P three sixty they know exactly how to divide it into different domains the product heads should talk about it and not us
+  C: Yeah, I think again they're separating into different domains we shouldn't be doing it I think it should be discussion between the UX and P360 they know exactly how to divide it into different domains the product heads should talk about it and not us
+
+### CLIP 15
+  A: Go look up online about the Ultra of Preview feature things and let me know I'm not gonna go read it.
+  B: Go look up online about the ultra preview, features things, and let me know I am not going to go read it.
+  C: Go look up online about the ultra of review features things and let me know. I'm not going to go read it
+
+### CLIP 16
+  A: Okay, maybe I'll create an Android version to you can be my first test subject what phone do you have
+  B: Okay, maybe I will create an Android version, too. You can be my 1st Test subject. What phone do you have?
+  C: Okay, uh, maybe I'll create an Android version too and you can be my first test subject. What phone do you have?
+
+### CLIP 17
+  A: Actually, the journey should not have a start state, but actually should have a start transition.
+  B: Actually, the journey should not have a start state, but actually should have a start transition.
+  C: Actually, the journey should not have a start state, but actually should have a start transition
+
+### CLIP 18
+  A: As you are waiting right now, can you tell me how hard is this to? Let us say if you want to basically deploy this on the Mac App Store?
+  B: As you're waiting right now, can you tell me uh how hard is this to let's say if you want to um basically deploy this on the Mac App Store?
+  C: As you are waiting right now, can you tell me how hard this is to, let's say, if you want to basically deploy this on the Mac App Store
+
+### CLIP 19
+  A: You can look into this particular code base to understand in detail about the how the segmenter engine architecture.
+  B: You can look into this particular code base to understand in detail about the how the segment engine architecture.
+  C: You can look into this particular code base to understand in detail about how the segmenter engine architecture.
+
+### CLIP 20
+  A: Again, so for implementation, you need to do the migrations first, right? So can you check if you can access the Postgres 1543? And before that, let me know if you do the migration, would it break the current app
+  B: Again, so for implementation, you need to do the migrations. 1st, Right, so can you check if you can access the postgres on 5433? And let us. And before that, let me know if you do the migration. Would it break the current app?
+  C: Again, um, so for implementation you would need to do the migrations first, right? So can you check if you can access the Postgres one five four three three and let's and before that let me know if we do the migration would it uh break the current uh app
+
+### CLIP 21
+  A: Also, now you etate the advanced, one is always on clicking on that, just opens it. It should open and close it, and by default, advanced should be off. But the fuck I can not even do such simple things. Why do you need me to fucking? Go look into every single fucking feature and test it for you?
+  B: Also now UTH, the advanced one is always on clicking on that just opens it should open and close it and by default advanced should be off. What the fuck? Why can't even do such simple things? Why do you need me to fucking go look into every single fucking feature and test it for you?
+  C: Also now you it's always on clicking on that just opens it should open and close it and by default advanced should be off what the fuck why can't even do such simple things why do you need me to fucking go look into every single fucking feature and test it for you
+
+### CLIP 22
+  A: Meanwhile, tell me, How the fuck do you plan to? Did you plan to fix the the shortcuts for the Caps lock or the single key one? How do you plan to make it the same width as the card keys?
+  B: Meanwhile, tell me how the fuck do you plan to fix in the shortcuts for the caps lock or the single key one? How do you plan to make it the same width as the card keys
+  C: Meanwhile, tell me how the fuck do you plan to uh did you plan to fix the uh in the shortcuts for the caps lock of the single key uh one how do you plan to make it the same width as the hard keys
+
+### CLIP 23
+  A: I don't want to add any gate. I just want you to know what does Apple just ignore the 5GB RAM request on older devices. I'm just asking that if that is how it works, it's great. Then what is the point of even asking that? Why won't everyone ask for 5GB?
+  B: I don't want to add any gate. I just want you to want to know what does uh I've like does Apple just ignore the five GB RAM request on older devices I'm just asking that that is how it works. It's great then what is the point of even asking that why won't everyone use uh ask for five GB
+  C: I do not want to add any gate, I just want you to want to know. What does Apple just ignore the 5 GB RAM request on older devices? I am just asking that if that is how it works, it is great. Then what is the point of even asking that? Why would not everyone use Askco 5 GB?
+
+### CLIP 24
+  A: Yeah, tone it down. Yes, that is why I was saying, Let us do it just in the background, right? So you know what 1St step is? Let us just do classification and see if that worked, and then we can move on to the Knowledge Garden. For now, what do you say?
+  B: Yeah tone it down. Yes, that is why I was saying let's do it just in the background right see you know what first step is let just do classification and see if that worked and then we can move on to the knowledge garden for now what do you say
+  C: Yeah, tone it down. Yes That is why I was saying let's do it just in the background So you know what first step is let's just do classification and see if that worked and then we can move on to the knowledge cardinal for now what do you say
+
+### CLIP 25
+  A: Yes, let the advanced serial review come back. Once that is done, I will test it and then we can implement this. But scope and design and all of this can be done right now in parallel and write it into the features of upcoming features. Maybe we can work on it later on
+  B: Yes, let the advanced adversarial review come back once that is done I will test it and then uh we can um implement this but scope and design all of this can be done right now in parallel and write it into the features of upcoming features and maybe uh we can work on it later on
+  C: Yes, let theverse serial review come back. Once that is done, I will test it and then we can implement this. But scope and design and all of this can be done right now in parallel and write it into the features as upcoming features. Maybe we can work on it later.
+
+### CLIP 26
+  A: So when I select Nimotron 600, it shows fucking ready, but when I go back, it defaults to 100. What the fuck?
+  B: So, when I select Nemo Trans 600, it shows ready, but when I go back, it defaults to 100. What the fuck
+  C: So when I select Nemotran six hundred it shows fucking ready but when I go back it defaults to hundred what the fuck?
+
+### CLIP 27
+  A: That is something hard to give and even if you give it right now it would not be right so I would
+  B: That is something hard to give, and even if you give it right now, it would not be right, so I would.
+  C: That is something hard to give, and even if you give it right now it would not be right. So I would.
+
+### CLIP 28
+  A: This is super cool. I do not see the knowledge base in these screenshots. Can you send the screenshot of the knowledge base?
+  B: This is super cool. I do I do not see the knowledge base in these screenshots. Can you send the screenshot of the knowledge base?
+  C: This is super cool. I do not see the knowledge base in these screenshots. Can you send the screenshot of the knowledge base?
+
+### CLIP 29
+  A: I have lower back pain and I think Doctor has said I have um mild stenosis. I guess this is part of it
+  B: I have lower back pain and I think Dr. has said I have mild stenosis. I guess this is part of it
+  C: I have lower back pain and I think doctor has said I have mild stenosis, I guess this is part of it.
+
+### CLIP 30
+  A: Should we give you just the eligible actions in that particular state, or you mean we need to compare uh across all the different states and global apply global suppression rules etcetera
+  B: Should we give you just the eligible actions in that particular state? Or you mean? We need to compare across all the different states and apply global suppression rules, etc.
+  C: Should we give you just the eligible actions in that particular state or you mean we need to compare across all the different states and globals apply global suppression rules etc
+
+### CLIP 31
+  A: Fantastic job. We need to just clean up the last row of the pipeline topology.
+  B: Fantastic job. We need to just clean up the last row of the pipeline topology.
+  C: Fantastic job. We need to just clean up the last row of the pipeline topology
+
+### CLIP 32
+  A: Can you open the uh settings in general, go down to troubleshooting and click run setup wizard again. And when you go there, check if you have all the permissions. I think input mod
+  B: Can you open the settings in general? Go down to Troubleshooting and click Run setup wizard again. And when you go there and check if you have all the permissions, I think input Mod.
+  C: Can you open the uh settings in general go down to troubleshooting and click run setup wizard again and when you go there check if you have all the permissions I think input mod
+
+### CLIP 33
+  A: But I don't know. I don't know, uh ideal way the ideal way is like I have to go it does not matter if it's notice period or not um I also got to know two weeks before you also
+  B: But I do not know, I do not know the ideal way. The ideal way is like I have to go. It does not matter if it is notice, period or not. I also got to know 2 weeks before she.
+  C: Tell people. But I don't know. I don't know. The ideal way the ideal way is like I have to go. It does not matter if it's notice period or not. I also got to know two weeks before she also
+
+### CLIP 34
+  A: You are not deciding about Option A or Option B, this time you are still going to keep both the options.
+  B: We're not deciding about option A or option B this time, we're still gonna keep both the options
+  C: We are not deciding about option A or option B this time we are still gonna keep both the options
+
+### CLIP 35
+  A: Can you check if there are any other branches? Uh ignore the idea flow branch.
+  B: Can you check if there are any other branches? Ignore the Idea Flow branch.
+  C: Can you check if there any other branches? Uh, ignore the idea flow branch.
+
+### CLIP 36
+  A: Dude, I am fucking telling you it is working right now. In audience segments. You do not have to fucking worry about it just I am fucking telling you it is one by one, so that does not happen.
+  B: Dude, I'm fucking telling you it is working right now in audience segments. You don't have to fucking worry about it. I'm fucking telling you it's one by one so that doesn't happen.
+  C: Dude, I'm fucking telling you it is working right now in audience segments. You don't have to fucking worry about it. Just I'm fucking telling you it's one by one so that doesn't happen.
+
+### CLIP 37
+  A: Or we need to do, we need to basically break down each transitions expression into a list of conditions, and those conditions which are like the leaf node conditions, we will store the boolean value of that and call condition store, and then once that is done, you understand what I'm saying? I've no recognition.
+  B: Or we need to do um, we need to basically break down each transitions expression into a list of conditions and those conditions which are like the leaf node conditions we will store the boolean value of that and call condition store and then once that is done you understand what I'm saying
+  C: Or need to do. We need to basically break down. Each transition is expression into a list of conditions and those conditions, which are like the Leaf node conditions. We will store the boolean value of that and Call Condition store. And then once that is done, you understand what I am saying.
+
+### CLIP 38
+  A: Yeah, it is no longer breaking wizard tell me, are we showing them four models or are we giving them just three? Because I had a duplicated one I'm seeing deprecated or does everyone see deprecated and pneumotron should show up on top
+  B: Yeah, it is no longer um breaking that's good now I think in the run setup wizard tell me are we showing them four models or are we giving them just three because I had a duplicated one uh I'm seeing deprecated or does everyone see deprecated and uh pneumotron should show up on top
+  C: Yeah, it is no longer breaking now, I think in the run setup wizard, tell me, are we showing them 4 models, or are we giving them just 3? Because I had a duplicated one, I am seeing deprecated. Or does everyone see Deprecated and Nemotron should show up on top?
+
+### CLIP 39
+  A: Actually, now the scroll works, that is awesome. Yes, now can you add swipe to delete back?
+  B: Actually, now the scroll works. That's awesome. Yes. Now can you add swipe to delete back?
+  C: Actually now the scroll works. That's awesome yes now can you add swipe to delete back
+
+### CLIP 40
+  A: You know what you are right because we are writing it somewhere it's changing so difference in audience segment is that they one after they've completed the write they are sending it down so that's fine here it is a problem here I think we'll just fetch it in the same operator
+  B: You know what, you are right because you are writing it somewhere. It is changing. So difference in audience segments is that after they haveuted the write, they are sending it down. So that is fine here. There is a problem here. I think we will just fetch it in the same operator.
+  C: You know what you are right because you are writing it somewhere it's changing so difference in audience segments is that they after they've completed the write they are sending it down so that's fine here it is a problem here I think we'll just fetch it in the same operator
+
+### CLIP 41
+  A: Diana is pretty busy, so if we add her, she would mostly spend the time ramping up. So I would suggest just you and me.
+  B: Uh Deanna is pretty busy, so if we add her, she would uh mostly spend the time ramping up. So I would suggest just you and me.
+  C: Deanna is pretty busy, so if we add her she would uh mostly spend the time ramping up. So I would suggest just you and me.
+
+### CLIP 42
+  A: I am just asking for you to just add Nemotron 600000000 model along with the parakeet ones. Just want to test it. Nothing to do with these things. Can you do that, please?
+  B: I'm just asking for you to just add pneotron 600 million model along with the parakeet ones. Just want to test it. Nothing to do with these things. Can you do that, please?
+  C: I'm just asking for you to just add Nemotron six hundred million model along with the parakeet ones. Just want to test it. Nothing to do with these things. Can you do that, please?
+
+### CLIP 43
+  A: Okay, perfect. Now we have figured it out. This is good. Let's actually turn off these logs which you wrote and maybe clean up the info logs, which is even the transcriber parquet load complete and start. You can clean that up also and let's just put error information here. Do you understand what I'm saying?
+  B: Okay, perfect. Now we have figured it out. This is good. Let's actually turn off these logs which you wrote and maybe clean up the info logs, which is even the transcriber, parakeet load, complete, and start. You can clean that up also, and let's just put error information here. Do you understand what I'm saying?
+  C: Okay, perfect. Now we have figured it out. This is good. Let us actually turn off these logs, which you wrote and maybe clean up the info logs, which is even the transcriber parakeet. Load. Complete and start. You can clean that up also and let us just put error information here. Do you understand what I am saying?
+
+### CLIP 44
+  A: Yeah, so they want us to calculate which actions are available and send them to DE. So when we send the list of actions to DE, they should already be evaluated and only sent eligible ones.
+  B: Yeah, so they want us to calculate which actions are available and send them to DE. So when we send the list of actions to DE they should already be evaluated and only send eligible ones
+  C: Yeah, so they want us to calculate which actions are available and send them to DE. So when we send the list of actions to DE they should already be evaluated and only send eligi el eligibil ones
+
+### CLIP 45
+  A: Identity verification gap is fine. I'm asking to look if there's any things gonna break here. That's what I want in the design review.
+  B: IT verification gap is fine. I'm asking to look if there's anything gonna break here. That's what I want from the design review
+  C: Identity verification gap is fine. I am asking to look if there is anything going to break here, that is what I want from the Design Review.
+
+### CLIP 46
+  A: Okay, what do you want me to do? Have you deployed it to the latest J app?
+  B: Okay, what do you want me to do? Have you deployed it to the latest Jot app?
+  C: Okay, what do you want me to do? Have you deployed it to the latest JOT app
+
+### CLIP 47
+  A: Okay, can you link this in the authoring Core model? Can you link this Github link there so that they can see where it is coming from?
+  B: Okay, can you uh link this in the authoring code model? Can you link this Github link there so that they can see where is this coming from
+  C: Okay, can you link this in the authoring core model? Can you link this GitHub link there so that they can see where is this coming from
+
+### CLIP 48
+  A: You can add my name in the top and Github Link JammeC 3 is wrong. Do not add that please remove the Github Link.
+  B: You can add my name in uh the top and GitHub link JMEC three is wrong do not add that please remove the GitHub link
+  C: You can add my name in the top and GitHub link Jamie C3 is wrong, do not add that please. Remove the GitHub link
+
+### CLIP 49
+  A: by default for Sony it should be PEFB Enterprise right now it was none for some reason I guess that's fine but I'm just asking there is still the same
+  B: By default for Sony it should be PFB Enterprise right now it was none for some reason I guess that's fine but I'm just asking there is still the same
+  C: By default for Sony, it should be PFB Enterprise. Right now. It was none. For some reason, I guess that is fine, but I am just asking if that is still the same.
+
+### CLIP 50
+  A: Okay, for that. We need to set up Anthropic to our Github account, right? How would that even work if that is not set up?
+  B: Okay, for that we need to set up anthropic to our GitHub account, right? How would that even work if that is not set up
+  C: Okay, for that we need to set up uh Anthropic to our GitHub account right how would that even work if that is not set up?
+
+======================================================================
