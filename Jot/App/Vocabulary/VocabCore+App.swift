@@ -60,7 +60,46 @@ enum AppVocabCore {
 /// keyboard never touches this (it reads `CorrectionBridge`).
 extension CorrectionStore {
     static let shared = CorrectionStore(
-        containerRoot: AppVocabCore.containerRoot, diagnostics: AppVocabCore.diagnostics)
+        containerRoot: AppVocabCore.containerRoot, diagnostics: AppVocabCore.diagnostics,
+        isCommonOriginal: AppVocabCore.isCommonOriginal)
+}
+
+extension AppVocabCore {
+    /// The ONE common-original predicate (jot-shared design R9): the gate's own
+    /// `VocabularyGate.isCommonOriginal` (ANY word is an everyday word) over the
+    /// ACTIVE dictation language's list. Used by the store's learning guard —
+    /// Jot never learns to replace an everyday word ("not → Jot") — and by the
+    /// ask selection, so it never asks a question whose answer it would refuse
+    /// to learn. The provider caches and locks, so this is cheap off any actor.
+    @Sendable static func isCommonOriginal(_ original: String) -> Bool {
+        JotVocabCore.VocabularyGate.isCommonOriginal(original, commonWords: activeCommonWords())
+    }
+
+    /// The active dictation language's everyday-word set (empty when no list
+    /// ships for it — the guard then no-ops, as the gate does).
+    static func activeCommonWords() -> Set<String> {
+        commonWords.words(forResource: LanguageChoice.current.commonWordsResource)
+    }
+
+    private static let commonRuleMigrationKey = "jot.vocabulary.commonRuleMigrationDone"
+
+    /// One-time (A3): drop rules learned for an everyday word before the guard
+    /// existed. Marked done only when the active language has a list AND the
+    /// ledger was actually read (`dropCommonOriginalRules` returns nil
+    /// otherwise), so a missing list or an unreadable file retries next launch.
+    static func migrateCommonOriginalRulesIfNeeded() async {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: commonRuleMigrationKey),
+              !activeCommonWords().isEmpty,
+              let dropped = await CorrectionStore.shared.dropCommonOriginalRules() else { return }
+        defaults.set(true, forKey: commonRuleMigrationKey)
+        if dropped > 0 {
+            DiagnosticsLog.record(
+                source: "main-app", category: .vocabularyGate,
+                message: "dropped learned rules for everyday words",
+                metadata: ["count": "\(dropped)"])
+        }
+    }
 }
 
 /// The single main-app provenance store (was `CorrectionProvenance.shared`).

@@ -396,13 +396,14 @@ private struct VocabRow: View {
                     .autocorrectionDisabled(true)
                     .focused(focusedID, equals: rowID)
 
-                if let warning = warningMessage {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .help(warning)
-                        .accessibilityLabel(warning)
-                }
+            }
+            // The warning is WRITTEN under the term as it's typed (an icon's
+            // `.help` tooltip never shows on iPhone, so the reason was invisible).
+            if let warning = warningMessage {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             // "Sounds like" (aliases) — VISIBLE + editable (owner ask,
             // 2026-07-14; round-2 review flagged hidden aliases as unsafe:
@@ -529,29 +530,22 @@ private struct VocabRow: View {
         )
     }
 
+    /// "Too short" for two characters or fewer (the corrector and spotter skip
+    /// them), otherwise the shared `VocabularyHygiene` warning over the active
+    /// dictation language's everyday-word list — the same rule Mac and Windows
+    /// show: a term whose first word is an everyday word, or (English) opens
+    /// with one ("And…" in "Andalamma"), is easily mixed up with ordinary
+    /// speech.
     private var warningMessage: String? {
-        let t = term.text.trimmingCharacters(in: .whitespaces).lowercased()
+        let t = term.text.trimmingCharacters(in: .whitespaces)
         if t.isEmpty { return nil }
         if t.count <= 2 {
             return "Too short — terms under 3 characters are skipped to avoid false replacements."
         }
-        if Self.commonEnglishWatchlist.contains(t) {
-            return "Common English word — may cause false replacements in transcripts that use the word normally."
-        }
-        return nil
+        return JotVocabCore.VocabularyHygiene.warning(
+            for: t,
+            commonWords: AppVocabCore.activeCommonWords(),
+            language: LanguageChoice.current.correctorLanguageCode
+        )?.message
     }
-
-    // Curated watchlist of common English words very likely to collide
-    // with ordinary speech. Same shape as the desktop's list.
-    private static let commonEnglishWatchlist: Set<String> = [
-        "the", "and", "for", "that", "with", "this", "from", "have",
-        "they", "will", "one", "all", "would", "their", "what", "out",
-        "about", "which", "when", "make", "like", "time", "just", "him",
-        "know", "take", "into", "year", "your", "good", "some", "could",
-        "them", "see", "other", "than", "then", "now", "look", "only",
-        "come", "over", "think", "also", "back", "after", "use", "two",
-        "how", "our", "work", "first", "well", "way", "even", "new",
-        "want", "any", "give", "day", "most", "very", "find", "thing",
-        "tell", "say", "get", "made", "part", "yes", "yeah"
-    ]
 }
