@@ -130,6 +130,9 @@ struct TranscriptDetailView: View {
     @State private var draftRewriteTask: Task<Void, Never>?
     @State private var editorText: String = ""
     @State private var editTargetTab: DetailTab = .original
+    /// The edited field's text when Edit was pressed — the "before" side of
+    /// learn-from-edits (`EditLearning`) on Save.
+    @State private var editBaseline: String = ""
 
     /// Shared correction-review state (marks + accordion + bubble). Owned HERE,
     /// above the `transcriptScrollContent` `.id(selectedTab)` boundary, so it
@@ -1125,28 +1128,22 @@ struct TranscriptDetailView: View {
             !CommonWords.isCommon($0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".,!?;:\"'()")))
         }
 
-        // 3. Add the term (dedup), attaching the mis-heard form as an alias on a
-        //    real correction; teach the mapping so the gate can auto-apply next
-        //    time. The learning is keyed on the CANONICAL stored term (addTerm
-        //    sanitizes file-format characters) so the gate's override lookup —
-        //    which compares against the term as the rescorer proposes it —
-        //    actually matches.
-        var didLearn = false
-        if vocabWorthy {
-            let corrected = replacement.compare(sel.selected, options: .caseInsensitive) != .orderedSame
-            if let storedTerm = VocabularyStore.shared.addTerm(
-                replacement, heardAs: corrected ? sel.selected : nil) {
-                didLearn = true
-                if corrected {
-                    let heard = sel.selected
-                    Task {
-                        await CorrectionStore.shared.adjust(originalWord: heard, term: storedTerm, by: 1)
-                    }
-                }
-            }
+        // 3. "When Jot hears the selection, write the replacement" — one
+        //    correction through the one learning path (term + visible
+        //    sounds-like; nothing auto-applies). The user typed the spelling,
+        //    so its casing wins. A replacement equal to the selection (case
+        //    aside) is a plain add.
+        guard vocabWorthy else {
+            if didFix { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+            return
         }
-        if didFix || didLearn {
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        let correction = Correction.correct(heard: sel.selected, term: replacement, userCasing: true)
+        Task { @MainActor in
+            let outcome = await VocabularyLearning.shared.apply(correction).outcome
+            let didLearn: Bool = { if case .rejected = outcome { return false }; return true }()
+            if didFix || didLearn {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            }
         }
     }
 
@@ -1918,17 +1915,17 @@ struct TranscriptDetailView: View {
         }
     }
 
-    /// Learns the term: same path as selection "Add to Vocabulary"
-    /// (`confirmVocabAdd`) — adds the term, attaches the misheard form as a
-    /// sounds-like alias, and teaches the correction store (net +1) so the next
-    /// dictation self-corrects. The text fix already happened via Replace All.
+    /// Learns the term: same correction as selection "Add to Vocabulary"
+    /// (`confirmVocabAdd`) through the one path — the term, plus the misheard
+    /// form as a visible sounds-like, so the next dictation can write it. The
+    /// text fix already happened via Replace All.
     private func confirmReplaceVocab(_ offer: ReplaceVocabOffer) {
-        if let storedTerm = VocabularyStore.shared.addTerm(offer.term, heardAs: offer.heard) {
-            let heard = offer.heard
-            Task { await CorrectionStore.shared.adjust(originalWord: heard, term: storedTerm, by: 1) }
+        replaceVocabOffer = nil
+        let correction = Correction.correct(heard: offer.heard, term: offer.term, userCasing: true)
+        Task { @MainActor in
+            if case .rejected = await VocabularyLearning.shared.apply(correction).outcome { return }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
-        replaceVocabOffer = nil
     }
 
     private func replaceVocabOfferCard(_ offer: ReplaceVocabOffer) -> some View {
@@ -2149,6 +2146,7 @@ struct TranscriptDetailView: View {
         case .speakers:
             editorText = transcript.text
         }
+        editBaseline = editorText
         editError = nil
         // Fresh edit session: dismiss any prior learn-it card and reset find state.
         replaceVocabOffer = nil
@@ -2269,8 +2267,35 @@ struct TranscriptDetailView: View {
             guard let l = pendingReplaceLearn, qualifiesForVocab(l) else { return nil }
             return ReplaceVocabOffer(term: l.replace, heard: l.find, count: l.count)
         }()
+
+        // Learn from the edit (Learn from Corrections): the diff of what was on
+        // screen at Edit vs. what was saved becomes corrections through the one
+        // path. Captured now — exitEditMode clears the editor state.
+        //   - Original tab: the field IS the model's text, so raw is empty
+        //     (every replaced word counts as heard); review records live in
+        //     this text, so the edit closes the pair's open ones.
+        //   - Rewrite tab: teaches NOTHING (owner, 2026-09-30). That text was
+        //     written by the AI, so an edit there fixes the AI's wording, not a
+        //     word the speech model misheard.
+        let learnBefore = editBaseline.trimmingCharacters(in: .whitespacesAndNewlines)
+        let learnAfter: String? = newText
+        let learnRaw = ""
+        let transcriptID = transcript.id
         exitEditMode()
-        if let offer { withAnimation { replaceVocabOffer = offer } }
+        guard let learnAfter else {
+            if let offer { withAnimation { replaceVocabOffer = offer } }
+            return
+        }
+        Task { @MainActor in
+            let lessons = await EditLearning.learn(
+                transcriptID: transcriptID, before: learnBefore, after: learnAfter,
+                raw: learnRaw, reviewText: newText)
+            if newText != nil { await correctionModel?.reload() }
+            // A Replace All the edit already taught needs no second offer.
+            if let offer, !EditLearning.taught(lessons, heard: offer.heard, term: offer.term) {
+                withAnimation { replaceVocabOffer = offer }
+            }
+        }
     }
 
     /// True while edit mode holds text that `saveEdit()` would actually

@@ -72,11 +72,19 @@ enum AppGroup {
         // `Shared/PendingPasteSession.swift` for the encoded shape.
         static let pendingPasteSession = "jot.keyboard.pendingPasteSession"
 
-        /// Queue of words the keyboard staged for "Add to Vocabulary" (its
-        /// "..." popover). The keyboard can't write the main-app-private
-        /// vocabulary file, so it appends here and the main app drains via
-        /// `VocabularyAddInbox` on its next foreground. JSON-encoded `[String]`.
+        /// LEGACY queue of plain words an older keyboard build staged for "Add
+        /// to Vocabulary". JSON-encoded `[String]`. No longer written; still
+        /// drained by `VocabularyAddInbox` (as a plain add) so a word queued
+        /// before an update isn't lost.
         static let pendingVocabAdds = "jot.vocab.pendingAdds"
+
+        /// Queue of vocabulary corrections the keyboard staged (Learn from
+        /// Corrections). The keyboard can't write the main-app-private
+        /// vocabulary list, so it appends JSON-encoded `[JotVocabCore.Correction]`
+        /// here and the main app runs each through `VocabularyLearning.apply`
+        /// (`VocabularyAddInbox`) — on the `vocabAddRequested` ping when it is
+        /// running, otherwise on its next foreground.
+        static let pendingVocabCorrections = "jot.vocab.pendingCorrections"
 
         /// Whether the hidden Settings rows (revealed by tapping Version 5×)
         /// stay revealed across launches. The raw string is the retired TTS

@@ -1400,11 +1400,12 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
     }
 
     /// "Add to Vocabulary" — queue the host's current selection for the main
-    /// app's vocabulary. The keyboard can't run the (CTC-rescore) vocabulary
-    /// add itself, so it appends the word to a JSON `[String]` queue in the
-    /// App Group and pings the app via a Darwin notification; the app drains
-    /// `pendingVocabAdds` on next foreground (`VocabularyAddInbox`). Common
-    /// words are filtered here so we never enqueue noise like "the".
+    /// app's vocabulary. The keyboard can't write the app's list, so it queues
+    /// a `Correction` (Codable, JotVocabCore) in the App Group and
+    /// pings the app via a Darwin notification; the app runs it through
+    /// `VocabularyLearning.apply` — the one correction path — when it is
+    /// running, else on next foreground (`VocabularyAddInbox`). Common words
+    /// are filtered here so we never enqueue noise like "the".
     private func handleAddToVocabulary() {
         guard let raw = textDocumentProxy.selectedText else {
             setStatusBanner("Select a word")
@@ -1416,13 +1417,16 @@ final class JotKeyboardViewController: UIInputViewController, UIInputViewAudioFe
             setStatusBanner("‘\(word)’ is a common word — not added")
             return
         }
-        // Append to the App-Group queue (JSON [String]) so multiple adds before
-        // the app foregrounds all land.
-        var pending = AppGroup.defaults.data(forKey: AppGroup.Keys.pendingVocabAdds)
-            .flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
-        pending.append(word)
+        // Append to the App-Group queue (JSON [Correction]) so multiple adds
+        // before the app foregrounds all land. The selection is an
+        // already-correct word — nothing was misheard — so it is a term with no
+        // heard form. Not user-cased: the selection's casing can be a sentence
+        // start ("Ebay"), so an existing term keeps the list's spelling.
+        var pending = AppGroup.defaults.data(forKey: AppGroup.Keys.pendingVocabCorrections)
+            .flatMap { try? JSONDecoder().decode([Correction].self, from: $0) } ?? []
+        pending.append(.correct(heard: "", term: word))
         if let data = try? JSONEncoder().encode(pending) {
-            AppGroup.defaults.set(data, forKey: AppGroup.Keys.pendingVocabAdds)
+            AppGroup.defaults.set(data, forKey: AppGroup.Keys.pendingVocabCorrections)
         }
         CrossProcessNotification.post(name: CrossProcessNotification.vocabAddRequested)
         setStatusBanner("Added ‘\(word)’ to your dictionary")

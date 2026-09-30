@@ -107,3 +107,42 @@ extension CorrectionProvenance {
     static let shared = CorrectionProvenance(
         containerRoot: AppVocabCore.containerRoot, diagnostics: AppVocabCore.diagnostics)
 }
+
+/// **Learn from Corrections** (jot-shared `VocabularyLearning`, Mac 1.23): the
+/// one correction path. Every surface — transcript Edit → Save, Add to
+/// Vocabulary (in-app and keyboard-queued), the review list, the keyboard ask
+/// deck's verdicts, Settings sounds-like chips, Find & Replace's learn offer,
+/// teach-by-voice — describes what the user did as a `Correction` and calls
+/// `VocabularyLearning.shared.apply`. Nothing else writes a sounds-like or the
+/// store's learning counters.
+extension VocabularyLearning {
+    @MainActor static let shared = VocabularyLearning(
+        list: VocabularyStore.shared, store: CorrectionStore.shared)
+}
+
+extension AppVocabCore {
+    /// Whether the active dictation language ships an everyday-word list.
+    /// Learn-from-edits runs only when it does (no D8 brake ⇒ every edit would
+    /// teach), the same rule the model-free corrector follows.
+    static var hasActiveCommonWords: Bool { !activeCommonWords().isEmpty }
+
+    private static let editPairMigrationKey = "jot.vocabulary.editPairsInListMigrationDone"
+
+    /// One-time (Revision 2 review #1): pairs learned from transcript edits
+    /// before the list became the only home of corrections are written into it
+    /// as sounds-likes. Marked done only when the list and corrections.json were
+    /// both read (`migrateEditLearnedPairs` returns nil otherwise → retry).
+    @MainActor
+    static func migrateEditLearnedPairsIfNeeded() async {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: editPairMigrationKey),
+              let added = await VocabularyLearning.shared.migrateEditLearnedPairs() else { return }
+        defaults.set(true, forKey: editPairMigrationKey)
+        if added > 0 {
+            DiagnosticsLog.record(
+                source: "main-app", category: .vocabularyGate,
+                message: "moved edit-learned pairs into the vocabulary list",
+                metadata: ["count": "\(added)"])
+        }
+    }
+}

@@ -49,8 +49,9 @@ enum CorrectionAsksPublisher {
             return false
         }
 
-        // Shared decision core. `AskPolicy.select` derives `prior` and the
-        // always-replace `granted` exclusion from `overrides` itself, applies
+        // Shared decision core. `AskPolicy.select` derives the ask-ranking
+        // `prior` from `overrides` itself (nothing learned auto-applies, so no
+        // pair is excluded as "granted" any more), applies
         // the keyboard-suppression / merge-teach one-shot / mixed-payload rules,
         // ranks weakest evidence first (a spelling-only change before an
         // acoustic one), then closest-to-automatic, and caps at

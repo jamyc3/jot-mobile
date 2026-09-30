@@ -70,6 +70,9 @@ struct JotApp: App {
     /// Applies keyboard ask answers as soon as they're queued (see
     /// `CrossProcessNotification.correctionVerdictQueued`).
     private let correctionVerdictObserver: CrossProcessNotification.Observer
+    /// Applies keyboard "Add to Vocabulary" corrections as soon as they're
+    /// queued (see `CrossProcessNotification.vocabAddRequested`).
+    private let vocabAddObserver: CrossProcessNotification.Observer
     @State private var recordingService: RecordingService
     @State private var transcriptionService: TranscriptionService
     @State private var streamingPartial: StreamingPartial
@@ -145,6 +148,12 @@ struct JotApp: App {
             Task { @MainActor in
                 await CorrectionInbox.drain(modelContext: ModelContext(JotModelContainer.shared))
             }
+        }
+
+        vocabAddObserver = CrossProcessNotification.addObserver(
+            name: CrossProcessNotification.vocabAddRequested
+        ) {
+            Task { @MainActor in await VocabularyAddInbox.drain() }
         }
 
         warmResumeObserver = CrossProcessNotification.addObserver(
@@ -760,16 +769,21 @@ struct JotApp: App {
                         // Parakeet); we turn it into a transcript here, on
                         // foreground (Model B — the extension never opened us).
                         PendingShareDrainer.drain()
-                        // Finalize any words the user added to vocabulary from
-                        // the keyboard's "..." popover while we were away (vocab
-                        // storage is main-app-private; the keyboard only queues).
-                        VocabularyAddInbox.drain()
-                        // Apply any correction verdicts the owner gave in the
-                        // keyboard quick-review while Jot was backgrounded.
                         Task { @MainActor in
                             // One-time: drop rules learned for everyday words
                             // before the learning guard existed (no-op once done).
                             await AppVocabCore.migrateCommonOriginalRulesIfNeeded()
+                            // One-time: pairs learned from edits before the
+                            // vocabulary list became their only home move into
+                            // it as sounds-likes (no-op once done).
+                            await AppVocabCore.migrateEditLearnedPairsIfNeeded()
+                            // Finalize any words the user added to vocabulary
+                            // from the keyboard's "..." popover while we were
+                            // away (vocab storage is main-app-private; the
+                            // keyboard only queues `Correction`s).
+                            await VocabularyAddInbox.drain()
+                            // Apply any correction verdicts the owner gave in the
+                            // keyboard quick-review while Jot was backgrounded.
                             await CorrectionInbox.drain(modelContext: ModelContext(JotModelContainer.shared))
                         }
                     } else if newPhase == .background {

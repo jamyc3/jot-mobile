@@ -8,7 +8,10 @@ import SwiftUI
 /// pings (`correctionVerdictQueued`) or, if it wasn't running, when it next
 /// becomes active, and replays each through `CorrectionReviewModel.pick` — the SAME path the
 /// in-app marks/bubble/accordion use — so the text edit + per-occurrence verdict
-/// + reversible mapping learning all happen identically, no duplicated logic.
+/// + the one `VocabularyLearning.apply` (term / alt0 → `.correct`, keep and
+/// "Stop asking" → `.keepOriginal`, receipt stored for the review list's Undo)
+/// all happen identically, no duplicated logic. A card that timed out enqueues
+/// nothing, so it teaches nothing.
 enum CorrectionInbox {
     @MainActor
     static func drain(modelContext: ModelContext) async {
@@ -51,8 +54,9 @@ enum CorrectionInbox {
                 // An answered pair is never asked again (Windows handoff §1.2d:
                 // "Ask answers go through SetVerdict → Adjust, then
                 // SuppressBlock(pair)"). The answer itself is what's learned: a
-                // confirm makes the pair apply (net ≥ 1), a "keep original"
-                // makes the gate block it (net ≤ −1). Asking again only repeats
+                // confirm adds the heard form as a sounds-like on the term (the
+                // decoder pair / gate evidence — never an auto-replace), a "keep
+                // original" pauses the pair so the gate blocks it. Asking again only repeats
                 // a question the owner already settled. Keyboard-only — the
                 // transcript review still shows every occurrence.
                 await CorrectionStore.shared.suppressBlock(
